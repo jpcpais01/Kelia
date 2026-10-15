@@ -16,7 +16,9 @@ import { Terrain } from './terrain';
 import { Water } from './water';
 import { Mountains } from './mountains';
 import type { TerrainData } from './terrainData';
-import { registerToon } from './toon';
+import { registerToon, toonOf } from './toon';
+import { bakeWorldLight, createWorldLight, worldLight } from './worldLight';
+import { WORLD_HALF } from '@kelia/shared';
 import { setOutlines } from '../char/style';
 
 export class World {
@@ -30,6 +32,8 @@ export class World {
   readonly grass: Grass;
   readonly foliage: Foliage;
   readonly props: Props;
+  /** Baked AO / canopy / bounce lighting (strength can be tuned at runtime). */
+  readonly light = worldLight;
   ambient: Ambient | null = null;
   secrets: Secrets | null = null;
   quality!: QualitySettings;
@@ -52,6 +56,8 @@ export class World {
     scene.blockMaterialDirtyMechanism = false;
     perf.watch(scene);
     applyDrawOrder(scene);
+    // neutral baked lighting until the world is loaded (every lit material binds it)
+    createWorldLight(scene);
 
     this.camera = new UniversalCamera('cam', new Vector3(0, 30, -120), scene);
     this.camera.inputs.clear();
@@ -120,6 +126,22 @@ export class World {
     perf.claimUntagged('props');
     this.ambient = perf.scope('ambient', () => new Ambient(this.scene, this.data.heightmap, this.atmosphere, this.props.lights, this.props.village?.chimneys ?? []));
     this.secrets = perf.scope('secrets', () => new Secrets(this.scene, this.data.heightmap, this.atmosphere, this.foliage, this.ambient!));
+    this.bakeLight();
+  }
+
+  /** Bake ambient occlusion, canopy shade and ground bounce from everything static in the world. */
+  private bakeLight() {
+    const t0 = performance.now();
+    const solids = this.scene.meshes.filter((m) => {
+      if (!m.isEnabled() || m.skeleton || m.hasThinInstances || !m.material || m.material.needAlphaBlending()) return false;
+      if (!toonOf(m.material)?.lit || m.name.startsWith('terrain_') || m.name.startsWith('foliage') || (m.layerMask & 0x0fffffff) === 0) return false;
+      const b = m.getBoundingInfo().boundingBox;
+      const w = b.maximumWorld.subtract(b.minimumWorld);
+      // inside the world, not tiny (lamp glows), not the far mountain ranges
+      return Math.max(w.x, w.y, w.z) > 0.6 && w.y < 60 && Math.abs(b.centerWorld.x) < WORLD_HALF && Math.abs(b.centerWorld.z) < WORLD_HALF;
+    });
+    bakeWorldLight(this.data.heightmap, this.data.splat, solids, this.foliage.occluders());
+    console.info(`[kelia] world light baked in ${(performance.now() - t0).toFixed(0)} ms (${solids.length} solid meshes)`);
   }
 
   onUpdate(fn: (dt: number) => void) {
@@ -182,6 +204,9 @@ export class World {
     else this.postfx.shaftColor.set(0.1, 0.13, 0.2);
     this.postfx.shaftStrength = sunUp ? Math.min(1, (a.sunDir.y + 0.02) / 0.1) * (1 - a.cloudCover * 0.4) : 0.5 * s.night;
     this.postfx.update(a.exposure);
+    // the real-time shadow map covers this disc; the baked canopy shades the rest
+    const shadowR = a.shadows ? this.quality.shadowDistance : 0;
+    worldLight.shadow.set(a.shadowFocus.x, a.shadowFocus.z, shadowR, 0);
     perf.end('postfx');
   }
 }
