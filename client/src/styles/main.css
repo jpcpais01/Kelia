@@ -391,3 +391,39 @@ button { font-family: inherit; }
 .roster-ping.bad b i:nth-child(1) { background: var(--bad); }
 .roster .r { text-align: right; justify-content: flex-end; }
 .roster-foot { margin-top: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; color: var(--ink-3); }
+
+/* ---------------------------------------------------------------- world map */
+.minimap.interactive { cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+.minimap.interactive:hover { border-color: var(--gold-dim); box-shadow: var(--shadow), inset 0 0 30px rgba(0, 0, 0, 0.6), 0 0 0 3px rgba(232, 194, 122, 0.14); }
+.minimap-m { position: absolute; left: 50%; bottom: 7px; transform: translateX(-50%); opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+.minimap:hover .minimap-m { opacity: 1; }
+.overlay-shell { position: absolute; inset: 0; }
+.world-map { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 50%, rgba(4, 6, 10, 0.35), rgba(4, 6, 10, 0.7)); }
+.wm-frame { position: relative; width: calc(100vw - 56px); height: calc(100vh - 56px); overflow: hidden; border-color: var(--line-2); animation: wmIn 0.32s cubic-bezier(0.2, 0.9, 0.3, 1) both; box-shadow: var(--shadow), inset 0 0 120px rgba(0, 0, 0, 0.55); }
+.wm-frame::before { content: ''; position: absolute; left: 22%; right: 22%; top: -1px; height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent); z-index: 1; }
+.wm-frame::after { content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.6); }
+@keyframes wmIn { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: none; } }
+.wm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+.wm-head { position: absolute; left: 24px; top: 18px; pointer-events: none; z-index: 2; }
+.wm-title { font-family: var(--serif); font-size: 26px; letter-spacing: 0.5em; color: var(--gold-2); text-shadow: 0 2px 18px rgba(0, 0, 0, 0.8), 0 0 30px rgba(232, 194, 122, 0.25); }
+.wm-zone { margin-top: 2px; font-family: var(--serif); font-size: 13px; letter-spacing: 0.14em; color: var(--ink-2); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9); }
+.wm-tools { position: absolute; right: 18px; top: 18px; display: flex; gap: 8px; z-index: 2; }
+.wm-legend { position: absolute; left: 20px; bottom: 18px; display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 12px; background: var(--glass-2); border: 1px solid var(--line); font-size: 12px; color: var(--ink-2); pointer-events: none; z-index: 2; }
+.wm-legend div { display: flex; align-items: center; gap: 9px; }
+.wm-legend i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.wm-legend .lg-you { background: #fff; clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%); border-radius: 0; width: 11px; height: 12px; }
+.wm-legend .lg-ally { background: #7fd7ff; clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%); border-radius: 0; width: 11px; height: 12px; }
+.wm-legend .lg-foe { background: #ff6b5e; width: 8px; height: 8px; margin: 0 1px; }
+.wm-legend .lg-place { border: 1.5px solid var(--gold); background: rgba(22, 20, 16, 0.9); }
+.wm-legend .lg-pin { background: #ffcf6e; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); }
+.wm-scale { position: absolute; right: 22px; bottom: 22px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 11px; color: var(--ink-2); pointer-events: none; z-index: 2; text-shadow: 0 1px 4px #000; }
+.wm-scale i { display: block; height: 6px; border: 1.5px solid var(--gold-2); border-top: 0; }
+.wm-hint { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 7px; padding: 7px 14px; border-radius: 999px; background: var(--glass-2); border: 1px solid var(--line); font-size: 12px; color: var(--ink-3); white-space: nowrap; pointer-events: none; z-index: 2; }
+.wm-hint .kbd { margin-left: 6px; }
+.wm-hint .kbd:first-child { margin-left: 0; }
+.wm-tip { position: absolute; left: 0; top: 0; width: 240px; padding: 11px 13px; border-radius: 11px; background: var(--glass-2); border: 1px solid var(--gold-dim); box-shadow: var(--shadow); backdrop-filter: blur(10px); pointer-events: none; opacity: 0; transition: opacity 0.12s; z-index: 3; }
+.wm-tip.on { opacity: 1; }
+.wm-tip b { display: block; font-family: var(--serif); font-size: 14px; letter-spacing: 0.08em; color: var(--gold-2); font-weight: 600; }
+.wm-tip p { margin: 5px 0 6px; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); }
+.wm-tip small { font-size: 11px; color: var(--ink-3); }
+@media (max-width: 900px) { .wm-legend, .wm-hint { display: none; } }

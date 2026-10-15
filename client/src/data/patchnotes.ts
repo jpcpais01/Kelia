@@ -10,6 +10,14 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T18:25:00Z',
+    title: 'The world map',
+    lines: [
+      'Press M or click the minimap to unfold a full map of Kelia: hill-shaded terrain with height lines, rivers, trails and every place you know, with your position and the way you face, other heroes by name and monsters nearby. Scroll to zoom, drag to pan and hover a place to read about it and see how far it is.',
+      'Click anywhere on the map to drop a marker: a dotted line and the distance lead you there, and the minimap keeps pointing to it until you arrive. Right-click to clear it.',
+    ],
+  },
+  {
     at: '2026-10-15T17:57:00Z',
     title: 'Lush meadows and real branches',
     lines: [

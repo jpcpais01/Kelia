@@ -5,7 +5,9 @@ import { CHAT_MAX_LENGTH, CLASSES, ITEMS, POINTS_OF_INTEREST, SKILL_UNLOCK, WORL
 import { h, icon, mount } from './dom';
 import type { Heightmap } from '@kelia/shared';
 import { renderMapImage } from './mapImage';
+import { drawPin, WorldMap, type WorldMapState } from './worldMap';
 import { Roster } from './roster';
+import { closeWindow } from './windows';
 import { fullscreenSupported, onFullscreenChange, toggleFullscreen } from './fullscreen';
 
 export interface Plate {
@@ -21,6 +23,7 @@ export interface HudCallbacks {
   openPatchNotes(): void;
   openHelp(): void;
   openInventory(): void;
+  openMap(): void;
 }
 
 export class Hud {
@@ -40,6 +43,7 @@ export class Hud {
   private mapCanvas: HTMLCanvasElement;
   private mapCtx: CanvasRenderingContext2D;
   private mapImage: HTMLCanvasElement | null = null;
+  readonly worldMap: WorldMap;
   private zoneEl: HTMLElement;
   private clockEl: HTMLElement;
   private hint: HTMLElement;
@@ -98,14 +102,14 @@ export class Hud {
       this.bossEl,
       this.crosshair,
       h('div', { class: 'top-left' }, h('div', null, this.nameEl, this.subEl)),
-      h('div', { class: 'minimap' }, this.mapCanvas, h('div', { class: 'minimap-n' }, 'N')),
+      h('div', { class: 'minimap interactive', title: 'World map (M)', onclick: () => cb.openMap() }, this.mapCanvas, h('div', { class: 'minimap-n' }, 'N'), h('span', { class: 'kbd minimap-m' }, 'M')),
       this.zoneEl,
       this.clockEl,
       h(
         'div',
         { class: 'menu-buttons interactive' },
         h('button', { class: 'icon-btn', title: 'Inventory (I)', onclick: () => cb.openInventory() }, icon('bag', 18)),
-        h('button', { class: 'icon-btn', title: 'Controls', onclick: () => cb.openHelp() }, icon('map', 18)),
+        h('button', { class: 'icon-btn', title: 'Controls', onclick: () => cb.openHelp() }, icon('keys', 18)),
         h('button', { class: 'icon-btn', title: 'Patch notes', onclick: () => cb.openPatchNotes() }, icon('scroll', 18), this.notesDot),
         h('button', { class: 'icon-btn', title: 'Settings', onclick: () => cb.openSettings() }, icon('gear', 18)),
         fullscreenButton(),
@@ -129,6 +133,11 @@ export class Hud {
     });
     this.chatInput.addEventListener('blur', () => this.closeChat());
     setTimeout(() => (this.mapImage = renderMapImage(hm, 512, splat)), 50);
+    // the big map gets a sharper chart with height lines; paint it once things have settled
+    let chart: HTMLCanvasElement | null = null;
+    const paintChart = () => (chart ??= renderMapImage(hm, 1024, splat, 6));
+    this.worldMap = new WorldMap(paintChart);
+    setTimeout(paintChart, 6000);
   }
 
   setCharacter(c: CharacterData, maxHp: number) {
@@ -371,6 +380,12 @@ export class Hud {
     void hgt;
   }
 
+  // ---------------------------------------------------------------- world map
+  toggleWorldMap(s: WorldMapState) {
+    if (this.worldMap.isOpen) closeWindow();
+    else this.worldMap.open(s);
+  }
+
   // ---------------------------------------------------------------- minimap
   updateMinimap(px: number, pz: number, yaw: number, camYaw: number, others: { x: number; z: number }[], discovered: string[], enemies: { x: number; z: number; boss: boolean }[] = []) {
     const ctx = this.mapCtx;
@@ -416,6 +431,25 @@ export class Hud {
       ctx.beginPath();
       ctx.arc(x, y, 5, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // the marker dropped on the world map; pinned to the rim when it is out of range
+    const mk = this.worldMap.marker;
+    if (mk) {
+      let x = (mk.x - px) * scale;
+      let y = (mk.z - pz) * scale;
+      const d = Math.hypot(x, y);
+      const rim = S * 0.42;
+      if (d > rim) {
+        x *= rim / d;
+        y *= rim / d;
+      }
+      // undo the flip and rotation so the pin stands upright
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(1, -1);
+      ctx.rotate(camYaw);
+      drawPin(ctx, 0, 0, 1.5);
+      ctx.restore();
     }
     ctx.restore();
     // player arrow (always centre, pointing along facing relative to camera)

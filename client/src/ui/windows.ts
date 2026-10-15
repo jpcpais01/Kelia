@@ -35,6 +35,17 @@ export function windowFrame(title: string, ...body: HTMLElement[]) {
   return wrap;
 }
 
+/**
+ * Open a full-screen overlay (the world map) as the current window, so Esc,
+ * the other windows and combat input treat it like one. It gets a fresh shell
+ * each time, so a quick close-and-reopen never loses it to the fade-out.
+ */
+export function openOverlay(content: HTMLElement, onClose: () => void) {
+  closeWindow();
+  open = mount(h('div', { class: 'overlay-shell interactive' }, content));
+  closeHooks.push(onClose);
+}
+
 export function openPatchNotes() {
   const groups = groupedNotes();
   windowFrame('PATCH NOTES', ...groups.map((g) => h('div', { class: 'patch-group' }, h('h3', null, g.label), h('ul', null, ...g.lines.map((l) => h('li', null, l))))));
@@ -57,6 +68,7 @@ export function openHelp() {
       ...row(['Q'], 'Dodge (roll, vault or blink)'),
       ...row(['R'], 'Drink a healing potion'),
       ...row(['I'], 'Inventory and equipment'),
+      ...row(['M'], 'World map (or click the minimap)'),
       ...row(['Esc'], 'Free the mouse / close windows'),
       ...row(['Drag'], 'Turn the camera while the mouse is free'),
       ...row(['Wheel'], 'Zoom'),

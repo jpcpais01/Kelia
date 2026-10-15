@@ -31,6 +31,7 @@ import type { RosterEntry } from '../ui/roster';
 import { h, mount } from '../ui/dom';
 import { Hud } from '../ui/hud';
 import { LoginScreen } from '../ui/login';
+import type { WorldMapState } from '../ui/worldMap';
 import { closeWindow, isWindowOpen, openHelp, openPatchNotes, openSettings } from '../ui/windows';
 import { isInventoryOpen, openInventory, renderInventory, type InventoryActions } from '../ui/inventory';
 import { LATEST_NOTE } from '../data/patchnotes';
@@ -304,6 +305,7 @@ export class Game {
         openPatchNotes: () => this.openNotes(),
         openHelp: () => openHelp(),
         openInventory: () => this.toggleInventory(),
+        openMap: () => this.toggleMap(),
       },
       this.world.data.heightmap,
       this.world.data.splat,
@@ -440,6 +442,33 @@ export class Game {
     openInventory(this.character, this.invActions);
   }
 
+  private toggleMap() {
+    const s = this.mapState();
+    if (!s || !this.hud) return;
+    this.input.releaseLock();
+    this.hud.toggleWorldMap(s);
+  }
+
+  /** What the big map shows: you, the heroes around you and the monsters you can sense. */
+  private mapState(): WorldMapState | null {
+    const player = this.player;
+    if (!player) return null;
+    const enemies: { x: number; z: number; boss: boolean }[] = [];
+    for (const mo of this.monsters.values()) if (mo.alive) enemies.push({ x: mo.pos.x, z: mo.pos.z, boss: !!mo.def.boss });
+    const zone = this.zoneAt(player.pos.x, player.pos.z);
+    const discovered = this.character?.discovered ?? [];
+    return {
+      px: player.pos.x,
+      pz: player.pos.z,
+      yaw: player.yaw,
+      camYaw: this.follow.yaw,
+      others: [...this.remotes.values()].map((r) => ({ x: r.pos.x, z: r.pos.z, yaw: r.yaw, name: r.info.name })),
+      enemies,
+      discovered,
+      zone: zone && (!zone.hidden || discovered.includes(zone.id)) ? zone.name : 'Kelia',
+    };
+  }
+
   private focusPoint() {
     const p = this.player!.pos;
     return new Vector3(p.x, p.y + 1.55, p.z);
@@ -550,6 +579,7 @@ export class Game {
     }
     if (input.pressedKey('Escape') && isWindowOpen()) closeWindow();
     if (input.pressedKey('KeyI') || input.pressedKey('KeyB')) this.toggleInventory();
+    if (input.pressedKey('KeyM')) this.toggleMap();
     if (input.pressedKey('KeyN')) {
       this.settings = { ...this.settings, showNames: !this.settings.showNames };
       saveSettings(this.settings);
@@ -616,6 +646,10 @@ export class Game {
       plates.push({ id, pos: mo.pos.add(new Vector3(0, 2.1 * mo.def.scale + 0.15, 0)), hp: mo.hpFrac, visible: show });
     }
     hud.updatePlates(this.world.engine, this.world.camera, plates, this.settings.showNames);
+    if (hud.worldMap.isOpen) {
+      const ms = this.mapState();
+      if (ms) hud.worldMap.update(ms);
+    }
     this.mapTimer -= dt;
     if (this.mapTimer <= 0) {
       this.mapTimer = 0.08;
