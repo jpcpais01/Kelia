@@ -1,6 +1,6 @@
 // Title screen: sign in with Google or email, or play as a guest, while the
 // realm (the Render server) wakes up in the background.
-import { firebaseEnabled, guestToken, idToken, resetPassword, restoreUser, signInEmail, signInGoogle, signOut } from '../net/auth';
+import { firebaseEnabled, firebaseProblem, guestToken, idToken, resetPassword, restoreUser, signInEmail, signInGoogle, signOut } from '../net/auth';
 import { h, icon, mount, unmount } from './dom';
 
 export interface LoginResult {
@@ -71,6 +71,9 @@ export class LoginScreen {
       );
     } else {
       children.push(guest, h('div', { class: 'muted', style: 'font-size:12px;line-height:1.5' }, 'Your hero is saved to this browser.'));
+      if (firebaseProblem) {
+        children.push(h('div', { class: 'err' }, `Account sign-in is unavailable: ${firebaseProblem} Fix it in Vercel's environment variables and redeploy.`));
+      }
     }
     children.push(err, this.serverLine());
     this.card.replaceChildren(...children.filter(Boolean) as HTMLElement[]);

@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T19:55:00Z',
+    title: 'Clearer sign-in errors',
+    lines: [
+      'Account sign-in now reads its settings more forgivingly and, when something is still wrong, the title screen says exactly what (a mistyped or rejected key, a missing project) instead of a raw Firebase error. Guest play always keeps working.',
+    ],
+  },
+  {
     at: '2026-10-15T19:45:00Z',
     title: 'Smoother frames',
     lines: [
