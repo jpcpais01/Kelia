@@ -575,9 +575,13 @@ export class CharacterModel {
   private postAnimate() {
     // (bones are only reset by playing animations: layering on a frozen pose would accumulate)
     if (!this.visible || !this.entries || !this.scene.animationsEnabled) return;
-    this.applyBodyLayer();
-    this.applyLookAt();
-    if (this.ikEnabled && this.groundAt) this.applyFootIK();
+    // with no clip writing the skeleton the bones still hold last frame's
+    // layered pose: layering again would bend the torso a bit more every frame
+    if (this.animator.posing) {
+      this.applyBodyLayer();
+      this.applyLookAt();
+      if (this.ikEnabled && this.groundAt) this.applyFootIK();
+    }
     this.updateFace();
     this.time += this.dt;
     for (const rc of this.glowRecolors) rc.setTime(this.time);

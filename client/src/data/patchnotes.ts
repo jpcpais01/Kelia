@@ -11,6 +11,13 @@ export interface PatchNote {
 export const PATCH_NOTES: PatchNote[] = [
   {
     at: '2026-10-15T21:00:00Z',
+    title: 'Smooth spellcasting and nature magic',
+    lines: [
+      'Arcanists no longer twist out of shape when chaining Arcane Bolts or casting Mending Light right after a Blink: back-to-back casts now flow into each other, and the end of every attack blends cleanly back into your stance. Spell circles are now drawn from nature instead of a hexagram: a breeze of wind swirls and leaves around an opening flower, with petals lifting off as you cast. Level ups and respawns bloom in a crown of leaves and petals, Arcane Bolts carry a spinning blossom, and enemy mages and the Bonelord call up rings of thorned briars.',
+    ],
+  },
+  {
+    at: '2026-10-15T21:00:00Z',
     title: 'Install Kelia as an app',
     lines: [
       'Kelia can now be installed like a real game: look for Install Kelia on the title screen (or the download button in the top-right menu) and it gets its own window, its own desktop and taskbar icon (a golden compass star over a twilight valley) and opens straight into fullscreen. It also starts faster on return visits, since models and game files are kept on your computer and only re-downloaded when an update changes them. You always get the newest version when you open it.',

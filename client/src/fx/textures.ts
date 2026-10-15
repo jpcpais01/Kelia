@@ -5,7 +5,9 @@
 // shader can tint the shape and burn the core towards white.
 //
 // Decal atlas (2048², 4×4 cells): large ground patterns drawn with canvas 2D
-// (magic circles, telegraphs, shockwaves, scorch, cracks, frost, reticles...).
+// (spell circles, telegraphs, shockwaves, scorch, cracks, frost, reticles...).
+// The spell circles are drawn from nature, not occult geometry: wind swirls,
+// leaves, petals and blossoms on flowing rings of light.
 // Same channel layout: white strokes become the bright core, black strokes
 // with alpha are the tinted body.
 import { Constants, RawTexture, type Scene } from '@babylonjs/core';
@@ -22,8 +24,8 @@ export const S = {
   leaf: 7,
   snow: 8,
   flame: 9,
-  runeA: 10,
-  runeB: 11,
+  swirl: 10,
+  blossom: 11,
   petal: 12,
   crescent: 13,
   bokeh: 14,
@@ -36,6 +38,7 @@ export const S = {
 
 /** Decal atlas cells. */
 export const D = {
+  /** Default spell circle: a wind-blossom (swirling breeze, leaves and a flower). */
   arcane: 0,
   telegraph: 1,
   fill: 2,
@@ -46,8 +49,10 @@ export const D = {
   reticle: 7,
   sun: 8,
   vines: 9,
+  /** Enemy magic: a ring of thorned briars. */
   hex: 10,
   soft: 11,
+  /** Level up and other big moments: a blossom crown. */
   ascend: 12,
   shield: 13,
   dashes: 14,
@@ -99,28 +104,6 @@ function segDist(px: number, py: number, ax: number, ay: number, bx: number, by:
   const qx = ax + dx * t - px;
   const qy = ay + dy * t - py;
   return Math.sqrt(qx * qx + qy * qy);
-}
-
-// Rune glyphs as polylines on a [-1, 1] grid (shared by sprites and decals).
-const RUNES: number[][][] = [
-  [[0, -1, 0, 1], [0, 0.2, 0.6, 0.8], [0, -0.2, 0.6, -0.8]],
-  [[-0.4, -1, -0.4, 1], [-0.4, 1, 0.5, 0.4], [0.5, 0.4, -0.4, 0], [-0.4, 0, 0.5, -0.6]],
-  [[0, -1, 0, 1], [0, 0.4, -0.6, 1], [0, 0.4, 0.6, 1]],
-  [[-0.5, -1, -0.5, 1], [0.5, -1, 0.5, 1], [-0.5, 0.6, 0.5, -0.2]],
-  [[0, 1, 0.6, 0.2], [0.6, 0.2, 0, -0.6], [0, -0.6, -0.6, 0.2], [-0.6, 0.2, 0, 1], [0, -0.6, -0.6, -1], [0, -0.6, 0.6, -1]],
-  [[-0.5, 1, 0.5, -1], [0.5, 1, -0.5, -1], [-0.5, 1, 0.5, 1]],
-  [[0, -1, 0, 1], [-0.6, 0.5, 0.6, 0.5], [-0.6, 0.5, -0.6, 0], [0.6, 0.5, 0.6, 0]],
-  [[-0.5, -1, -0.5, 1], [-0.5, 1, 0.5, 0.5], [0.5, 0.5, -0.5, 0], [-0.5, 0, 0.5, -0.5], [0.5, -0.5, -0.5, -1]],
-  [[-0.6, 1, 0.6, 1], [0.6, 1, -0.6, -1], [-0.6, -1, 0.6, -1]],
-  [[0, 1, 0, -1], [-0.6, 0, 0, 1], [0.6, 0, 0, 1], [-0.6, -0.6, 0.6, -0.6]],
-  [[-0.6, -1, -0.6, 0.3], [-0.6, 0.3, 0, 1], [0, 1, 0.6, 0.3], [0.6, 0.3, 0.6, -1]],
-  [[0, -1, 0, 1], [-0.6, 1, 0, 0.3], [0.6, -1, 0, -0.3]],
-];
-
-function runeDist(idx: number, x: number, y: number) {
-  let d = 9;
-  for (const s of RUNES[idx % RUNES.length]) d = Math.min(d, segDist(x, y, s[0], s[1], s[2], s[3]));
-  return d;
 }
 
 // --------------------------------------------------------------- sprite cells
@@ -224,17 +207,32 @@ const CELLS: Cell[] = [
     const core = sstep(wc, wc * 0.2, Math.abs(xx)) * sstep(0.75, 0.2, yy);
     return [core, a];
   },
-  // 10 rune A in a circle
+  // 10 wind swirl: a curl of breeze that tightens into its eye
   (x, y) => {
     const r = Math.sqrt(x * x + y * y);
-    const d = Math.min(runeDist(0, x * 1.7, y * 1.7) / 1.7, Math.abs(r - 0.82));
-    return [sstep(0.03, 0.0, d), sstep(0.07, 0.025, d)];
+    const th = Math.atan2(y, x);
+    // distance to an Archimedean spiral r = 0.085 θ, about 1.6 turns
+    let d = 9;
+    for (let k = 0; k < 3; k++) {
+      const turn = (th < 0 ? th + Math.PI * 2 : th) + k * Math.PI * 2;
+      if (turn < 0.6 || turn > 10.5) continue;
+      const sr = 0.085 * turn;
+      const w = 0.012 + 0.045 * Math.min(1, turn / 10);
+      d = Math.min(d, Math.abs(r - sr) - w);
+    }
+    const a = sstep(0.04, -0.01, d) * (1 - sstep(0.9, 1, r));
+    return [sstep(0.0, -0.03, d) * 0.9, a];
   },
-  // 11 rune B in a circle
+  // 11 blossom: five round petals around a bright heart
   (x, y) => {
     const r = Math.sqrt(x * x + y * y);
-    const d = Math.min(runeDist(4, x * 1.7, y * 1.7) / 1.7, Math.abs(r - 0.82));
-    return [sstep(0.03, 0.0, d), sstep(0.07, 0.025, d)];
+    const th = Math.atan2(y, x) + Math.PI / 2;
+    const lobe = Math.pow(Math.abs(Math.cos((th * 5) / 2)), 0.6);
+    const edge = 0.42 + 0.48 * lobe;
+    const a = sstep(edge, edge - 0.08, r);
+    const vein = Math.pow(Math.abs(Math.cos((th * 5) / 2)), 40) * sstep(edge, 0.15, r) * 0.5;
+    const heart = Math.exp(-r * r * 60);
+    return [clamp01(heart + vein + a * 0.12), clamp01(a + heart)];
   },
   // 12 petal
   (x, y) => {
@@ -334,37 +332,157 @@ function disc(ctx: Ctx, r: number, inner: number, outer: number, stops?: [number
   ctx.fill();
 }
 
-function polygon(ctx: Ctx, n: number, r: number, rot: number, step = 1) {
+/** An elliptical petal from (x, y) pointing along angle a (path only). */
+function petalPath(ctx: Ctx, x: number, y: number, a: number, len: number, wid: number) {
   ctx.beginPath();
-  for (let i = 0; i <= n; i++) {
-    const a = rot + ((i * step) / n) * Math.PI * 2;
-    const x = Math.cos(a) * r;
-    const y = Math.sin(a) * r;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
+  ctx.ellipse(x + Math.cos(a) * len * 0.5, y + Math.sin(a) * len * 0.5, len * 0.5, wid, a, 0, Math.PI * 2);
 }
 
-function rune(ctx: Ctx, idx: number, x: number, y: number, size: number, rot: number, width: number, style: string) {
+/** A pointed leaf from (x, y) along angle a, filled with `fill`, outlined and ribbed in white. */
+function leaf(ctx: Ctx, x: number, y: number, a: number, len: number, wid: number, fill: string, line = 2) {
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(rot);
+  ctx.rotate(a);
   ctx.beginPath();
-  for (const s of RUNES[idx % RUNES.length]) {
-    ctx.moveTo(s[0] * size, -s[1] * size);
-    ctx.lineTo(s[2] * size, -s[3] * size);
-  }
-  ctx.lineWidth = width;
-  ctx.strokeStyle = style;
-  ctx.lineCap = 'round';
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(len * 0.45, wid * 1.6, len, 0);
+  ctx.quadraticCurveTo(len * 0.45, -wid * 1.6, 0, 0);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineWidth = line;
+  ctx.strokeStyle = W;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(len * 0.05, 0);
+  ctx.lineTo(len * 0.8, 0);
+  ctx.lineWidth = line * 0.7;
   ctx.stroke();
   ctx.restore();
 }
 
-function runeBand(ctx: Ctx, r: number, count: number, size: number, width: number, seed: number) {
-  for (let i = 0; i < count; i++) {
-    const a = (i / count) * Math.PI * 2;
-    rune(ctx, (i * 7 + seed) % RUNES.length, Math.cos(a) * r, Math.sin(a) * r, size, a + Math.PI / 2, width, W);
+/** A small five-petal flower centred at (x, y). */
+function blossom(ctx: Ctx, x: number, y: number, size: number, rot: number, fill: string, line = 2) {
+  for (let i = 0; i < 5; i++) {
+    const a = rot + (i / 5) * Math.PI * 2;
+    petalPath(ctx, x + Math.cos(a) * size * 0.12, y + Math.sin(a) * size * 0.12, a, size, size * 0.34);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.lineWidth = line;
+    ctx.strokeStyle = W;
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, size * 0.22, 0, Math.PI * 2);
+  ctx.fillStyle = W;
+  ctx.fill();
+}
+
+/**
+ * A tapered ribbon of breeze along a spiral from (r0, a0) to (r1, a0 + span):
+ * thin at both ends, widest a little past the start, with a bright spine.
+ */
+function windRibbon(ctx: Ctx, r0: number, r1: number, a0: number, span: number, width: number, fill: string, spine = 2.5) {
+  const n = 40;
+  const pts: [number, number, number, number][] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const r = r0 + (r1 - r0) * t;
+    const a = a0 + span * t;
+    // tangent of the spiral, for the ribbon's normal
+    const dr = (r1 - r0) / span;
+    const tx = dr * Math.cos(a) - r * Math.sin(a);
+    const ty = dr * Math.sin(a) + r * Math.cos(a);
+    const tl = Math.hypot(tx, ty) || 1;
+    const w = width * Math.pow(Math.sin(Math.PI * Math.pow(t, 0.7)), 0.9);
+    pts.push([Math.cos(a) * r, Math.sin(a) * r, (-ty / tl) * w, (tx / tl) * w]);
+  }
+  ctx.beginPath();
+  pts.forEach(([x, y, nx, ny], i) => (i ? ctx.lineTo(x + nx, y + ny) : ctx.moveTo(x + nx, y + ny)));
+  for (let i = pts.length - 1; i >= 0; i--) ctx.lineTo(pts[i][0] - pts[i][2], pts[i][1] - pts[i][3]);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  if (spine <= 0) return;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.lineWidth = spine;
+  ctx.lineCap = 'round';
+  ctx.strokeStyle = W;
+  ctx.stroke();
+}
+
+/** A ring that ripples like a ribbon in the wind (waves around the circle). */
+function wavyRing(ctx: Ctx, r: number, amp: number, waves: number, phase: number, width: number) {
+  ctx.beginPath();
+  for (let i = 0; i <= 240; i++) {
+    const a = (i / 240) * Math.PI * 2;
+    const rr = r + amp * Math.sin(a * waves + phase);
+    if (i) ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+    else ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  ctx.lineWidth = width;
+  ctx.strokeStyle = W;
+  ctx.stroke();
+}
+
+/** Scattered motes of light. */
+function motes(ctx: Ctx, R: number, n: number, rMin: number, rMax: number, seed: number) {
+  const rnd = seeded(seed);
+  for (let i = 0; i < n; i++) {
+    const a = rnd() * Math.PI * 2;
+    const d = R * (rMin + (rMax - rMin) * rnd());
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * d, Math.sin(a) * d, 1.5 + rnd() * 3, 0, Math.PI * 2);
+    ctx.fillStyle = W;
+    ctx.fill();
+  }
+}
+
+/**
+ * Two briars twisting around a ring, studded with thorns and a few curled
+ * leaves (enemy magic, and the boss's aura). Exported for the boss sigil.
+ */
+export function drawBriarRing(ctx: Ctx, r: number, amp: number, seed: number) {
+  const rnd = seeded(seed);
+  for (const ph of [0, Math.PI]) {
+    const at = (a: number) => r + amp * Math.sin(a * 5 + ph);
+    ctx.beginPath();
+    for (let i = 0; i <= 240; i++) {
+      const a = (i / 240) * Math.PI * 2;
+      const rr = at(a);
+      if (i) ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      else ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr);
+    }
+    ctx.lineWidth = 11;
+    ctx.strokeStyle = B(0.5);
+    ctx.stroke();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = W;
+    ctx.stroke();
+    // thorns, hooked along the stem, alternating sides
+    for (let i = 0; i < 34; i++) {
+      const a = (i / 34) * Math.PI * 2 + ph * 0.02 + rnd() * 0.04;
+      const rr = at(a);
+      const out = i % 2 ? 1 : -1;
+      const x = Math.cos(a) * rr;
+      const y = Math.sin(a) * rr;
+      const nx = Math.cos(a) * out;
+      const ny = Math.sin(a) * out;
+      const tx = -Math.sin(a);
+      const ty = Math.cos(a);
+      const l = r * (0.06 + rnd() * 0.03);
+      ctx.beginPath();
+      ctx.moveTo(x - tx * l * 0.35, y - ty * l * 0.35);
+      ctx.lineTo(x + nx * l + tx * l * 0.35, y + ny * l + ty * l * 0.35);
+      ctx.lineTo(x + tx * l * 0.35, y + ty * l * 0.35);
+      ctx.closePath();
+      ctx.fillStyle = W;
+      ctx.fill();
+    }
+  }
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2 + 0.3;
+    leaf(ctx, Math.cos(a) * r, Math.sin(a) * r, a + Math.PI / 2 + (i % 2 ? 0.5 : -0.5), r * 0.16, r * 0.045, B(0.7), 2);
   }
 }
 
@@ -377,44 +495,23 @@ function seeded(seed: number) {
 }
 
 const DECALS: ((ctx: Ctx, R: number) => void)[] = [
-  // 0 arcane magic circle
+  // 0 wind blossom: a breeze swirling in from a flowing ring, carrying
+  // leaves, around a flower opening at the heart
   (ctx, R) => {
-    disc(ctx, R, 0, 0, [[0, 0.1], [0.7, 0.16], [0.95, 0.3], [1, 0]]);
-    softRing(ctx, R * 0.93, 18, 0.5);
-    ring(ctx, R * 0.97, 3, W);
-    ring(ctx, R * 0.9, 6, W);
-    runeBand(ctx, R * 0.8, 18, R * 0.04, 3.5, 1);
-    ring(ctx, R * 0.7, 4, W);
-    ring(ctx, R * 0.66, 2, W);
-    // hexagram
-    polygon(ctx, 3, R * 0.66, -Math.PI / 2);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = W;
-    ctx.stroke();
-    polygon(ctx, 3, R * 0.66, Math.PI / 2);
-    ctx.stroke();
-    polygon(ctx, 6, R * 0.33, 0);
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    ring(ctx, R * 0.24, 3, W);
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
-      ctx.save();
-      ctx.translate(Math.cos(a) * R * 0.66, Math.sin(a) * R * 0.66);
-      ring(ctx, R * 0.055, 3, W);
-      ctx.restore();
+    disc(ctx, R, 0, 0, [[0, 0.14], [0.55, 0.1], [0.9, 0.28], [1, 0]]);
+    softRing(ctx, R * 0.9, 18, 0.45);
+    ring(ctx, R * 0.98, 2, W);
+    wavyRing(ctx, R * 0.9, R * 0.022, 7, 0, 3.5);
+    wavyRing(ctx, R * 0.9, R * 0.022, 7, Math.PI, 2);
+    for (let i = 0; i < 9; i++) {
+      const a = (i / 9) * Math.PI * 2;
+      windRibbon(ctx, R * 0.86, R * 0.36, a, 1.45, R * 0.03, B(0.42), 2.5);
+      // a leaf riding the outer end of each gust
+      leaf(ctx, Math.cos(a) * R * 0.8, Math.sin(a) * R * 0.8, a + Math.PI / 2 + 0.35, R * 0.11, R * 0.03, B(0.6), 2);
     }
-    for (let i = 0; i < 48; i++) {
-      const a = (i / 48) * Math.PI * 2;
-      const l = i % 4 === 0 ? 0.06 : 0.025;
-      ctx.beginPath();
-      ctx.moveTo(Math.cos(a) * R * 0.9, Math.sin(a) * R * 0.9);
-      ctx.lineTo(Math.cos(a) * R * (0.9 - l), Math.sin(a) * R * (0.9 - l));
-      ctx.lineWidth = 2.5;
-      ctx.strokeStyle = W;
-      ctx.stroke();
-    }
-    ring(ctx, R * 0.07, 6, W);
+    ring(ctx, R * 0.34, 2.5, W);
+    blossom(ctx, 0, 0, R * 0.26, -Math.PI / 2, B(0.45), 3);
+    motes(ctx, R, 46, 0.28, 0.95, 4);
   },
   // 1 menacing telegraph ring
   (ctx, R) => {
@@ -433,7 +530,14 @@ const DECALS: ((ctx: Ctx, R: number) => void)[] = [
       ctx.fillStyle = W;
       ctx.fill();
     }
-    runeBand(ctx, R * 0.64, 14, R * 0.045, 4, 5);
+    // a band of beads
+    for (let i = 0; i < 28; i++) {
+      const a = (i / 28) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * R * 0.64, Math.sin(a) * R * 0.64, i % 2 ? 4 : 7, 0, Math.PI * 2);
+      ctx.fillStyle = W;
+      ctx.fill();
+    }
     ring(ctx, R * 0.54, 2.5, W);
     for (let i = 0; i < 4; i++) {
       const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
@@ -570,9 +674,7 @@ const DECALS: ((ctx: Ctx, R: number) => void)[] = [
       ctx.strokeStyle = W;
       ctx.stroke();
     }
-    polygon(ctx, 6, R * 0.14, 0);
-    ctx.lineWidth = 3;
-    ctx.stroke();
+    ring(ctx, R * 0.13, 3, W);
   },
   // 7 target reticle
   (ctx, R) => {
@@ -670,47 +772,64 @@ const DECALS: ((ctx: Ctx, R: number) => void)[] = [
       ctx.stroke();
       ctx.restore();
     }
-    runeBand(ctx, R * 0.58, 8, R * 0.06, 4, 3);
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      blossom(ctx, Math.cos(a) * R * 0.6, Math.sin(a) * R * 0.6, R * 0.07, a, B(0.6), 1.6);
+    }
     ring(ctx, R * 0.42, 3, W);
   },
-  // 10 hex sigil (monster magic)
+  // 10 briar ring (enemy magic): twisting thorned briars, curling tendrils
   (ctx, R) => {
     disc(ctx, R, 0, 0, [[0, 0.2], [0.85, 0.25], [0.95, 0.5], [1, 0]]);
-    ring(ctx, R * 0.95, 6, W);
-    ring(ctx, R * 0.82, 3, W);
-    polygon(ctx, 5, R * 0.82, -Math.PI / 2, 2);
-    ctx.lineWidth = 5;
-    ctx.strokeStyle = W;
-    ctx.stroke();
-    runeBand(ctx, R * 0.89, 20, R * 0.025, 2.5, 9);
-    ring(ctx, R * 0.3, 4, W);
+    ring(ctx, R * 0.96, 5, W);
+    drawBriarRing(ctx, R * 0.8, R * 0.05, 9);
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      windRibbon(ctx, R * 0.62, R * 0.24, a, 2.2, R * 0.025, B(0.5), 2.5);
+    }
+    ring(ctx, R * 0.22, 4, W);
   },
   // 11 soft glow pool
   (ctx, R) => {
     disc(ctx, R, 0, 0, [[0, 1], [0.35, 0.55], [0.7, 0.15], [1, 0]]);
   },
-  // 12 ascension circle (level up)
+  // 12 blossom crown (level up): a garland of leaves around a full flower
   (ctx, R) => {
     disc(ctx, R, 0, 0, [[0, 0.3], [0.6, 0.15], [0.95, 0.35], [1, 0]]);
     ring(ctx, R * 0.97, 3, W);
-    ring(ctx, R * 0.92, 7, W);
-    runeBand(ctx, R * 0.82, 24, R * 0.035, 3, 2);
-    ring(ctx, R * 0.73, 3, W);
-    // eight-point star
-    ctx.beginPath();
-    for (let i = 0; i <= 16; i++) {
-      const a = (i / 16) * Math.PI * 2 - Math.PI / 2;
-      const r = i % 2 === 0 ? R * 0.72 : R * 0.3;
-      if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-      else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    wavyRing(ctx, R * 0.91, R * 0.018, 9, 0, 4);
+    // garland
+    ring(ctx, R * 0.82, 3, W);
+    for (let i = 0; i < 26; i++) {
+      const a = (i / 26) * Math.PI * 2;
+      const s = i % 2 ? 1 : -1;
+      leaf(ctx, Math.cos(a) * R * 0.82, Math.sin(a) * R * 0.82, a + Math.PI / 2 + s * 0.55, R * 0.1, R * 0.028, B(0.55), 2);
     }
-    ctx.fillStyle = B(0.35);
-    ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = W;
-    ctx.stroke();
-    ring(ctx, R * 0.24, 4, W);
-    ring(ctx, R * 0.12, 10, W);
+    ring(ctx, R * 0.71, 2.5, W);
+    // outer then inner petals
+    for (const [n, r0, len, wid, rot, fill, line] of [
+      [9, 0.24, 0.42, 0.095, -Math.PI / 2, B(0.3), 4],
+      [9, 0.1, 0.2, 0.06, -Math.PI / 2 + Math.PI / 9, B(0.5), 3],
+    ] as [number, number, number, number, number, string, number][]) {
+      for (let i = 0; i < n; i++) {
+        const a = rot + (i / n) * Math.PI * 2;
+        petalPath(ctx, Math.cos(a) * R * r0, Math.sin(a) * R * r0, a, R * len, R * wid);
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.lineWidth = line;
+        ctx.strokeStyle = W;
+        ctx.stroke();
+      }
+    }
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * R * 0.21, Math.sin(a) * R * 0.21, 4, 0, Math.PI * 2);
+      ctx.fillStyle = W;
+      ctx.fill();
+    }
+    ring(ctx, R * 0.07, 8, W);
+    motes(ctx, R, 30, 0.6, 0.98, 21);
   },
   // 13 shield crest with laurels (rally)
   (ctx, R) => {
@@ -751,17 +870,13 @@ const DECALS: ((ctx: Ctx, R: number) => void)[] = [
       }
     }
   },
-  // 14 dashed ring
+  // 14 breeze ring: tapering gusts chasing each other round
   (ctx, R) => {
-    for (let i = 0; i < 24; i++) {
-      const a = (i / 24) * Math.PI * 2;
-      ctx.beginPath();
-      ctx.arc(0, 0, R * 0.92, a, a + Math.PI / 24);
-      ctx.lineWidth = 10;
-      ctx.strokeStyle = W;
-      ctx.stroke();
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2;
+      windRibbon(ctx, R * 0.92, R * 0.86, a, 0.5, 8, W, 0);
     }
-    ring(ctx, R * 0.82, 2, W);
+    wavyRing(ctx, R * 0.8, R * 0.012, 10, 0, 2);
   },
   // 15 ground ray burst
   (ctx, R) => {
