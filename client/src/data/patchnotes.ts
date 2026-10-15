@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T22:40:00Z',
+    title: 'Bounced light is back',
+    lines: ['The light that fills the world returns, now tested on every kind of graphics card: soft shade under tree crowns and at the foot of cliffs and walls, ground-tinted bounce light, and eyes that adjust as you walk from a dark wood into a sunny meadow.'],
+  },
+  {
     at: '2026-10-15T22:15:00Z',
     title: 'Black screen fixed for real',
     lines: ['The real cause of the black world is found and fixed: the swirling streaks of the new updrafts used a drawing trick that most modern browsers refuse, and that refusal blanked the whole picture every frame. The updrafts are rewritten so every graphics card accepts them, and the world shows again.'],

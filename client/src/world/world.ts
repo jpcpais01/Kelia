@@ -17,7 +17,13 @@ import { Water } from './water';
 import { Updrafts } from './updrafts';
 import { Mountains } from './mountains';
 import type { TerrainData } from './terrainData';
-import { registerToon } from './toon';
+import { registerToon, toonOf } from './toon';
+
+/** Average exposed log2 luminance of open views by day and by night: there, adaptation changes nothing. */
+const AUTO_KEY_DAY = -1.55;
+const AUTO_KEY_NIGHT = -5.2;
+import { bakeWorldLight, createWorldLight, worldLight } from './worldLight';
+import { WORLD_HALF } from '@kelia/shared';
 import { setOutlines } from '../char/style';
 
 export class World {
@@ -32,6 +38,8 @@ export class World {
   readonly foliage: Foliage;
   readonly props: Props;
   readonly updrafts: Updrafts;
+  /** Baked AO / canopy / bounce lighting (strength can be tuned at runtime). */
+  readonly light = worldLight;
   ambient: Ambient | null = null;
   secrets: Secrets | null = null;
   quality!: QualitySettings;
@@ -54,6 +62,8 @@ export class World {
     scene.blockMaterialDirtyMechanism = false;
     perf.watch(scene);
     applyDrawOrder(scene);
+    // neutral baked lighting until the world is loaded (every lit material binds it)
+    createWorldLight(scene);
 
     this.camera = new UniversalCamera('cam', new Vector3(0, 30, -120), scene);
     this.camera.inputs.clear();
@@ -123,6 +133,22 @@ export class World {
     perf.claimUntagged('props');
     this.ambient = perf.scope('ambient', () => new Ambient(this.scene, this.data.heightmap, this.atmosphere, this.props.lights, this.props.village?.chimneys ?? []));
     this.secrets = perf.scope('secrets', () => new Secrets(this.scene, this.data.heightmap, this.atmosphere, this.foliage, this.ambient!));
+    this.bakeLight();
+  }
+
+  /** Bake ambient occlusion, canopy shade and ground bounce from everything static in the world. */
+  private bakeLight() {
+    const t0 = performance.now();
+    const solids = this.scene.meshes.filter((m) => {
+      if (!m.isEnabled() || m.skeleton || m.hasThinInstances || !m.material || m.material.needAlphaBlending()) return false;
+      if (!toonOf(m.material)?.lit || m.name.startsWith('terrain_') || m.name.startsWith('foliage') || (m.layerMask & 0x0fffffff) === 0) return false;
+      const b = m.getBoundingInfo().boundingBox;
+      const w = b.maximumWorld.subtract(b.minimumWorld);
+      // inside the world, not tiny (lamp glows), not the far mountain ranges
+      return Math.max(w.x, w.y, w.z) > 0.6 && w.y < 60 && Math.abs(b.centerWorld.x) < WORLD_HALF && Math.abs(b.centerWorld.z) < WORLD_HALF;
+    });
+    bakeWorldLight(this.data.heightmap, this.data.splat, solids, this.foliage.occluders());
+    console.info(`[kelia] world light baked in ${(performance.now() - t0).toFixed(0)} ms (${solids.length} solid meshes)`);
   }
 
   onUpdate(fn: (dt: number) => void) {
@@ -185,7 +211,15 @@ export class World {
     if (sunUp) this.postfx.shaftColor.set(s.sun.r * 0.55, s.sun.g * 0.48, s.sun.b * 0.36);
     else this.postfx.shaftColor.set(0.1, 0.13, 0.2);
     this.postfx.shaftStrength = sunUp ? Math.min(1, (a.sunDir.y + 0.02) / 0.1) * (1 - a.cloudCover * 0.4) : 0.5 * s.night;
+    // Eye adaptation aims at how bright the world is meant to look at this
+    // time of day (measured on open meadows and the village), so it only reacts
+    // to what is unusual about the view: a dark forest, a lit cave mouth,
+    // staring at the bright sky.
+    this.postfx.autoKey = AUTO_KEY_DAY + (AUTO_KEY_NIGHT - AUTO_KEY_DAY) * Math.pow(s.night, 0.8);
     this.postfx.update(a.exposure);
+    // the real-time shadow map covers this disc; the baked canopy shades the rest
+    const shadowR = a.shadows ? this.quality.shadowDistance : 0;
+    worldLight.shadow.set(a.shadowFocus.x, a.shadowFocus.z, shadowR, 0);
     perf.end('postfx');
   }
 }
