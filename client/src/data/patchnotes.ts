@@ -10,6 +10,14 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    // the 20:00 hour already has its five lines, so this opens the next group
+    at: '2026-10-15T21:00:00Z',
+    title: 'Painted cliffs',
+    lines: [
+      'The mountains have a whole new look: instead of stacked grey bands, cliffs break into big bold planes of warm and cool stone, with dark cracks between them, rain-streaked gullies running down the faces, ochre patches, grassy ledges with shadow under their lips, and snow that settles on the tops and trickles down the gullies. The far ranges share the same style on a grander scale.',
+    ],
+  },
+  {
     at: '2026-10-15T20:30:00Z',
     title: 'No more flickering specks',
     lines: ['The white specks that flickered in the meadows and around the sun are gone: flowers too small to draw cleanly melt into soft dabs of colour, glints and glowing blade tips fade before they shrink to a single pixel, nothing in the grass outshines the sky, and sparkles on the water spread into a steady shimmer instead of blinking.'],
