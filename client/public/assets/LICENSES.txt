@@ -7,4 +7,6 @@ Third-party assets used by Kelia (all CC0 1.0 Universal / public domain)
   Source: https://github.com/KayKit-Game-Assets
 - HDRI skies from Poly Haven (polyhaven.com) via @pmndrs/assets — CC0
 
-Everything else (terrain, water, sky, grass, trees, flowers, effects, UI) is generated in code.
+Music: "Dawn in the Highlands" by joaozy (the project owner), used with permission.
+
+Everything else (terrain, water, sky, grass, trees, flowers, effects, UI, and every ambient sound: birds, insects, water, wind, village sounds) is generated in code.
