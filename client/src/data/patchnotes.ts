@@ -17,11 +17,16 @@ export const PATCH_NOTES: PatchNote[] = [
     ],
   },
   {
+    at: '2026-10-15T12:14:00Z',
+    title: 'Roomier performance overlay',
+    lines: ['The F3 performance overlay now widens to fit its contents, so every name and number shows in full.'],
+  },
+  {
     at: '2026-10-15T12:10:00Z',
     title: 'A brand new look',
     lines: [
       'Kelia now has a hand-painted anime style: soft cel shading with cool tinted shadows, glowing rim light, inked outlines on heroes and monsters, a painted sky with fluffy clouds, and a warm haze that glows toward the sun.',
-      'Shadows are crisp and stable (no more flicker as you move), and trees, rocks, heroes and buildings now cast them onto the grass.',
+      'Shadows are crisp and stable (no more flicker as you move), trees, rocks, heroes and buildings now cast them onto the grass, and distant flowers, grass tips and water glints no longer glitter.',
       'Much faster graphics: shadows and post-processing cost a fraction of what they did, trees draw far less, and WebGPU is now quicker than WebGL2 instead of slower.',
     ],
   },

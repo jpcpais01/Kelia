@@ -40,7 +40,14 @@ void main(void) {
   vec4 c = texture2D(textureSampler, vUV + texel * vec2(-1.0, 1.0));
   vec4 d = texture2D(textureSampler, vUV + texel * vec2(1.0, 1.0));
   vec4 s = (a + b + c + d) * 0.25;
-  vec3 col = min(s.rgb, vec3(bloomP.z));
+  // Karis average: weight each tap by 1 / (1 + luma) so a single bright
+  // sub-pixel (a petal, a blade tip, a water glint) cannot flicker the bloom
+  float wa = 1.0 / (1.0 + max(a.r, max(a.g, a.b)));
+  float wb = 1.0 / (1.0 + max(b.r, max(b.g, b.b)));
+  float wc = 1.0 / (1.0 + max(c.r, max(c.g, c.b)));
+  float wd = 1.0 / (1.0 + max(d.r, max(d.g, d.b)));
+  vec3 k = (a.rgb * wa + b.rgb * wb + c.rgb * wc + d.rgb * wd) / (wa + wb + wc + wd);
+  vec3 col = min(bloomP.x > 0.0 ? k : s.rgb, vec3(bloomP.z));
   float br = max(col.r, max(col.g, col.b));
   float soft = clamp(br - bloomP.x + bloomP.y, 0.0, 2.0 * bloomP.y);
   soft = soft * soft / (4.0 * bloomP.y + 1e-4);
