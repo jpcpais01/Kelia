@@ -93,6 +93,8 @@ export class Game {
   private camFrom = { pos: new Vector3(), target: new Vector3() };
   private currentZone: PointOfInterest | null = null;
   private mapTimer = 0;
+  private mapEnemies: { x: number; z: number; boss: boolean }[] = [];
+  private mapOthers: { x: number; z: number }[] = [];
   /** Teleports being channelled (by entity id), for the shimmer at their feet. */
   private channels = new Map<number, { poi: string; nextFx: number }>();
   private travelReadyAt = 0;
@@ -784,12 +786,30 @@ export class Game {
       const ms = this.mapState();
       if (ms) hud.worldMap.update(ms);
     }
+    // the minimap follows every frame (it only pans, turns and re-dots a cached terrain image)
+    const enemies = this.mapEnemies;
+    const others = this.mapOthers;
+    let ne = 0;
+    for (const mo of this.monsters.values()) {
+      if (!mo.alive) continue;
+      const e = (enemies[ne++] ??= { x: 0, z: 0, boss: false });
+      e.x = mo.pos.x;
+      e.z = mo.pos.z;
+      e.boss = !!mo.def.boss;
+    }
+    enemies.length = ne;
+    let no = 0;
+    for (const r of this.remotes.values()) {
+      const o = (others[no++] ??= { x: 0, z: 0 });
+      o.x = r.pos.x;
+      o.z = r.pos.z;
+    }
+    others.length = no;
+    hud.updateMinimap(player.pos.x, player.pos.z, player.yaw, this.follow.yaw, others, this.character?.discovered ?? [], enemies);
+    // zone name, clock and zone toasts don't need to run every frame
     this.mapTimer -= dt;
     if (this.mapTimer <= 0) {
-      this.mapTimer = 0.08;
-      const enemies: { x: number; z: number; boss: boolean }[] = [];
-      for (const mo of this.monsters.values()) if (mo.alive) enemies.push({ x: mo.pos.x, z: mo.pos.z, boss: !!mo.def.boss });
-      hud.updateMinimap(player.pos.x, player.pos.z, player.yaw, this.follow.yaw, [...this.remotes.values()].map((r) => ({ x: r.pos.x, z: r.pos.z })), this.character?.discovered ?? [], enemies);
+      this.mapTimer = 0.1;
       const zone = this.zoneAt(player.pos.x, player.pos.z);
       hud.setZone(zone && (!zone.hidden || this.character?.discovered.includes(zone.id)) ? zone.name : 'Kelia');
       hud.setClock(this.world.atmosphere.dayTime);

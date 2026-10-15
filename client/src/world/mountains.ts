@@ -1,7 +1,7 @@
 // The far ranges: a ring of tall, snow-capped peaks beyond the valley's own
 // mountain wall, so every vista ends in layered, hazy summits instead of sky.
 //
-// One mesh, one draw call. It uses the same chiselled-rock shading as the
+// One mesh, one draw call. It uses the same painted-rock shading as the
 // terrain (at a far larger scale) and the world's height fog does the aerial
 // perspective: the bases melt into the haze while the sunlit peaks stand out.
 // The ring's skyline is also baked into a tiny texture so the lake can
@@ -28,10 +28,10 @@ const lin = (hex: string): [number, number, number] => {
 
 /** Rock palette shared with the terrain. */
 export const ROCK_COLOURS = {
-  rockWarm: lin('#b8a995'),
-  rockCool: lin('#8f97a6'),
-  snowCol: lin('#f4f8ff'),
-  mossCol: lin('#6f9a45'),
+  rockWarm: lin('#978a74'),
+  rockCool: lin('#7c8796'),
+  snowCol: lin('#f2f6ff'),
+  mossCol: lin('#5f9a42'),
 };
 
 const SEGS = 320;
@@ -206,8 +206,8 @@ export class Mountains {
       wgsl: { fragment: { CUSTOM_FRAGMENT_DEFINITIONS: ROCK_WGSL_DEFS, CUSTOM_FRAGMENT_BEFORE_LIGHTS: WGSL_FRAGMENT } },
     });
     Object.assign(plugin.values, ROCK_COLOURS, {
-      // big cells, high snow line, softer facets, wider strata
-      rockP: [46, 235, 0.75, 0.22],
+      // huge planes, high snow line, softer facets, long gullies
+      rockP: [110, 235, 0.8, 0.35],
       rangeP: [150, 0, 0, 0],
       forestFar: lin('#3d6e45'),
       meadowFar: lin('#6f9a52'),

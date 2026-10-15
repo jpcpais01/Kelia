@@ -31,8 +31,9 @@ attribute vec4 color;
 attribute vec4 grassInst;
 uniform mat4 viewProjection;
 uniform vec4 field;   // x = period, y = fade radius, z = inner cut radius, w = density scale
-uniform vec4 shape;   // x = height, y = width, z = flower mode, w = time
+uniform vec4 shape;   // x = height, y = width, z = flower species (0 = grass), w = time
 uniform vec3 camPos;
+uniform float pxScale; // pixels per metre at 1 m from the camera
 uniform vec4 wind;    // xy = dir, z = strength, w = gust scale
 uniform vec4 pushers[4];
 uniform sampler2D heightTex;
@@ -53,6 +54,7 @@ varying vec4 vSplat;
 varying float vRand;
 varying float vPatch;
 varying float vFar;
+varying float vDetail;
 varying float vHue;
 varying float vFace;
 varying vec3 vBladeN;
@@ -99,10 +101,12 @@ void main(void) {
   vec4 sp = texelFetch(splatTex, ivec2(clamp(wp + 512.5, vec2(0.0), vec2(1024.0))), 0);
   vSplat = sp;
   float dens = clamp((1.0 - sp.g * 1.6) * (1.0 - sp.b * 1.8) * (1.0 - sp.a * 1.4), 0.0, 1.0);
-  // flowers grow in drifts: whole patches of one kind, open meadow between
-  float drift = vnoise1(wp * 0.045 + 31.0) * 0.7 + vnoise1(wp * 0.13) * 0.3;
+  // flowers grow in drifts: each species has its own patches (one colourway
+  // per patch), open meadow between and the odd stray bloom anywhere
+  float so = shape.z * 17.3;
+  float drift = vnoise1(wp * 0.045 + 31.0 + so) * 0.7 + vnoise1(wp * 0.13 + so * 0.37) * 0.3;
   vBloom = drift;
-  if (shape.z > 0.5) dens *= (1.0 - sp.r) * smoothstep(0.42, 0.62, drift) * 1.6;
+  if (shape.z > 0.5) dens *= (1.0 - sp.r) * (smoothstep(0.5, 0.68, drift) * 2.2 + 0.06);
   else dens *= 1.0 - sp.r * 0.45;
   float keep = step(grassInst.z, dens * field.w);
   float fade = 1.0 - smoothstep(field.y * (field.z > 0.0 ? 0.6 : 0.7), field.y, dist);
@@ -114,6 +118,13 @@ void main(void) {
   // its detail down so it reads as a soft mass instead of glittering.
   vFar = smoothstep(6.0, 28.0, dist);
   if (shape.z > 0.5) s *= 1.0 - 0.35 * vFar;
+  // How many pixels wide a blade (or a flower head) is on screen. Anything
+  // thinner than a few pixels can't be drawn steadily: as it sways it lands
+  // on a pixel one frame and misses it the next, so its sparkle (white
+  // petals, sun glints, glowing tips) has to fade out before it gets there.
+  // (shape.y is a flower's size, about 7× its head; or a blade's width)
+  float px = shape.y * s * pxScale / max(dist, 0.3);
+  vDetail = shape.z > 0.5 ? smoothstep(40.0, 100.0, px) : smoothstep(2.0, 8.0, px);
   // taller, lusher grass in the forest edge, short near paths
   s *= mix(1.0, 1.35, sp.r) * (1.0 - sp.a * 0.5);
   // kept short in the village and around the shrine
@@ -127,9 +138,24 @@ void main(void) {
   float hgt = uv.y;
   float bladeH = shape.x;
   if (shape.z > 0.5) {
+    // A flower plant: its own stem height, head size and nod, and one, two
+    // or three heads (extra heads are tagged 0.5 / 1 in colour r). uv.x is the
+    // height a part hangs from: stems stretch, heads scale and tip about it.
+    float roll = fract(grassInst.z * 91.7 + grassInst.w * 13.3);
+    float show = color.r < 0.25 ? 1.0 : color.r < 0.75 ? step(0.4, roll) : step(0.72, roll);
+    float stemK = mix(0.7, 1.35, fract(grassInst.w * 5.3)) * mix(0.85, 1.2, vnoise1(wp * 0.21 + 11.0));
+    float headK = mix(0.75, 1.3, fract(grassInst.z * 17.9));
+    float isHead = step(0.1, color.a);
+    vec3 off = position - vec3(0.0, uv.x, 0.0);
+    float nod = (fract(grassInst.w * 29.1) - 0.5) * 0.8 * color.b;
+    float cn = cos(nod); float sn = sin(nod);
+    off.xy = vec2(off.x * cn - off.y * sn, off.x * sn + off.y * cn);
+    off *= mix(1.0, headK, isHead);
+    vec3 g = (vec3(0.0, uv.x * stemK, 0.0) + off) * show;
     float ca = cos(ang); float sa = sin(ang);
-    lp = vec3(position.x * shape.y, position.y * shape.x, position.z * shape.y);
+    lp = vec3(g.x * shape.y, g.y * shape.x, g.z * shape.y);
     lp = vec3(lp.x * ca - lp.z * sa, lp.y, lp.x * sa + lp.z * ca);
+    bladeH = 0.38 * shape.x / 1.6;
     vHue = 0.5;
     vFace = 0.0;
     vBladeN = vec3(0.0, 1.0, 0.0);
@@ -197,6 +223,7 @@ varying vec4 vSplat;
 varying float vRand;
 varying float vPatch;
 varying float vFar;
+varying float vDetail;
 varying vec3 vRoot;
 varying float vBloom;
 varying float vHue;
@@ -230,12 +257,33 @@ float grassShadow() {
 }
 #endif
 
-vec3 flowerPalette(float r) {
-  if (r < 0.22) return vec3(1.0, 0.98, 0.92);   // daisies
-  if (r < 0.42) return vec3(1.0, 0.8, 0.18);    // buttercups
-  if (r < 0.6) return vec3(0.62, 0.45, 1.0);    // violets
-  if (r < 0.8) return vec3(1.0, 0.5, 0.66);     // pinks
-  return vec3(0.42, 0.68, 1.0);                 // cornflowers
+// Petal base, petal tip and heart colours of each species, in a few colourways.
+void flowerColors(float sp, float k, out vec3 base, out vec3 tip, out vec3 heart) {
+  if (sp < 1.5) {          // daisies, pink daisies, asters
+    heart = vec3(1.0, 0.76, 0.14);
+    if (k < 0.55) { base = vec3(0.96, 0.93, 0.84); tip = vec3(1.0); }
+    else if (k < 0.8) { base = vec3(0.98, 0.56, 0.74); tip = vec3(1.0, 0.86, 0.92); }
+    else { base = vec3(0.58, 0.46, 0.98); tip = vec3(0.8, 0.74, 1.0); }
+  } else if (sp < 2.5) {   // buttercups, red and orange poppies
+    if (k < 0.45) { base = vec3(1.0, 0.7, 0.06); tip = vec3(1.0, 0.92, 0.3); heart = vec3(0.86, 0.72, 0.2); }
+    else if (k < 0.78) { base = vec3(0.82, 0.08, 0.07); tip = vec3(1.0, 0.32, 0.22); heart = vec3(0.12, 0.08, 0.12); }
+    else { base = vec3(1.0, 0.42, 0.06); tip = vec3(1.0, 0.68, 0.26); heart = vec3(0.3, 0.18, 0.08); }
+  } else if (sp < 3.5) {   // bellflowers
+    if (k < 0.5) { base = vec3(0.26, 0.32, 0.92); tip = vec3(0.56, 0.68, 1.0); }
+    else if (k < 0.8) { base = vec3(0.52, 0.28, 0.88); tip = vec3(0.8, 0.62, 1.0); }
+    else { base = vec3(0.86, 0.84, 1.0); tip = vec3(1.0); }
+    heart = tip;
+  } else if (sp < 4.5) {   // lupins
+    if (k < 0.4) { base = vec3(0.36, 0.22, 0.82); tip = vec3(0.72, 0.58, 1.0); }
+    else if (k < 0.7) { base = vec3(0.88, 0.3, 0.58); tip = vec3(1.0, 0.72, 0.86); }
+    else if (k < 0.92) { base = vec3(0.92, 0.9, 0.84); tip = vec3(1.0); }
+    else { base = vec3(0.98, 0.66, 0.16); tip = vec3(1.0, 0.9, 0.46); }
+    heart = tip;
+  } else {                 // clover
+    if (k < 0.62) { base = vec3(0.74, 0.26, 0.56); tip = vec3(1.0, 0.62, 0.84); }
+    else { base = vec3(0.9, 0.88, 0.8); tip = vec3(1.0); }
+    heart = base;
+  }
 }
 
 void main(void) {
@@ -246,14 +294,18 @@ void main(void) {
   vec3 V = normalize(camPos - vPos);
   float near = 1.0 - vFar;
   if (shape.z > 0.5) {
-    // flowers: vertex colour alpha marks petals (1) and the heart (0.35)
-    float kind = fract(vBloom * 3.7 + vRand * 0.18);
-    vec3 petal = flowerPalette(kind);
-    vec3 heart = kind < 0.22 ? vec3(1.0, 0.78, 0.15) : petal * 0.7 + vec3(0.25, 0.2, 0.0);
+    // flowers: vertex colour alpha marks petals (1) and the heart (0.35),
+    // green runs from each petal's base to its tip
+    vec3 pb; vec3 pt; vec3 heart;
+    flowerColors(shape.z, fract(vBloom * 2.7 + vRand * 0.22), pb, pt, heart);
+    vec3 petal = mix(pb, pt, vColor.g) * (0.9 + 0.2 * fract(vRand * 31.7));
     vec3 stem = vRoot * 0.85;
-    // distant flowers become soft dabs of colour, not bright pixel sparkles
-    petal = mix(petal, mix(stem, petal, 0.55), vFar);
-    col = vColor.a > 0.9 ? petal * petal : vColor.a > 0.2 ? heart * heart : stem;
+    // small flowers become soft dabs of colour, not bright pixel sparkles
+    float dab = max(vFar, 1.0 - vDetail);
+    petal = mix(petal, mix(stem, petal, 0.45), dab);
+    heart = mix(heart, mix(stem, petal, 0.45), dab);
+    // pure white petals would sit far above everything else in the meadow
+    col = vColor.a > 0.9 ? petal * petal * 0.82 : vColor.a > 0.2 ? heart * heart : stem;
   } else {
     // Each blade grows out of the ground colour: deep shade at the root, the
     // meadow's own green through the middle and a warm, sunny tip. Blades
@@ -279,7 +331,7 @@ void main(void) {
     // sunlit blades catch a glossy streak
     vec3 Hh = normalize(V + sunDir);
     vec3 N = normalize(vBladeN * (gl_FrontFacing ? 1.0 : -1.0));
-    glint = pow(clamp(dot(N, Hh), 0.0, 1.0), 28.0) * smoothstep(0.35, 0.9, h) * near;
+    glint = pow(clamp(dot(N, Hh), 0.0, 1.0), 28.0) * smoothstep(0.35, 0.9, h) * near * vDetail * vDetail;
     col *= 0.94 + 0.12 * fract(vRand * 13.7) * near;
     // distant blades lean toward the field's average colour (less per-blade contrast)
     col = mix(col, mix(vRoot, tip, 0.5), vFar * 0.6);
@@ -291,7 +343,7 @@ void main(void) {
   float soft = 0.06;
   float litK = smoothstep(-soft, soft, sunDir.y) * (1.0 + 0.12 * smoothstep(0.5, 0.7, sunDir.y));
   float back = clamp(dot(-V, sunDir), 0.0, 1.0);
-  float trans = (pow(back, 3.0) * 0.95 + pow(back, 12.0) * 0.6) * h * (1.0 - 0.7 * vFar);
+  float trans = (pow(back, 3.0) * 0.95 + pow(back, 12.0) * 0.6) * h * (1.0 - 0.7 * vFar) * mix(0.35, 1.0, vDetail);
   float ao = mix(mix(0.72, 1.0, h), 0.95, vFar * 0.6);
   float sh = 1.0;
 #ifdef GSHADOW
@@ -305,7 +357,9 @@ void main(void) {
   // rolling wind gusts catch the light: a silvery sheen sweeping over the field
   float sheen = vGust * vGust * vGust;
   lit3 += (col * 0.5 + vec3(0.05, 0.06, 0.03)) * sheen * 0.55 * sunColor * h * sh * (1.0 - 0.6 * vFar);
-  vec3 lit = lit3;
+  // no blade or petal outshines the sky: single over-bright pixels are what flickers
+  float peak = max(lit3.r, max(lit3.g, lit3.b));
+  vec3 lit = lit3 * min(1.0, 1.5 / max(peak, 1e-4));
   gl_FragColor = vec4(kFog(lit, vPos, camPos), 1.0);
 }
 `;
@@ -360,63 +414,278 @@ const NEAR_TUFT = [
 ];
 const FAR_TUFT = [{ yaw: 0, lean: 0.08, h: 1 }];
 
-function flowerGeometry(): VertexData {
-  // A thin stem, a little leaf, and a cupped head of six rounded petals around
-  // a raised heart (vertex alpha: 0 = stem/leaf, 0.35 = heart, 1 = petal).
-  const positions: number[] = [];
-  const uvs: number[] = [];
-  const colors: number[] = [];
-  const indices: number[] = [];
-  const vtx = (x: number, y: number, z: number, v: number, a: number) => {
-    positions.push(x, y, z);
-    uvs.push(0.5, v);
-    colors.push(1, 1, 1, a);
-    return positions.length / 3 - 1;
-  };
-  const sw = 0.035;
-  const y = 0.82;
-  {
-    const a = vtx(-sw, 0, 0, 0, 0);
-    const b = vtx(sw, 0, 0, 0, 0);
-    const c = vtx(sw * 0.6, y, 0.04, y, 0);
-    const d = vtx(-sw * 0.6, y, 0.04, y, 0);
-    indices.push(a, b, c, a, c, d);
-    // a leaf halfway up
-    const l0 = vtx(0, 0.3, 0, 0.3, 0);
-    const l1 = vtx(0.22, 0.42, 0.06, 0.42, 0);
-    const l2 = vtx(0.1, 0.36, -0.07, 0.36, 0);
-    indices.push(l0, l1, l2);
+/**
+ * Flower plants, built in metres. Vertex layout the grass shader reads:
+ * uv.x = the height a part hangs from (a stem or leaf vertex: its own height;
+ * a head: the head's centre), uv.y = height for the wind; colour r = extra
+ * head tag (0 always shown, 0.5 often, 1 sometimes), g = petal base→tip,
+ * b = 1 where the head may nod, a = part (0 stem/leaf, 0.35 heart, 1 petal).
+ */
+class FlowerMesh {
+  positions: number[] = [];
+  uvs: number[] = [];
+  colors: number[] = [];
+  indices: number[] = [];
+  /** Extra-head tag for the parts added next. */
+  tag = 0;
+  private seed = 7;
+
+  rnd() {
+    this.seed = (this.seed * 16807) % 2147483647;
+    return this.seed / 2147483647;
   }
-  // petal fans start from their own centre vertex (pure petal colour); the heart covers it
-  const heart = vtx(0, y + 0.05, 0.04, 1, 1);
-  const petals = 6;
-  for (let k = 0; k < petals; k++) {
-    const a0 = (k / petals) * Math.PI * 2;
-    // each petal: a rounded fan from the heart, tips curling up into a cup
-    const fan = [-0.42, -0.22, 0, 0.22, 0.42];
-    const ids = fan.map((o) => {
-      const a = a0 + o;
-      const r = 0.48 * Math.cos(o * 1.6);
-      return vtx(Math.cos(a) * r, y + 0.03 + r * 0.28, 0.04 + Math.sin(a) * r, 1, 1);
+
+  v(x: number, y: number, z: number, anchor: number, g: number, a: number, nod = 1) {
+    this.positions.push(x, y, z);
+    this.uvs.push(anchor, Math.min(1, y / 0.4));
+    this.colors.push(this.tag, g, nod, a);
+    return this.positions.length / 3 - 1;
+  }
+
+  /** A green part vertex: it hangs from its own height. */
+  g(x: number, y: number, z: number) {
+    return this.v(x, y, z, y, 0, 0, 0);
+  }
+
+  tri(a: number, b: number, c: number) {
+    this.indices.push(a, b, c);
+  }
+
+  quad(a: number, b: number, c: number, d: number) {
+    this.indices.push(a, b, c, a, c, d);
+  }
+
+  /** A tapering ribbon stem through a few points. */
+  stem(pts: [number, number, number][], w: number) {
+    let prev: number[] | null = null;
+    pts.forEach(([x, y, z], i) => {
+      const ww = w * (1 - 0.45 * (i / (pts.length - 1)));
+      const cur = [this.g(x - ww, y, z), this.g(x + ww, y, z)];
+      if (prev) this.quad(prev[0], prev[1], cur[1], cur[0]);
+      prev = cur;
     });
-    for (let i = 0; i < ids.length - 1; i++) indices.push(heart, ids[i], ids[i + 1]);
   }
-  // the heart sits proud of the petals
-  const hr = 0.13;
-  const ring: number[] = [];
-  for (let k = 0; k < 6; k++) {
-    const a = (k / 6) * Math.PI * 2;
-    ring.push(vtx(Math.cos(a) * hr, y + 0.07, 0.04 + Math.sin(a) * hr, 1, 0.35));
+
+  /** A pointed leaf from (x, y, z) reaching len along yaw, rising then drooping. */
+  leaf(x: number, y: number, z: number, len: number, yaw: number, wid = 0.3, rise = 0.5) {
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    const at = (t: number, side: number, up: number) => this.g(x + c * len * t - s * side, y + up, z + s * len * t + c * side);
+    const w = len * wid;
+    const b = at(0, 0, 0);
+    const l = at(0.45, w, len * rise * 0.5);
+    const r = at(0.45, -w, len * rise * 0.5);
+    const t = at(1, 0, len * rise * 0.15);
+    this.quad(b, l, t, r);
   }
-  const top = vtx(0, y + 0.11, 0.04, 1, 0.35);
-  for (let k = 0; k < 6; k++) indices.push(top, ring[k], ring[(k + 1) % 6]);
-  const vd = new VertexData();
-  vd.positions = positions;
-  vd.uvs = uvs;
-  vd.colors = colors;
-  vd.indices = indices;
-  return vd;
+
+  /** A raised dome of heart colour. */
+  heart(cx: number, cy: number, cz: number, r: number, h: number, n = 6) {
+    const ring: number[] = [];
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      ring.push(this.v(cx + Math.cos(a) * r, cy + h * 0.4, cz + Math.sin(a) * r, cy, 0, 0.35));
+    }
+    const top = this.v(cx, cy + h, cz, cy, 0, 0.35);
+    for (let k = 0; k < n; k++) this.tri(top, ring[k], ring[(k + 1) % n]);
+  }
+
+  /** A flat daisy head: many thin petals round a raised heart. */
+  daisy(cx: number, cy: number, cz: number, r: number, n: number) {
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + this.rnd() * 0.2;
+      const rr = r * (0.85 + this.rnd() * 0.25);
+      const droop = (this.rnd() - 0.4) * rr * 0.3;
+      const hw = Math.PI / n * 0.62;
+      const p = (ang: number, rad: number, y: number, g: number) => this.v(cx + Math.cos(ang) * rad, cy + y, cz + Math.sin(ang) * rad, cy, g, 1);
+      this.quad(p(a, r * 0.15, 0.004, 0), p(a - hw, rr * 0.62, droop * 0.5 + 0.01, 0.6), p(a, rr, droop, 1), p(a + hw, rr * 0.62, droop * 0.5 + 0.01, 0.6));
+    }
+    this.heart(cx, cy, cz, r * 0.26, r * 0.32, 5);
+  }
+
+  /** A cupped head of broad rounded petals (buttercup, poppy). */
+  cup(cx: number, cy: number, cz: number, r: number, n: number, depth: number) {
+    const centre = this.v(cx, cy, cz, cy, 0, 1);
+    const fan = [-0.5, -0.25, 0, 0.25, 0.5];
+    for (let k = 0; k < n; k++) {
+      const a0 = (k / n) * Math.PI * 2 + this.rnd() * 0.3;
+      const ids = fan.map((o) => {
+        const a = a0 + o * (Math.PI * 2 / n) * 1.15;
+        const rad = r * Math.cos(o * 1.5) * (0.9 + this.rnd() * 0.15);
+        return this.v(cx + Math.cos(a) * rad, cy + rad * depth, cz + Math.sin(a) * rad, cy, Math.min(1, rad / r), 1);
+      });
+      for (let i = 0; i < ids.length - 1; i++) this.tri(centre, ids[i], ids[i + 1]);
+    }
+    this.heart(cx, cy + 0.006, cz, r * 0.24, r * 0.22, 5);
+  }
+
+  /** A scalloped bell opening along (dx, dy, dz). */
+  bell(cx: number, cy: number, cz: number, d: [number, number, number], len: number, r: number) {
+    const [dx, dy, dz] = d;
+    const dl = Math.hypot(dx, dy, dz);
+    const ax = [dx / dl, dy / dl, dz / dl];
+    // two directions across the bell's axis
+    let u = Math.abs(ax[1]) < 0.9 ? [ax[2], 0, -ax[0]] : [1, 0, 0];
+    const ul = Math.hypot(u[0], u[1], u[2]);
+    u = [u[0] / ul, u[1] / ul, u[2] / ul];
+    const w = [ax[1] * u[2] - ax[2] * u[1], ax[2] * u[0] - ax[0] * u[2], ax[0] * u[1] - ax[1] * u[0]];
+    const n = 10;
+    const rings: number[][] = [];
+    const prof = [[0, 0.3], [0.55, 0.72], [1, 1]];
+    for (const [t, rf] of prof) {
+      const ring: number[] = [];
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2;
+        // five lobes, flaring out at the rim
+        const lobe = t === 1 ? (k % 2 === 0 ? 1.12 : 0.84) : 1;
+        const rad = r * rf * lobe;
+        const ca = Math.cos(a) * rad, sa = Math.sin(a) * rad;
+        const back = t === 1 && k % 2 === 0 ? -len * 0.08 : 0;
+        ring.push(this.v(cx + ax[0] * (len * t + back) + u[0] * ca + w[0] * sa, cy + ax[1] * (len * t + back) + u[1] * ca + w[1] * sa, cz + ax[2] * (len * t + back) + u[2] * ca + w[2] * sa, cy, t, 1));
+      }
+      rings.push(ring);
+    }
+    const base = this.v(cx, cy, cz, cy, 0, 1);
+    for (let k = 0; k < n; k++) this.tri(base, rings[0][k], rings[0][(k + 1) % n]);
+    for (let j = 0; j < rings.length - 1; j++) {
+      for (let k = 0; k < n; k++) this.quad(rings[j][k], rings[j][(k + 1) % n], rings[j + 1][(k + 1) % n], rings[j + 1][k]);
+    }
+  }
+
+  /** A tapering spike of small florets wound round the stem (lupin). */
+  spike(x: number, z: number, y0: number, y1: number, r: number, size: number, n: number) {
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const y = y0 + (y1 - y0) * t;
+      const a = i * 2.39996;
+      const rad = r * (1 - 0.6 * t);
+      const sz = size * (1 - 0.5 * t);
+      const ca = Math.cos(a), sa = Math.sin(a);
+      const p = (along: number, side: number, up: number, g: number) => this.v(x + ca * along - sa * side, y + up, z + sa * along + ca * side, y, g, 1, 0);
+      // each floret faces outward, a little cupped, so the spike reads from the side
+      this.quad(p(rad, 0, -sz * 0.6, t * 0.4), p(rad + sz * 0.3, sz * 0.75, 0, 0.5 + t * 0.4), p(rad + sz * 0.15, 0, sz * 0.7, 0.7 + t * 0.3), p(rad + sz * 0.3, -sz * 0.75, 0, 0.5 + t * 0.4));
+    }
+    // a closed bud on top
+    const tip = this.v(x, y1 + size * 1.3, z, y1, 1, 1, 0);
+    const ring = [0, 1, 2].map((k) => this.v(x + Math.cos(k * 2.1) * size * 0.4, y1, z + Math.sin(k * 2.1) * size * 0.4, y1, 0.7, 1, 0));
+    for (let k = 0; k < 3; k++) this.tri(tip, ring[k], ring[(k + 1) % 3]);
+  }
+
+  /** A round pom of tiny florets (clover). */
+  pom(cx: number, cy: number, cz: number, r: number) {
+    const ring = (y: number, rad: number, off: number, g: number) =>
+      [0, 1, 2, 3, 4, 5].map((k) => this.v(cx + Math.cos(k * 1.0472 + off) * rad, cy + y, cz + Math.sin(k * 1.0472 + off) * rad, cy, g, 1));
+    const top = this.v(cx, cy + r * 1.05, cz, cy, 1, 1);
+    const up = ring(r * 0.55, r * 0.88, 0, 0.75);
+    const lo = ring(-r * 0.2, r * 0.95, 0.52, 0.4);
+    const bot = this.v(cx, cy - r * 0.7, cz, cy, 0, 1);
+    for (let k = 0; k < 6; k++) {
+      const k1 = (k + 1) % 6;
+      this.tri(top, up[k], up[k1]);
+      this.quad(up[k], lo[k], lo[k1], up[k1]);
+      this.tri(bot, lo[k1], lo[k]);
+    }
+  }
+
+  /** Three round leaflets (clover). */
+  trefoil(x: number, y: number, z: number, r: number, yaw: number) {
+    for (let k = 0; k < 3; k++) this.leaf(x, y, z, r, yaw + k * 2.094, 0.55, 0.15);
+  }
+
+  build(): VertexData {
+    const vd = new VertexData();
+    vd.positions = this.positions;
+    vd.uvs = this.uvs;
+    vd.colors = this.colors;
+    vd.indices = this.indices;
+    return vd;
+  }
 }
+
+/** Flower species, matching flowerColors() in the shader (1-based). */
+const FLOWERS: { name: string; density: number; size: number; build: (m: FlowerMesh) => void }[] = [
+  {
+    name: 'daisy',
+    size: 1.5,
+    density: 0.026,
+    build: (m) => {
+      m.stem([[0, 0, 0], [0.01, 0.18, 0.005], [0.025, 0.34, 0.01]], 0.007);
+      m.leaf(0, 0.02, 0, 0.11, 0.4);
+      m.leaf(0, 0.04, 0, 0.09, 3.3);
+      m.daisy(0.025, 0.34, 0.01, 0.1, 12);
+      m.tag = 0.5;
+      m.stem([[0.008, 0.12, 0.003], [0.06, 0.2, 0.03], [0.08, 0.26, 0.04]], 0.005);
+      m.daisy(0.08, 0.26, 0.04, 0.075, 9);
+      m.tag = 1;
+      m.stem([[0.004, 0.08, 0.002], [-0.05, 0.16, -0.03], [-0.065, 0.21, -0.045]], 0.005);
+      m.daisy(-0.065, 0.21, -0.045, 0.065, 8);
+    },
+  },
+  {
+    name: 'cup',
+    size: 1.6,
+    density: 0.026,
+    build: (m) => {
+      m.stem([[0, 0, 0], [-0.01, 0.16, 0], [0.005, 0.3, 0.008]], 0.007);
+      m.leaf(0, 0.03, 0, 0.1, 1.2, 0.4, 0.4);
+      m.leaf(0, 0.05, 0, 0.08, 4.0, 0.4, 0.4);
+      m.cup(0.005, 0.3, 0.008, 0.085, 5, 0.6);
+      m.tag = 0.5;
+      m.stem([[-0.008, 0.13, 0], [0.05, 0.19, -0.03], [0.07, 0.23, -0.04]], 0.005);
+      m.cup(0.07, 0.23, -0.04, 0.065, 5, 0.65);
+      m.tag = 1;
+      m.stem([[-0.006, 0.1, 0], [-0.05, 0.15, 0.04], [-0.06, 0.17, 0.05]], 0.005);
+      m.cup(-0.06, 0.17, 0.05, 0.05, 5, 0.8);
+    },
+  },
+  {
+    name: 'bell',
+    size: 1.7,
+    density: 0.017,
+    build: (m) => {
+      m.stem([[0, 0, 0], [0.01, 0.2, 0], [0.04, 0.36, 0], [0.07, 0.4, 0]], 0.006);
+      m.leaf(0, 0.03, 0, 0.1, 0.9, 0.22, 0.6);
+      m.leaf(0, 0.05, 0, 0.09, 3.9, 0.22, 0.6);
+      m.bell(0.07, 0.4, 0, [0.45, -1, 0.1], 0.09, 0.05);
+      m.tag = 0.5;
+      m.stem([[0.012, 0.24, 0], [-0.03, 0.29, 0.02], [-0.045, 0.29, 0.03]], 0.004);
+      m.bell(-0.045, 0.29, 0.03, [-0.6, -1, 0.3], 0.075, 0.042);
+      m.tag = 1;
+      m.stem([[0.02, 0.29, 0], [0.04, 0.31, -0.04], [0.05, 0.3, -0.055]], 0.004);
+      m.bell(0.05, 0.3, -0.055, [0.2, -1, -0.6], 0.065, 0.036);
+    },
+  },
+  {
+    name: 'spike',
+    size: 1.5,
+    density: 0.012,
+    build: (m) => {
+      m.stem([[0, 0, 0], [0.005, 0.3, 0], [0, 0.58, 0]], 0.008);
+      for (let k = 0; k < 5; k++) m.leaf(0, 0.03, 0, 0.12, k * 1.257 + 0.3, 0.16, 0.45);
+      m.spike(0, 0, 0.3, 0.56, 0.026, 0.04, 14);
+      m.tag = 0.5;
+      m.stem([[0.004, 0.05, 0], [0.05, 0.25, 0.02], [0.06, 0.44, 0.02]], 0.006);
+      m.spike(0.06, 0.02, 0.26, 0.42, 0.022, 0.034, 9);
+    },
+  },
+  {
+    name: 'clover',
+    size: 1.8,
+    density: 0.026,
+    build: (m) => {
+      m.stem([[0, 0, 0], [0.005, 0.08, 0], [0.01, 0.15, 0.004]], 0.004);
+      m.trefoil(0, 0.04, 0, 0.045, 0.3);
+      m.trefoil(0.03, 0.03, 0.02, 0.04, 1.9);
+      m.pom(0.01, 0.16, 0.004, 0.032);
+      m.tag = 0.5;
+      m.stem([[0, 0, 0], [0.04, 0.07, 0.02], [0.06, 0.12, 0.03]], 0.004);
+      m.pom(0.06, 0.13, 0.03, 0.028);
+      m.tag = 1;
+      m.stem([[0, 0, 0], [-0.04, 0.06, -0.03], [-0.05, 0.1, -0.04]], 0.004);
+      m.trefoil(-0.05, 0.03, -0.035, 0.04, 4.0);
+      m.pom(-0.05, 0.11, -0.04, 0.026);
+    },
+  },
+];
 
 interface Field {
   mesh: Mesh;
@@ -431,6 +700,8 @@ export class Grass {
   private fields: Field[] = [];
   private pushers = new Float32Array(16);
   readonly wind = new Vector4(0.8, 0.6, 0.55, 1);
+  /** Pixels per metre at 1 m from the camera (render height / (2·tan(fov/2))), set each frame. */
+  pxScale = 900;
   private sunCol = new Color3();
   private ambCol = new Color3();
   private dirV = new Vector3();
@@ -448,19 +719,24 @@ export class Grass {
     const innerR = q.grassRadius * 0.34;
     // inner dense field, outer sparse field of bigger tufts, and flowers
     // near: dense tufts of three blades; far: bigger single blades
-    this.addField('grassNear', tuftGeometry(NEAR_TUFT), innerR, 0, q.grassDensity * 0.45, { h: 0.5, w: 0.11, flower: false });
-    this.addField('grassFar', tuftGeometry(FAR_TUFT), q.grassRadius, innerR, q.grassDensity * 0.3, { h: 0.62, w: 0.17, flower: false });
-    this.addField('flowers', flowerGeometry(), Math.min(q.grassRadius, 46), 0, q.grassDensity * 0.09, { h: 0.38, w: 0.3, flower: true });
+    this.addField('grassNear', tuftGeometry(NEAR_TUFT), innerR, 0, q.grassDensity * 0.45, { h: 0.5, w: 0.11, flower: 0 });
+    this.addField('grassFar', tuftGeometry(FAR_TUFT), q.grassRadius, innerR, q.grassDensity * 0.3, { h: 0.62, w: 0.17, flower: 0 });
+    // one field per flower species (each its own shape and drifts)
+    FLOWERS.forEach((f, i) => {
+      const m = new FlowerMesh();
+      f.build(m);
+      this.addField('flowers_' + f.name, m.build(), Math.min(q.grassRadius, 34), 0, q.grassDensity * f.density, { h: f.size, w: f.size, flower: i + 1 });
+    });
   }
 
-  private addField(name: string, geo: VertexData, radius: number, innerCut: number, density: number, shape: { h: number; w: number; flower: boolean }) {
+  private addField(name: string, geo: VertexData, radius: number, innerCut: number, density: number, shape: { h: number; w: number; flower: number }) {
     const period = radius * 2;
     // jittered lattice
     const cell = 1 / Math.sqrt(density);
     const n = Math.max(1, Math.floor(period / cell));
     const count = n * n;
     const inst = new Float32Array(count * 4);
-    let seed = 12345 + Math.round(radius * 31);
+    let seed = 12345 + Math.round(radius * 31) + shape.flower * 7919;
     const rnd = () => {
       seed = (seed * 1664525 + 1013904223) >>> 0;
       return seed / 4294967296;
@@ -486,7 +762,7 @@ export class Grass {
     const sg = this.atmosphere.shadows;
     const mat = new ShaderMaterial(name + 'Mat', this.scene, 'keliaGrass', {
       attributes: ['position', 'uv', 'color', 'grassInst'],
-      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo'],
+      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'pxScale', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo'],
       samplers: ['heightTex', 'splatTex', 'detailTex', 'shadowTex'],
       defines: sg ? ['GSHADOW'] : [],
     });
@@ -508,7 +784,7 @@ export class Grass {
     for (const k of ['grassA', 'grassB', 'grassDry', 'forestCol'] as const) mat.setColor3(k, Color3.FromArray(GROUND[k]));
     mesh.material = mat;
     const fv = new Vector4(period, radius, innerCut, 1);
-    this.fields.push({ mesh, mat, shape: [shape.h, shape.w, shape.flower ? 1 : 0], fv, sv: new Vector4() });
+    this.fields.push({ mesh, mat, shape: [shape.h, shape.w, shape.flower], fv, sv: new Vector4() });
   }
 
   /** Up to four characters that bend the grass (x, z, radius). */
@@ -536,6 +812,7 @@ export class Grass {
       m.setVector4('field', f.fv);
       m.setVector4('shape', f.sv.set(f.shape[0], f.shape[1], f.shape[2], time));
       m.setVector3('camPos', cameraPos);
+      m.setFloat('pxScale', this.pxScale);
       m.setVector4('wind', this.wind);
       m.setArray4('pushers', this.pushArr);
       m.setVector3('sunDir', dir);

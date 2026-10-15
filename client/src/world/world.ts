@@ -152,6 +152,7 @@ export class World {
     this.water.update(this.time, cam);
     perf.end('water');
     perf.begin('grass');
+    this.grass.pxScale = this.engine.getRenderHeight() / (2 * Math.tan(this.camera.fov / 2));
     this.grass.update(this.time, cam);
     perf.end('grass');
     perf.begin('foliage');

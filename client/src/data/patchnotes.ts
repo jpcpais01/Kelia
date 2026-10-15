@@ -10,16 +10,50 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    at: '2026-10-15T20:50:00Z',
+    at: '2026-10-15T21:00:00Z',
     title: 'Gliding',
     lines: [
       "You can fly! Fall more than 5 metres (step off a cliff, leap from a ledge) and your glider snaps open above you; Space in the air opens or folds it too. Steer with the mouse, slip sideways with A and D, W to speed up, S to brake and Shift to dive. Each class flies its own colours, the canvas ripples in the wind, wingtips stream contrails and the air roars past as you dive. Three updrafts lift you high: the Hearthmere Windwell behind the market, one at the foot of the Silverfall cliffs, and the Greyspine Thermal below Eagle's Perch, high enough to glide all the way down to the Ruins (they're on the world map). Over deep water the glider skims the surface, and everyone sees you fly.",
     ],
   },
   {
+    at: '2026-10-15T21:00:00Z',
+    title: 'Install Kelia as an app',
+    lines: [
+      'Kelia can now be installed like a real game: look for Install Kelia on the title screen (or the download button in the top-right menu) and it gets its own window, its own desktop and taskbar icon (a golden compass star over a twilight valley) and opens straight into fullscreen. It also starts faster on return visits, since models and game files are kept on your computer and only re-downloaded when an update changes them. You always get the newest version when you open it.',
+    ],
+  },
+  {
+    // the 20:00 hour already has its five lines, so this opens the next group
+    at: '2026-10-15T21:00:00Z',
+    title: 'Painted cliffs',
+    lines: [
+      'The mountains have a whole new look: instead of stacked grey bands, cliffs break into big bold planes of warm and cool stone, with dark cracks between them, rain-streaked gullies running down the faces, ochre patches, grassy ledges with shadow under their lips, and snow that settles on the tops and trickles down the gullies. The far ranges share the same style on a grander scale.',
+    ],
+  },
+  {
+    at: '2026-10-15T20:30:00Z',
+    title: 'No more flickering specks',
+    lines: ['The white specks that flickered in the meadows and around the sun are gone: flowers too small to draw cleanly melt into soft dabs of colour, glints and glowing blade tips fade before they shrink to a single pixel, nothing in the grass outshines the sky, and sparkles on the water spread into a steady shimmer instead of blinking.'],
+  },
+  {
+    at: '2026-10-15T20:25:00Z',
+    title: 'Silky-smooth minimap',
+    lines: [
+      'The minimap now glides and turns with you at your full frame rate instead of stepping along, and it is sharper too, with the same height lines as the world map.',
+    ],
+  },
+  {
     at: '2026-10-15T20:12:00Z',
     title: 'Sign in with a username',
     lines: ['Accounts now use a username and password instead of an email: pick any name of 3 to 16 letters, numbers or underscores and you are in. Google sign-in is still there too.'],
+  },
+  {
+    at: '2026-10-15T20:10:00Z',
+    title: 'Wildflower meadows and shaggier trees',
+    lines: [
+      'The meadows bloom with five kinds of wildflower, each with its own shape: daisies in white, pink and lilac, buttercups and red or orange poppies, nodding bellflowers, tall lupin spikes and little clover pompoms. Every plant is different, with its own height, flower size and tilt, and many carry two or three blooms. Each kind grows in its own drifts, with the odd stray flower in between. Tree crowns lose their round, ball-like look too: every leaf mass now has its own shape, lumpy or tufted, squashed or drooping at the edges, some with a gap where the light shines through, from up close all the way across the valley.',
+    ],
   },
   {
     at: '2026-10-15T20:05:00Z',
