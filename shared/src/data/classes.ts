@@ -148,8 +148,8 @@ export const CLASSES: Record<ClassId, ClassDef> = {
     ],
     skills: [
       { id: 'fireball', name: 'Fireball', key: '1', description: 'A roaring fireball that explodes on impact and sets foes ablaze.', icon: 'fire', cooldown: 6, power: 2.3, shape: { kind: 'aoe-target', range: 28, radius: 3.5 }, anim: 'Spellcast_Long', animSpeed: 1.6, impactAt: 0.7, lockout: 0.85, effect: 'burn', effectValue: 0.15, effectDuration: 4, vfx: 'fireball' },
-      { id: 'frost_nova', name: 'Frost Nova', key: '2', description: 'Erupt in a ring of ice that damages and slows everything nearby.', icon: 'frost', cooldown: 10, power: 1.6, shape: { kind: 'aoe-self', radius: 6 }, anim: 'Spellcast_Raise', animSpeed: 1.3, impactAt: 0.4, lockout: 0.7, effect: 'slow', effectValue: 0.5, effectDuration: 4, vfx: 'frost' },
-      { id: 'mend', name: 'Mending Light', key: '3', description: 'Golden light that restores health to you and nearby allies.', icon: 'heal', cooldown: 16, power: 0, shape: { kind: 'aoe-self', radius: 10 }, anim: 'Spellcasting', animSpeed: 1.4, impactAt: 0.55, lockout: 0.85, effect: 'heal', effectValue: 0.35, vfx: 'heal' },
+      { id: 'frost_nova', name: 'Frost Nova', key: '2', description: 'Erupt in a ring of ice that damages and slows everything nearby.', icon: 'frost', cooldown: 10, power: 1.6, shape: { kind: 'aoe-self', radius: 6 }, anim: '2H_Melee_Attack_Chop', animSpeed: 1.3, impactAt: 0.4, lockout: 0.7, effect: 'slow', effectValue: 0.5, effectDuration: 4, vfx: 'frost' },
+      { id: 'mend', name: 'Mending Light', key: '3', description: 'Golden light that restores health to you and nearby allies.', icon: 'heal', cooldown: 16, power: 0, shape: { kind: 'aoe-self', radius: 10 }, anim: 'Spellcast_Raise', animSpeed: 1.4, impactAt: 0.55, lockout: 0.85, effect: 'heal', effectValue: 0.35, vfx: 'heal' },
     ],
     dodge: { id: 'blink', name: 'Blink', key: 'Q', description: 'Teleport a short distance forward.', icon: 'dodge', cooldown: 4, power: 0, shape: { kind: 'dash', distance: 7 }, anim: 'Dodge_Forward', animSpeed: 1.6, impactAt: 0, lockout: 0.3, effect: 'blink', vfx: 'blink' },
     passives: [

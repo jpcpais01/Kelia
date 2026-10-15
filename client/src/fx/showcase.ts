@@ -4,6 +4,7 @@
 // screenshot captures the effects mid-flight regardless of frame rate.
 import { Vector3 } from '@babylonjs/core';
 import { CLASSES, MONSTERS, type ClassId, type MonsterId, type SkillDef } from '@kelia/shared';
+import { playSkillAnim } from '../char/attacks';
 import type { RigLibrary } from '../char/library';
 import type { CharacterModel } from '../char/model';
 import type { World } from '../world/world';
@@ -72,7 +73,7 @@ export async function runFxShowcase(world: World, chars: Actor[], monsterLib: Ri
   };
   const cast = (a: Actor, s: SkillDef, yaw: number, tx: number, tz: number) => {
     a.c.root.rotation.y = yaw;
-    a.c.animator.play(s.anim, { speed: s.animSpeed ?? 1, upper: false, fadeIn: 0.06, fadeOut: 0.2 });
+    playSkillAnim(a.c.animator, s, false);
     playSkillFx(fx, fxw, a.c, a.cls, s, yaw, tx, tz, true);
   };
   const hitAt = (t: (typeof targets)[number], crit: boolean, color = '#ffd27a') => fx.impact(t.pos.add(new Vector3(0, 1.0 * t.def.scale, 0)), color, { crit, scale: 1 });

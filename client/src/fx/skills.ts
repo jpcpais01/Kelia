@@ -1,8 +1,11 @@
 // Choreography of every player skill's effects: what appears when, relative
 // to the moment the skill is used. Shared by the combat controller (local and
-// remote players) and the developer showcase view.
+// remote players) and the developer showcase view. Trails and impacts follow
+// the same attack timeline as the animation (char/attacks.ts), so the blade's
+// smear starts with the strike and the burst lands on the contact frame.
 import { Vector3, type AbstractMesh, type TransformNode } from '@babylonjs/core';
 import type { ClassId, SkillDef } from '@kelia/shared';
+import { releaseAt, skillTimeline } from '../char/attacks';
 import { C, D, S, type Effects } from './fx';
 
 export const CLASS_COLORS: Record<ClassId, { main: string; hit: string }> = {
@@ -45,12 +48,20 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
   const near = () => local || Vector3.Distance(at(), w.playerPos()) < 14;
   const impact = Math.max(0, skill.impactAt - 0.07);
   const hand = model.node('handslot.r');
+  const tl = skillTimeline(skill);
+  /** A weapon trail from just before the strike through the follow-through (and a hit-stop's worth more). */
+  const strikeTrail = (color: string, lead: number, tail: number, o: { life?: number; intensity?: number }) => {
+    if (!tl) return false;
+    const from = Math.max(0, tl.strikeAt - lead);
+    fx.weaponTrail(hand, color, from, tl.settleAt - from + tail, o);
+    return true;
+  };
   switch (skill.vfx) {
     case 'slash':
     case 'heavy': {
       const heavy = skill.vfx === 'heavy';
       const step = skill.id === 'combo2' ? 1 : 0;
-      fx.weaponTrail(hand, col.main, Math.max(0, skill.impactAt - 0.24), heavy ? 0.55 : 0.45, { intensity: heavy ? 1.3 : 1 });
+      if (!strikeTrail(col.main, 0.06, heavy ? 0.2 : 0.16, { intensity: heavy ? 1.3 : 1 })) fx.weaponTrail(hand, col.main, Math.max(0, skill.impactAt - 0.24), heavy ? 0.55 : 0.45, { intensity: heavy ? 1.3 : 1 });
       fx.after(impact, () => {
         // rising diagonal slice (right to left), level cut (left to right), overhead chop
         fx.slash(at().add(fwd.scale(0.2)).addInPlace(new Vector3(0, heavy ? 1.2 : step ? 0.85 : 1.0, 0)), yaw, col.main, {
@@ -71,7 +82,7 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
             fx.sparks(g.add(new Vector3(0, 0.2, 0)), C(col.main, 3.5), { n: 12, speed: 8, up: 0.7, dur: 0.4, gravity: 9 });
             fx.dust(g, 10, 0.5);
           });
-          if (local) w.shake(0.18);
+          if (local) w.shake(0.12);
         }
       });
       break;
@@ -79,12 +90,12 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
     case 'bash':
       fx.after(impact, () => {
         fx.bash(chest(), yaw, col.main);
-        if (local) w.shake(0.25);
+        if (local) w.shake(0.15);
       });
       break;
     case 'whirl':
-      fx.weaponTrail(hand, col.main, Math.max(0, skill.impactAt - 0.3), 0.6, { intensity: 1.3, life: 0.26 });
-      fx.after(impact - 0.15, () => {
+      if (!strikeTrail(col.main, 0.12, 0.22, { intensity: 1.3, life: 0.26 })) fx.weaponTrail(hand, col.main, Math.max(0, skill.impactAt - 0.3), 0.6, { intensity: 1.3, life: 0.26 });
+      fx.after(tl ? Math.max(0, tl.strikeAt - 0.05) : impact - 0.15, () => {
         fx.whirlwind(at(), yaw, col.main, skill.shape.kind === 'aoe-self' ? skill.shape.radius : 3.6);
         if (local) w.shake(0.22);
       });
@@ -127,7 +138,7 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
       break;
     }
     case 'volley':
-      fx.after(skill.impactAt * 0.4, () => {
+      fx.after(releaseAt(skill), () => {
         const r = skill.shape.kind === 'aoe-target' ? skill.shape.radius : 4;
         const from = handPos(model, 'handslot.l');
         for (let i = 0; i < 6; i++) {
@@ -161,16 +172,17 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
     case 'fireball': {
       const radius = skill.shape.kind === 'aoe-target' ? skill.shape.radius : 3.5;
       fx.magicCircle(at(), '#ff8a2a', { radius: 1.7, dur: skill.impactAt + 0.3, spin: 2.2, intensity: 2.4 });
-      fx.weaponTrail(hand, '#ff9a3a', 0, skill.impactAt * 0.55, { life: 0.2 });
-      fx.after(0.05, () => fx.gather(handPos(model, 'handslot.r', 1.6).add(new Vector3(0, 0.5, 0)), '#ffb04a', skill.impactAt * 0.5 - 0.05, 14, 1.0));
+      const release = releaseAt(skill);
+      fx.weaponTrail(hand, '#ff9a3a', 0, release, { life: 0.2 });
+      fx.after(0.05, () => fx.gather(handPos(model, 'handslot.r', 1.6).add(new Vector3(0, 0.5, 0)), '#ffb04a', release - 0.1, 14, 1.0));
       // where it will land
       const ty = w.groundAt(tx, tz);
       fx.decal(tx, ty, tz, { r0: radius * 0.4, r: radius, dur: skill.impactAt + 0.1, cell: D.arcane, color: C('#ff7a2a', 1.6), spin: 2, fadeIn: 0.4, fadeOut: 0.85, hot: 0.5 });
-      fx.after(skill.impactAt * 0.55, () => {
+      fx.after(release, () => {
         const from = handPos(model, 'handslot.r', 1.6).add(new Vector3(0, 0.5, 0));
         const target = new Vector3(tx, ty + 0.2, tz);
         const dist = Vector3.Distance(from, target);
-        const travel = Math.max(0.12, skill.impactAt * 0.45);
+        const travel = Math.max(0.12, skill.impactAt - release);
         fx.flash(from, C('#ffb04a', 3), 1.4, 0.2);
         fx.missile(from, target.subtract(from).normalize(), dist / travel, dist, 'fire', '#ff8a2a', () => false, (p) => {
           const g = new Vector3(p.x, w.groundAt(p.x, p.z), p.z);
@@ -184,7 +196,9 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
       const r = skill.shape.kind === 'aoe-self' ? skill.shape.radius : 6;
       fx.magicCircle(at(), '#8fe8ff', { radius: 1.6, dur: impact + 0.35, spin: 2.5, intensity: 2.4, cell: D.frost });
       fx.after(0.03, () => fx.gather(handPos(model, 'handslot.r', 1.5), '#bff4ff', Math.max(0.1, impact - 0.05), 12, 1.0));
-      fx.after(impact, () => {
+      // the staff comes down and the ice erupts where it strikes
+      strikeTrail('#8fe8ff', 0.05, 0.1, { intensity: 1.1, life: 0.2 });
+      fx.after(tl ? Math.max(0, tl.contactAt - 0.015) : impact, () => {
         fx.frostNova(at(), r);
         if (near()) w.shake(0.15);
       });

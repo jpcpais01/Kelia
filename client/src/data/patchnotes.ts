@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T15:55:00Z',
+    title: 'Attacks with weight',
+    lines: [
+      'Every attack now has a real swing: you coil into the wind-up, the blade snaps through, the hit freezes for a heartbeat on impact with a punch of the camera, and the follow-through carries your whole body. Monsters reel and stagger away from your blows, heroes flinch when struck, dodges push off hard, skeletons rear back before they swing, Frost Nova is now a staff slam and Mending Light raises the staff to the sky.',
+    ],
+  },
+  {
     at: '2026-10-15T15:45:00Z',
     title: 'Who is online',
     lines: [
@@ -20,9 +27,8 @@ export const PATCH_NOTES: PatchNote[] = [
     at: '2026-10-15T15:10:00Z',
     title: 'Spectacular combat',
     lines: [
-      'Every attack and skill has new effects: swords leave glowing ribbon trails and sharp crescent arcs, the final combo hit cracks the ground, and hits burst into flashes, starbursts and sparks (crits shake the screen).',
-      'Skills got the full treatment: runic magic circles spin at your feet as you cast, Fireball erupts in cel-shaded flame and leaves a scorched crater, Frost Nova shoots ice crystals out of the ground, Whirlwind becomes a spinning vortex, and Volley, Snare, Heal, Blink and Rallying Cry all have their own spells of light.',
-      'Monster attacks warn you with red or purple circles, the Bonelord\'s slam throws rocks and cracks the earth, defeated foes dissolve into glowing ghosts and release their soul, and level-ups raise a pillar of light.',
+      'Every attack and skill has new effects: glowing ribbon trails and crescent arcs on swords, ground-cracking finishers, bursts of sparks on hit, and runic magic circles, cel-shaded fire, ice crystals and vortexes for every skill.',
+      'Monster attacks warn you with red or purple circles, the Bonelord\'s slam cracks the earth, defeated foes dissolve and release their soul, and level-ups raise a pillar of light.',
     ],
   },
   {

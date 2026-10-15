@@ -1,7 +1,10 @@
 // Client-side monsters: snapshot interpolation (like other players), state
 // driven animation (rising, attacking, staggered, dying) and hit reactions.
+// Attacks follow the same re-timed wind-up / strike / follow-through as the
+// players' (char/attacks.ts), so a monster's tell reads before the blow lands.
 import { Vector3 } from '@babylonjs/core';
 import { INTERP_DELAY_MS, MONSTERS, MONSTER_IDS, MonsterState, type MonsterDef, type SnapMonster } from '@kelia/shared';
+import { attackTimeline } from '../char/attacks';
 import type { MonsterModel } from '../char/monsterModel';
 import { wrap } from './player';
 
@@ -32,6 +35,8 @@ export class MonsterEntity {
   private deadT = 0;
   model: MonsterModel | null = null;
   private attackUntil = 0;
+  /** performance.now() of the last flinch (a predicted contact and the server's hit don't both stagger). */
+  private flinchAt = 0;
 
   constructor(readonly id: number, kind: number) {
     this.def = MONSTERS[MONSTER_IDS[kind]];
@@ -120,17 +125,44 @@ export class MonsterEntity {
     const a = this.def.attacks[idx];
     if (!a || !this.model) return 0;
     this.yaw = yaw;
-    const d = this.model.animator.play(a.anim, { speed: a.speed ?? 1, upper: false, fadeIn: 0.08 });
-    this.attackUntil = performance.now() + d * 1000;
+    const big = !!this.def.boss || a.kind === 'slam' || a.kind === 'spin';
+    const tl = attackTimeline(a.anim, a.impactAt, big ? { snap: 0.12, follow: 0.2 } : {});
+    const d = this.model.animator.play(a.anim, {
+      speed: a.speed ?? 1,
+      upper: false,
+      fadeIn: 0.08,
+      beats: tl?.beats,
+      phase: tl ? { strikeAt: tl.strikeAt, contactAt: tl.contactAt, settleAt: tl.settleAt, power: big ? 1 : 0.7, style: 'strike' } : undefined,
+    });
+    this.attackUntil = performance.now() + Math.min(d, a.lockout + 0.1) * 1000;
     return d;
   }
 
-  hit() {
+  /**
+   * Struck (the server's word): flash, stagger away from the blow along
+   * `from` (world direction) with strength 0..1, and flinch if it is free to.
+   */
+  hit(from: Vector3 | null = null, amount = 0.5) {
     this.model?.flash();
-    const an = this.model?.animator;
-    if (an && this.state !== MonsterState.Dead && this.state !== MonsterState.Stunned && performance.now() > this.attackUntil && !an.busy) {
-      an.play('Hit_A', { upper: true, speed: 1.4, fadeIn: 0.04 });
+    if (performance.now() - this.flinchAt > 220) this.react(from, amount);
+  }
+
+  /** Stagger now, ahead of the server's verdict (a predicted contact). */
+  react(from: Vector3 | null, amount: number) {
+    const m = this.model;
+    if (!m || this.state === MonsterState.Dead) return;
+    this.flinchAt = performance.now();
+    m.flash();
+    m.flinch(from, amount);
+    const an = m.animator;
+    if (this.state !== MonsterState.Stunned && performance.now() > this.attackUntil && !an.busy) {
+      an.play(amount > 0.75 && an.has('Hit_B') ? 'Hit_B' : 'Hit_A', { upper: amount <= 0.75, speed: 1.5, fadeIn: 0.03 });
     }
+  }
+
+  /** The killing blow: a last, bigger stagger. */
+  killed(from: Vector3 | null) {
+    this.model?.flinch(from, 1.2);
   }
 
   dispose() {
