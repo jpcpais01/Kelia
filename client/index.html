@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kelia</title>
+    <meta name="description" content="Kelia — a hand-crafted fantasy MMORPG that runs in your browser." />
+    <meta name="theme-color" content="#0d0f14" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  </head>
+  <body>
+    <canvas id="game" tabindex="0"></canvas>
+    <div id="ui"></div>
+    <div id="boot">
+      <div class="boot-mark">
+        <svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true"><path d="M32 4 L38 26 L60 32 L38 38 L32 60 L26 38 L4 32 L26 26 Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="32" cy="32" r="5" fill="currentColor"/></svg>
+      </div>
+      <div class="boot-title">KELIA</div>
+      <div class="boot-bar"><i id="boot-progress"></i></div>
+      <div class="boot-status" id="boot-status">Preparing the world…</div>
+    </div>
+    <noscript>Kelia needs JavaScript to run.</noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
