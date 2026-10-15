@@ -7,8 +7,9 @@ import {
   CLASSES,
   ITEMS,
   POINTS_OF_INTEREST,
+  MONSTER_ID_BASE,
   dayTimeAt,
-  maxHpFor,
+  statsFor,
   xpToNext,
   type Appearance,
   type CharacterData,
@@ -18,6 +19,8 @@ import {
   type ServerMessage,
 } from '@kelia/shared';
 import { CharacterModel, type Look } from '../char/model';
+import { MonsterModel } from '../char/monsterModel';
+import { Effects } from '../fx/fx';
 import type { RigLibrary } from '../char/library';
 import { PRESETS, autoQuality, saveSettings, type UserSettings } from '../core/quality';
 import { Net } from '../net/net';
@@ -30,7 +33,9 @@ import { closeWindow, isWindowOpen, openHelp, openPatchNotes, openSettings } fro
 import { LATEST_NOTE } from '../data/patchnotes';
 import type { World } from '../world/world';
 import { FollowCamera } from './camera';
+import { CombatController } from './combat';
 import { Input } from './input';
+import { MonsterEntity } from './monsters';
 import { LocalPlayer } from './player';
 import { RemotePlayer } from './remote';
 
@@ -55,6 +60,9 @@ export class Game {
   private character: CharacterData | null = null;
   private myId = -1;
   private remotes = new Map<number, RemotePlayer>();
+  private monsters = new Map<number, MonsterEntity>();
+  private combat: CombatController | null = null;
+  readonly fx: Effects;
   private hud: Hud | null = null;
   private camBlend = 1;
   private camFrom = { pos: new Vector3(), target: new Vector3() };
@@ -62,8 +70,10 @@ export class Game {
   private mapTimer = 0;
   private dayOverride: number | null = 0.72;
 
-  constructor(private world: World, private lib: RigLibrary, private settings: UserSettings, private gpu: string) {
+  constructor(private world: World, private lib: RigLibrary, private settings: UserSettings, private gpu: string, private monsterLib: RigLibrary) {
     this.input = new Input(world.engine.getRenderingCanvas()!);
+    this.fx = new Effects(world.scene);
+    this.fx.groundAt = (x, z) => world.groundAt(x, z);
     this.follow = new FollowCamera(world.camera);
     this.follow.groundAt = (x, z) => world.groundAt(x, z);
     this.follow.blocked = (x, y, z) => {
@@ -273,7 +283,7 @@ export class Game {
     this.camBlend = 0;
     this.world.postfx.setDepthOfField(false, this.world.quality);
 
-    const maxHp = maxHpFor(c.cls, c.level);
+    const maxHp = statsFor(c.cls, c.level, c.equipment).maxHp;
     this.hud = new Hud(
       {
         onChat: (text) => this.net.send({ t: 'chat', text }),
@@ -293,6 +303,21 @@ export class Game {
       /* ignore */
     }
     for (const p of m.players) this.addRemote(p);
+    const hud = this.hud;
+    this.combat = new CombatController({
+      world: this.world,
+      fx: this.fx,
+      hud,
+      net: this.net,
+      input: this.input,
+      follow: this.follow,
+      player,
+      character: c,
+      myId: this.myId,
+      remotes: this.remotes,
+      monsters: this.monsters,
+      canAct: () => !hud.chatOpen && !isWindowOpen(),
+    });
     this.bindNet();
     this.hud.addChat('', `Welcome to Kelia, ${c.name}. Press Enter to chat.`, true);
     this.mode = 'playing';
@@ -308,7 +333,29 @@ export class Game {
         if (e[0] === this.myId) continue;
         this.remotes.get(e[0])?.push(m.ts, e);
       }
+      for (const row of m.m ?? []) {
+        let me = this.monsters.get(row[0]);
+        if (!me) {
+          me = new MonsterEntity(row[0], row[1]);
+          const model = new MonsterModel(this.world.scene, this.monsterLib, me.def, 'm' + (row[0] - MONSTER_ID_BASE));
+          model.setShadowCaster((mm) => this.world.atmosphere.addShadowCaster(mm, false));
+          me.model = model;
+          this.monsters.set(row[0], me);
+          if (!me.def.boss) this.hud?.plate(row[0], me.def.name, me.def.level, 'enemy');
+        }
+        me.lastSeen = performance.now();
+        me.push(m.ts, row);
+      }
     });
+    net.on('act', (m) => this.combat?.onRemoteAct(m));
+    net.on('mact', (m) => this.combat?.onMonsterAct(m));
+    net.on('hit', (m) => this.combat?.onHits(m.h));
+    net.on('kill', (m) => this.combat?.onKill(m.id));
+    net.on('me', (m) => this.combat?.onSelf(m.s));
+    net.on('lvl', (m) => this.combat?.onLevel(m));
+    net.on('died', (m) => this.combat?.onDied(m.by));
+    net.on('respawned', (m) => this.combat?.onRespawned(m));
+    net.on('loot', (m) => this.combat?.onLoot(m.id, m.qty));
     net.on('join', (m) => this.addRemote(m.p));
     net.on('leave', (m) => {
       const r = this.remotes.get(m.id);
@@ -469,11 +516,26 @@ export class Game {
     if (input.mouseDX || input.mouseDY) this.follow.look(input.mouseDX, input.mouseDY);
     if (input.wheel) this.follow.zoom(input.wheel);
 
+    this.combat?.update(dt);
     player.update(dt, input, this.follow);
-    player.model.lookTarget = this.camLookPoint();
+    player.model.lookTarget = this.combat?.dead ? null : this.camLookPoint();
 
     const now = this.net.serverNow();
     for (const r of this.remotes.values()) r.update(dt, now);
+    const pnow = performance.now();
+    let boss: MonsterEntity | null = null;
+    for (const [id, mo] of this.monsters) {
+      if (pnow - mo.lastSeen > 2500) {
+        mo.dispose();
+        this.monsters.delete(id);
+        this.hud?.removePlate(id);
+        continue;
+      }
+      mo.update(dt, now);
+      if (mo.def.boss && mo.alive && Vector3.Distance(mo.pos, player.pos) < 38) boss = mo;
+    }
+    hud.setBoss(boss ? boss.def.name : null, boss?.hpFrac ?? 1);
+    this.fx.update(dt);
 
     // camera (blend in from the previous shot when entering)
     this.follow.update(dt, this.focusPoint(), player.vel, player.sprinting);
@@ -490,11 +552,18 @@ export class Game {
     // HUD
     const plates = [{ id: this.myId, pos: player.pos.add(new Vector3(0, 2.25, 0)), hp: 1, visible: true }];
     for (const [id, r] of this.remotes) plates.push({ id, pos: r.pos.add(new Vector3(0, 2.25, 0)), hp: r.hpFrac, visible: true });
+    for (const [id, mo] of this.monsters) {
+      if (mo.def.boss) continue;
+      const show = mo.alive && mo.state !== 6 && (mo.hpFrac < 0.999 || pnow - mo.lastHurt < 5000);
+      plates.push({ id, pos: mo.pos.add(new Vector3(0, 2.1 * mo.def.scale + 0.15, 0)), hp: mo.hpFrac, visible: show });
+    }
     hud.updatePlates(this.world.engine, this.world.camera, plates, this.settings.showNames);
     this.mapTimer -= dt;
     if (this.mapTimer <= 0) {
       this.mapTimer = 0.08;
-      hud.updateMinimap(player.pos.x, player.pos.z, player.yaw, this.follow.yaw, [...this.remotes.values()].map((r) => ({ x: r.pos.x, z: r.pos.z })), this.character?.discovered ?? []);
+      const enemies: { x: number; z: number; boss: boolean }[] = [];
+      for (const mo of this.monsters.values()) if (mo.alive) enemies.push({ x: mo.pos.x, z: mo.pos.z, boss: !!mo.def.boss });
+      hud.updateMinimap(player.pos.x, player.pos.z, player.yaw, this.follow.yaw, [...this.remotes.values()].map((r) => ({ x: r.pos.x, z: r.pos.z })), this.character?.discovered ?? [], enemies);
       const zone = this.zoneAt(player.pos.x, player.pos.z);
       hud.setZone(zone && (!zone.hidden || this.character?.discovered.includes(zone.id)) ? zone.name : 'Kelia');
       hud.setClock(this.world.atmosphere.dayTime);

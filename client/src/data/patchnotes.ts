@@ -10,6 +10,17 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T04:00:00Z',
+    title: 'The dead walk',
+    lines: [
+      'Combat is here: each fighting style has a three-hit combo, three skills that unlock at levels 1, 3 and 5, a dodge (roll, vault or blink) and passives at levels 2, 4, 6 and 8.',
+      'Risen skeletons now roam the valley: Restless Bones in the meadows, Hollow Stalkers at the forest edge, and Bone Hexers and Grave Knights in the Ruins of Old Kelia.',
+      'Bonelord Varrok waits in the ruined hall. Watch the ground for red circles and dodge out of them. Bring friends.',
+      'Earn XP for every kill (everyone who helps gets the full reward) and climb to level 10. Enemies can drop healing potions; press R to drink one.',
+      'If you fall, you can return to Hearthmere at full health.',
+    ],
+  },
+  {
     at: '2026-10-15T03:00:00Z',
     title: 'Kelia opens its gates',
     lines: [

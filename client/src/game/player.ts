@@ -48,6 +48,10 @@ export class LocalPlayer {
   /** Seconds of input lock (attacks, dodges) and forced velocity during them. */
   private lockT = 0;
   private dash: Vector3 | null = null;
+  private moveScale = 0;
+  private faceDash = true;
+  private faceT = 0;
+  private faceYaw = 0;
   private tmpCol: Collider[] = [];
   /** Extra multiplier from passives/items. */
   speedMul = 1;
@@ -72,10 +76,60 @@ export class LocalPlayer {
     this.vy = 0;
   }
 
-  /** Lock movement for an action, optionally sliding with a velocity (dodges). */
-  commit(seconds: number, dash?: Vector3) {
+  /**
+   * Commit to an action for `seconds`: movement is scaled by `moveScale`
+   * (0 = rooted), or replaced by a dash velocity (dodges).
+   */
+  commit(seconds: number, dash?: Vector3, moveScale = 0, faceDash = true) {
     this.lockT = Math.max(this.lockT, seconds);
     this.dash = dash ?? null;
+    this.moveScale = moveScale;
+    this.faceDash = faceDash;
+  }
+
+  /** Turn to face `yaw` now and hold it for `seconds` (aiming). */
+  face(yaw: number, seconds: number) {
+    this.faceYaw = yaw;
+    this.faceT = seconds;
+    this.yaw = yaw;
+    this.lastYaw = yaw;
+  }
+
+  /** Instant move along (dx, dz), stopping early at water, cliffs or obstacles. */
+  teleport(dx: number, dz: number) {
+    const len = Math.hypot(dx, dz);
+    const steps = Math.ceil(len / 0.25);
+    let x = this.pos.x;
+    let z = this.pos.z;
+    let g = this.env.groundAt(x, z);
+    for (let i = 1; i <= steps; i++) {
+      const nx = this.pos.x + (dx * i) / steps;
+      const nz = this.pos.z + (dz * i) / steps;
+      const ng = this.env.groundAt(nx, nz);
+      const w = waterAt(nx, nz);
+      if (ng - g > 0.6 || (w > -Infinity && w - ng > MAX_WADE_DEPTH)) break;
+      if (this.env.colliders(nx, nz, this.tmpCol).some((c) => (nx - c.x) ** 2 + (nz - c.z) ** 2 < (c.r + CHAR_RADIUS) ** 2)) break;
+      x = nx;
+      z = nz;
+      g = ng;
+    }
+    this.pos.set(x, Math.max(g, this.pos.y), z);
+    this.vel.setAll(0);
+    this.syncModel();
+  }
+
+  /** Direction the player is trying to move (unit, camera-relative), or null. */
+  wishDir(input: Input, cam: FollowCamera): Vector3 | null {
+    let ix = 0;
+    let iz = 0;
+    if (input.key('KeyW') || input.key('ArrowUp')) iz += 1;
+    if (input.key('KeyS') || input.key('ArrowDown')) iz -= 1;
+    if (input.key('KeyD') || input.key('ArrowRight')) ix += 1;
+    if (input.key('KeyA') || input.key('ArrowLeft')) ix -= 1;
+    if (!ix && !iz) return null;
+    const fwd = cam.forward();
+    const right = new Vector3(fwd.z, 0, -fwd.x);
+    return fwd.scale(iz).add(right.scale(ix)).normalize();
   }
 
   get locked() {
@@ -116,11 +170,13 @@ export class LocalPlayer {
     speed *= this.speedMul;
 
     this.lockT = Math.max(0, this.lockT - dt);
+    this.faceT = Math.max(0, this.faceT - dt);
     const target = wish.scale(wishLen > 0 ? speed : 0);
     if (this.lockT > 0) {
-      target.setAll(0);
       if (this.dash) target.copyFrom(this.dash);
+      else target.scaleInPlace(this.moveScale);
     } else this.dash = null;
+    if (this.sprinting && this.lockT > 0) this.sprinting = false;
 
     const accel = this.grounded ? (wishLen > 0 ? 14 : 18) : 3.5;
     const k = 1 - Math.exp(-dt * (this.dash ? 30 : accel));
@@ -129,10 +185,11 @@ export class LocalPlayer {
 
     // ---- facing: towards movement (backpedal keeps facing forward)
     let wantYaw = this.yaw;
-    if (this.dash) wantYaw = Math.atan2(this.dash.x, this.dash.z);
-    else if (wishLen > 0) wantYaw = backpedal ? Math.atan2(fwd.x, fwd.z) : Math.atan2(wish.x, wish.z);
+    if (this.faceT > 0) wantYaw = this.faceYaw;
+    else if (this.dash && this.faceDash) wantYaw = Math.atan2(this.dash.x, this.dash.z);
+    else if (wishLen > 0 && !(this.lockT > 0 && this.moveScale === 0)) wantYaw = backpedal ? Math.atan2(fwd.x, fwd.z) : Math.atan2(wish.x, wish.z);
     const dy = wrap(wantYaw - this.yaw);
-    const turnK = 1 - Math.exp(-dt * (this.grounded ? 12 : 5));
+    const turnK = 1 - Math.exp(-dt * (this.faceT > 0 ? 30 : this.grounded ? 12 : 5));
     this.yaw = wrap(this.yaw + dy * turnK);
     this.turnRate = wrap(this.yaw - this.lastYaw) / Math.max(dt, 1e-4);
     this.lastYaw = this.yaw;
@@ -208,7 +265,7 @@ export class LocalPlayer {
     // ---- state for the network / animation
     const sp = Math.hypot(this.vel.x, this.vel.z);
     if (!this.grounded) this.state = MoveState.Air;
-    else if (this.dash) this.state = MoveState.Dodge;
+    else if (this.dash && this.lockT > 0) this.state = MoveState.Dodge;
     else if (wading && sp > 0.3) this.state = MoveState.Wade;
     else if (sp < 0.3) this.state = MoveState.Idle;
     else if (sp < 3.4) this.state = MoveState.Walk;

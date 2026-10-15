@@ -29,10 +29,10 @@ export class RigLibrary {
 
   private constructor(readonly container: AssetContainer, readonly scene: Scene) {}
 
-  static async load(scene: Scene, file: string, atlasNames: string[] = []): Promise<RigLibrary> {
+  static async load(scene: Scene, file: string, atlasNames: string[] = [], splitHeads = true): Promise<RigLibrary> {
     const c = await loadContainer(scene, file);
     const lib = new RigLibrary(c, scene);
-    lib.splitHeads();
+    if (splitHeads) lib.splitHeads();
     await Promise.all(atlasNames.map((n) => lib.measureAtlas(n)));
     lib.measure();
     return lib;

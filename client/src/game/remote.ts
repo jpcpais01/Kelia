@@ -27,6 +27,7 @@ export class RemotePlayer {
   private vel = new Vector3();
   private initialized = false;
   private lastState = MoveState.Idle;
+  dead = false;
 
   constructor(public info: PublicCharacter, readonly model: CharacterModel) {}
 
@@ -85,9 +86,10 @@ export class RemotePlayer {
     // state transitions
     if (this.state !== this.lastState) {
       const an = this.model.animator;
-      if (this.state === MoveState.Dodge) an.play('Dodge_Forward', { speed: 1.25, upper: false });
       if (this.state === MoveState.Dead) an.play('Death_A', { hold: true, upper: false });
       if (this.lastState === MoveState.Dead) an.stopAction();
+      if (this.state === MoveState.Dead) this.dead = true;
+      else if (this.lastState === MoveState.Dead) this.dead = false;
       if (this.lastState === MoveState.Air && this.state !== MoveState.Air) an.play('Jump_Land', { speed: 1.4, upper: false, fadeIn: 0.05 });
       if (this.lastState === MoveState.Sit) an.stopAction();
       this.lastState = this.state;

@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const TICK_RATE = 20; // server simulation + snapshot rate (Hz)
 export const TICK_MS = 1000 / TICK_RATE;
 export const MAX_PLAYERS = 10;

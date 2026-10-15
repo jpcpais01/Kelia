@@ -2,6 +2,8 @@
 // lake, forest, hills and points of interest sit. Terrain generation and
 // gameplay (spawns, monsters, minimap) all read from here.
 
+import type { MonsterId } from '../data/monsters';
+
 export type Vec2 = readonly [number, number];
 
 export const WORLD_SEED = 1337;
@@ -189,10 +191,10 @@ export const RUINS_PROPS: Placement[] = [
   { prop: 'd_floor_dirt_large_rocky', x: 0, z: -14, rot: 0.5, scale: 1.1 },
 ];
 
-/** Monster spawn zones (used from the combat update onwards). */
+/** Where each kind of enemy lives. */
 export interface SpawnZone {
   id: string;
-  monster: 'minion' | 'rogue' | 'mage' | 'warrior';
+  monster: MonsterId;
   center: Vec2;
   radius: number;
   count: number;
@@ -203,5 +205,6 @@ export const SPAWN_ZONES: SpawnZone[] = [
   { id: 'south-meadow', monster: 'minion', center: [40, -170], radius: 45, count: 5 },
   { id: 'forest-edge', monster: 'rogue', center: [-200, -20], radius: 55, count: 5 },
   { id: 'ruins-yard', monster: 'mage', center: [255, -10], radius: 30, count: 4 },
-  { id: 'ruins-hall', monster: 'warrior', center: [255, 30], radius: 4, count: 1 },
+  { id: 'ruins-guard', monster: 'warrior', center: [232, 12], radius: 14, count: 2 },
+  { id: 'ruins-hall', monster: 'king', center: [255, 30], radius: 4, count: 1 },
 ];

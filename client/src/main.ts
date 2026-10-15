@@ -29,8 +29,9 @@ async function boot() {
   await new Promise((r) => setTimeout(r, 0));
   const world = new World(engine, data, PRESETS[level] ?? PRESETS.medium);
   progress(0.72, 'Raising the village…');
-  const [lib] = await Promise.all([
+  const [lib, monsterLib] = await Promise.all([
     RigLibrary.load(world.scene, 'characters/adventurers.glb', ['knight', 'barbarian', 'mage', 'rogue']),
+    RigLibrary.load(world.scene, 'characters/skeletons.glb', [], false),
     world.loadAssets(),
   ]);
   progress(0.9, 'Lighting the lanterns…');
@@ -54,14 +55,14 @@ async function boot() {
     }
   });
   window.addEventListener('resize', () => engine.resize());
-  (window as unknown as { kelia: unknown }).kelia = { world, engine, lib };
+  (window as unknown as { kelia: unknown }).kelia = { world, engine, lib, monsterLib };
 
   const cam = params.get('cam')?.split(',').map(Number);
   if (cam) {
     // Developer view: fixed camera for screenshots (?cam=x,y,z,tx,ty,tz&t=dayTime&rel).
-    await devView(world, lib, params, cam);
+    await devView(world, lib, params, cam, monsterLib);
   } else {
-    const game = new Game(world, lib, settings, gpu);
+    const game = new Game(world, lib, settings, gpu, monsterLib);
     (window as unknown as { game: unknown }).game = game;
     void game.start();
   }
@@ -70,7 +71,7 @@ async function boot() {
   setTimeout(() => bootEl?.remove(), 1300);
 }
 
-async function devView(world: World, lib: RigLibrary, params: URLSearchParams, cam: number[]) {
+async function devView(world: World, lib: RigLibrary, params: URLSearchParams, cam: number[], monsterLib: RigLibrary) {
   const { Vector3 } = await import('@babylonjs/core');
   const t = params.get('t');
   if (t) world.atmosphere.dayTime = Number(t);
@@ -79,6 +80,23 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
   const g1 = rel ? world.groundAt(cam[3], cam[5]) : 0;
   world.camera.position.set(cam[0], cam[1] + g0, cam[2]);
   world.camera.setTarget(new Vector3(cam[3], cam[4] + g1, cam[5]));
+  if (params.get('monsters')) {
+    const { MonsterModel } = await import('./char/monsterModel');
+    const { MONSTERS, MONSTER_IDS } = await import('@kelia/shared');
+    const [ox, oz] = (params.get('at') || '-62,-11').split(',').map(Number);
+    const anim = params.get('anim');
+    const ms = MONSTER_IDS.map((id, i) => {
+      const m = new MonsterModel(world.scene, monsterLib, MONSTERS[id], 'dm' + i);
+      const x = ox + (i - 2) * 2.2;
+      m.root.position.set(x, world.groundAt(x, oz), oz);
+      m.root.rotation.y = 0;
+      m.setShadowCaster((mm) => world.atmosphere.addShadowCaster(mm, false));
+      if (anim) m.animator.play(anim, { loop: true, upper: false });
+      return m;
+    });
+    world.onUpdate((dt) => ms.forEach((m) => m.update(dt, Vector3.Zero())));
+    return;
+  }
   if (!params.get('chars')) return;
   const { CharacterModel } = await import('./char/model');
   const looks = [

@@ -26,6 +26,11 @@ export interface CharacterData {
 export function newCharacter(uid: string, name: string, cls: ClassId, appearance: Appearance): CharacterData {
   const c = CLASSES[cls];
   const now = Date.now();
+  const equipment: Equipment = {
+    weapon: c.startingWeapon,
+    offhand: c.startingOffhand ?? null,
+    outfit: OUTFIT_ITEM_IDS[appearance.outfit] ?? OUTFIT_ITEM_IDS[0],
+  };
   return {
     uid,
     name,
@@ -33,15 +38,11 @@ export function newCharacter(uid: string, name: string, cls: ClassId, appearance
     appearance: { ...DEFAULT_APPEARANCE, ...appearance },
     level: 1,
     xp: 0,
-    hp: maxHpFor(cls, 1),
+    hp: maxHpFor(cls, 1, equipment),
     pos: [ARRIVAL_POINT[0], 0, ARRIVAL_POINT[1]],
     yaw: ARRIVAL_YAW,
     inventory: [{ id: 'potion_small', qty: 3 }],
-    equipment: {
-      weapon: c.startingWeapon,
-      offhand: c.startingOffhand ?? null,
-      outfit: OUTFIT_ITEM_IDS[appearance.outfit] ?? OUTFIT_ITEM_IDS[0],
-    },
+    equipment,
     createdAt: now,
     updatedAt: now,
     playTime: 0,
