@@ -1,0 +1,21 @@
+# Render blueprint for the Kelia game server (free web service).
+services:
+  - type: web
+    name: kelia-server
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build:server
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Paste the whole Firebase service-account JSON (one line) here.
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false
+      # Comma-separated client origins allowed to connect, e.g. https://kelia.vercel.app
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # "false" turns off guest play once you have Firebase sign-in working.
+      - key: ALLOW_GUESTS
+        value: "true"

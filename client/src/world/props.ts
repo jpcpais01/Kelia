@@ -136,15 +136,6 @@ export class Props {
       const h = 2.6 + hash2(i, 3, 9) * 1.4;
       b.rock([x, h * 0.45, z], [0.55, h * 0.55, 0.42], noise, i * 2.3 + 1, [0.42, 0.41, 0.4], [0.22, 0.32, 0.12]);
     }
-    // stepped dais
-    for (let k = 0; k < 2; k++) {
-      const seg = 24;
-      const rad = 3.6 - k * 1.1;
-      for (let s = 0; s < seg; s++) {
-        const a = (s / seg) * Math.PI * 2;
-        b.rock([Math.cos(a) * rad, -0.15 + k * 0.28, Math.sin(a) * rad], [0.75, 0.32, 0.75], noise, s + k * 40, [0.5, 0.48, 0.45], [0.3, 0.36, 0.2]);
-      }
-    }
     const stones = new Mesh('shrineStones', this.scene);
     b.toVertexData().applyToMesh(stones);
     const mat = new PBRMaterial('shrineStone', this.scene);
@@ -163,9 +154,28 @@ export class Props {
       this.foliage.addStaticCollider(cx + Math.cos(a) * (SHRINE.radius - 1.2), cz + Math.sin(a) * (SHRINE.radius - 1.2), 0.7);
     }
 
+    // a low, two-tier paved dais
+    for (const [rad, top, i] of [[3.6, 0.07, 0], [2.3, 0.14, 1]] as const) {
+      const d = MeshBuilder.CreateCylinder('dais' + i, { diameterTop: rad * 2 - 0.25, diameterBottom: rad * 2, height: 0.6, tessellation: 18 }, this.scene);
+      d.convertToFlatShadedMesh();
+      d.position.set(cx, cy + top - 0.3, cz);
+      d.rotation.y = i * 0.17;
+      d.material = mat;
+      d.receiveShadows = true;
+      d.parent = this.root;
+      const n = d.getTotalVertices();
+      const cols: number[] = [];
+      for (let v = 0; v < n; v++) {
+        const s = 0.42 + hash2(v, i, 31) * 0.1;
+        cols.push(s, s * 0.97, s * 0.93, 1);
+      }
+      d.setVerticesData('color', cols);
+      d.useVertexColors = true;
+    }
+
     const crystal = MeshBuilder.CreatePolyhedron('shrineCrystal', { type: 1, size: 0.55 }, this.scene);
     crystal.scaling.set(0.8, 1.9, 0.8);
-    crystal.position.set(cx, cy + 2.3, cz);
+    crystal.position.set(cx, cy + 5.2, cz);
     const cm = new StandardMaterial('crystal', this.scene);
     cm.emissiveColor = new Color3(0.45, 0.85, 1.0);
     cm.diffuseColor = new Color3(0.2, 0.4, 0.5);
@@ -206,7 +216,7 @@ export class Props {
   update(time: number) {
     if (this.shrineCrystal) {
       this.shrineCrystal.rotation.y = time * 0.4;
-      this.shrineCrystal.position.y = this.hm.sample(SHRINE.center[0], SHRINE.center[1]) + 2.3 + Math.sin(time * 1.3) * 0.12;
+      this.shrineCrystal.position.y = this.hm.sample(SHRINE.center[0], SHRINE.center[1]) + 5.2 + Math.sin(time * 1.3) * 0.12;
     }
   }
 }

@@ -78,6 +78,9 @@ export const PATHS: Vec2[][] = [
 ];
 
 export const SPAWN_POINT: Vec2 = [6, -32];
+/** New heroes appear on the shrine dais, facing the village. */
+export const ARRIVAL_POINT: Vec2 = [SHRINE.center[0] + 1.2, SHRINE.center[1]];
+export const ARRIVAL_YAW = Math.atan2(VILLAGE.center[0] - ARRIVAL_POINT[0], VILLAGE.center[1] - ARRIVAL_POINT[1]);
 
 /** Village buildings (prop name, x, z, rotationY radians, scale). */
 export interface Placement {

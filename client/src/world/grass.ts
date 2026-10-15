@@ -15,6 +15,7 @@ import {
   type Scene,
   type Texture,
 } from '@babylonjs/core';
+import { SHRINE, VILLAGE } from '@kelia/shared';
 import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
 
@@ -69,6 +70,9 @@ void main(void) {
   float s = keep * fade * inner * (0.55 + 0.9 * grassInst.w);
   // taller, lusher grass in the forest edge, short near paths
   s *= mix(1.0, 1.35, sp.r) * (1.0 - sp.a * 0.5);
+  // kept short in the village and around the shrine
+  s *= mix(0.6, 1.0, smoothstep(${VILLAGE.radius.toFixed(1)} - 12.0, ${VILLAGE.radius.toFixed(1)} + 6.0, length(wp - vec2(${VILLAGE.center[0].toFixed(1)}, ${VILLAGE.center[1].toFixed(1)}))));
+  s *= mix(0.5, 1.0, smoothstep(${SHRINE.radius.toFixed(1)} - 2.0, ${SHRINE.radius.toFixed(1)} + 6.0, length(wp - vec2(${SHRINE.center[0].toFixed(1)}, ${SHRINE.center[1].toFixed(1)}))));
 
   float ang = grassInst.z * 43.7 + grassInst.w * 17.0;
   float ca = cos(ang); float sa = sin(ang);
@@ -262,9 +266,9 @@ export class Grass {
     this.fields = [];
     const innerR = q.grassRadius * 0.34;
     // inner dense field, outer sparse field of bigger tufts, and flowers
-    this.addField('grassNear', bladeGeometry(), innerR, 0, q.grassDensity, { h: 0.55, w: 0.075, flower: false });
-    this.addField('grassFar', bladeGeometry(), q.grassRadius, innerR, q.grassDensity * 0.3, { h: 0.7, w: 0.13, flower: false });
-    this.addField('flowers', flowerGeometry(), Math.min(q.grassRadius, 46), 0, q.grassDensity * 0.05, { h: 0.38, w: 0.32, flower: true });
+    this.addField('grassNear', bladeGeometry(), innerR, 0, q.grassDensity, { h: 0.4, w: 0.07, flower: false });
+    this.addField('grassFar', bladeGeometry(), q.grassRadius, innerR, q.grassDensity * 0.3, { h: 0.5, w: 0.12, flower: false });
+    this.addField('flowers', flowerGeometry(), Math.min(q.grassRadius, 46), 0, q.grassDensity * 0.05, { h: 0.3, w: 0.28, flower: true });
   }
 
   private addField(name: string, geo: VertexData, radius: number, innerCut: number, density: number, shape: { h: number; w: number; flower: boolean }) {

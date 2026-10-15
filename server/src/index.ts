@@ -38,16 +38,15 @@ server.on('upgrade', (req, socket, head) => {
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
     const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim() ?? req.socket.remoteAddress ?? '';
+    alive.set(ws, true);
+    ws.on('pong', () => alive.set(ws, true));
     world.connect(ws, ip);
   });
 });
 
-// Drop dead connections (laptops that slept, etc).
+// Drop dead connections (laptops that slept, etc). With noServer the
+// 'connection' event never fires, so liveness is tracked from the upgrade.
 const alive = new WeakMap<object, boolean>();
-wss.on('connection', (ws) => {
-  alive.set(ws, true);
-  ws.on('pong', () => alive.set(ws, true));
-});
 setInterval(() => {
   for (const ws of wss.clients) {
     if (!alive.get(ws)) {

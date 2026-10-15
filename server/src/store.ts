@@ -68,6 +68,7 @@ export class FileStore implements CharacterStore {
     this.timer = null;
     const tmp = this.file + '.tmp';
     try {
+      fs.mkdirSync(path.dirname(this.file), { recursive: true });
       fs.writeFileSync(tmp, JSON.stringify([...this.chars.values()]));
       fs.renameSync(tmp, this.file);
     } catch (err) {

@@ -211,7 +211,7 @@ export class World {
     if (!isClassId(msg.cls)) return s.send({ t: 'error', code: 'class', message: 'Unknown class.' });
     if (!isValidAppearance(msg.appearance)) return s.send({ t: 'error', code: 'appearance', message: 'Invalid appearance.' });
     const character = newCharacter(s.auth.uid, name, msg.cls, sanitizeAppearance(msg.appearance));
-    character.pos[1] = this.heightmap.sample(SPAWN_POINT[0], SPAWN_POINT[1]);
+    character.pos[1] = this.heightmap.sample(character.pos[0], character.pos[2]);
     const ok = await this.store.create(character);
     if (!ok) return s.send({ t: 'nameTaken', name });
     s.character = character;

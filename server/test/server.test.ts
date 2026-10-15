@@ -54,7 +54,7 @@ const guest = (id: string) => `guest:${id}:${'s'.repeat(24)}`;
 
 test('health endpoint', async () => {
   const r = await fetch(`http://localhost:${PORT}/health`);
-  const j = await r.json();
+  const j = (await r.json()) as { ok: boolean };
   assert.equal(j.ok, true);
 });
 

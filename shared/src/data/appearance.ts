@@ -40,7 +40,7 @@ export const HAIR_STYLES: Option[] = [
   { id: 'knight', name: 'Short Crop' },
   { id: 'rogue', name: 'Long Braid' },
   { id: 'mage', name: 'Neat Part' },
-  { id: 'barbarian', name: 'Wild & Bearded' },
+  { id: 'barbarian', name: 'Bearded' },
   { id: 'none', name: 'Shaved' },
 ];
 

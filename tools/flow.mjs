@@ -1,0 +1,63 @@
+// Headless end-to-end check of the game flow against a local server:
+// login as guest → create a character → enter the world → walk → chat.
+// node flow.mjs <url> <outDir> [name]
+import { chromium } from 'playwright-core';
+import fs from 'node:fs';
+const [url, outDir = 'out', name = 'Testa'] = process.argv.slice(2);
+fs.mkdirSync(outDir, { recursive: true });
+const exe = fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined;
+const args = ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'];
+const browser = await chromium.launch({ executablePath: exe, args, headless: true });
+const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+const page = await ctx.newPage();
+const errors = [];
+page.on('console', (m) => { const t = m.text(); if (m.type() === 'error' || m.type() === 'warning') console.log('[page]', m.type(), t.slice(0, 300)); });
+page.on('pageerror', (e) => { errors.push(e.message); console.log('[pageerror]', e.message); });
+const shot = async (n) => { await page.screenshot({ path: `${outDir}/${n}.png`, timeout: 180000 }); console.log('shot', n); };
+const step = (s) => console.log('--', s);
+
+await page.goto(url);
+step('waiting for login');
+await page.waitForSelector('.login-card button.btn.primary', { timeout: 240000 });
+await page.waitForTimeout(3000);
+await shot('1-login');
+await page.click('.login-card button.btn.primary');
+step('waiting for creator');
+await page.waitForSelector('.creator', { timeout: 120000 });
+await page.waitForTimeout(6000);
+await shot('2-creator');
+await page.click('.tab:nth-child(4)');
+await page.waitForTimeout(5000);
+await shot('3-creator-hair');
+await page.fill('.name-row input', name);
+await page.click('.creator-right .btn.primary');
+step('waiting for HUD');
+await page.waitForSelector('.hud', { timeout: 120000 });
+await page.waitForFunction(() => window.game.camBlend >= 1, null, { timeout: 180000 });
+await page.waitForTimeout(2000);
+await shot('4-world');
+step('walking');
+await page.keyboard.down('KeyW');
+await page.keyboard.down('ShiftLeft');
+await page.waitForTimeout(5000);
+await page.keyboard.up('ShiftLeft');
+await page.waitForTimeout(2000);
+await shot('5-running');
+await page.keyboard.up('KeyW');
+await page.keyboard.press('Enter');
+await page.keyboard.type('Hello Kelia!');
+await page.keyboard.press('Enter');
+await page.waitForTimeout(3000);
+await shot('6-chat');
+const state = await page.evaluate(() => {
+  const g = window.game;
+  const m = g.player?.model;
+  const meshes = m ? m.meshes.map((x) => [x.name, x.isEnabled(), x.isVisible, x.getAbsolutePosition().asArray().map((v) => +v.toFixed(1)), x.skeleton ? 1 : 0]) : null;
+  const cam = window.kelia.world.camera;
+  const nan = m ? [...m.nodes.entries()].filter(([k, v]) => { v.computeWorldMatrix(true); return isNaN(v.getAbsolutePosition().x) || (v.rotationQuaternion && isNaN(v.rotationQuaternion.x)) || isNaN(v.position.x); }).map(([k, v]) => k + (isNaN(v.position.x) ? 'P' : '') + (v.rotationQuaternion && isNaN(v.rotationQuaternion.x) ? 'Q' : '')) : [];
+  const an = m?.animator; const aw = an ? { speed: an.speed, dirX: an.dirX, dirZ: an.dirZ, lean: m.lean, hip: m.hipDrop, ly: m.lookYaw, lp: m.lookPitch } : null;
+  return { nan, aw, meshes, root: m && m.root.position.asArray(), body: m && m.body.scaling.asArray(), cam: cam.position.asArray(), camT: cam.getTarget().asArray(), fy: g.follow.yaw, fp: g.follow.pitch, fd: g.follow.smoothDist, mode: g.mode, pos: g.player && [g.player.pos.x, g.player.pos.y, g.player.pos.z].map((v) => +v.toFixed(2)), state: g.player?.state, fps: window.kelia.engine.getFps().toFixed(1) };
+});
+console.log('state', JSON.stringify(state));
+console.log('errors', errors.length);
+await browser.close();

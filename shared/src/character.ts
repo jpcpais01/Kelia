@@ -2,7 +2,7 @@ import { DEFAULT_APPEARANCE, type Appearance } from './data/appearance';
 import { CLASSES, type ClassId } from './data/classes';
 import { OUTFIT_ITEM_IDS, type Equipment, type InventorySlot } from './data/items';
 import { maxHpFor } from './data/progression';
-import { SPAWN_POINT } from './world/layout';
+import { ARRIVAL_POINT, ARRIVAL_YAW } from './world/layout';
 
 /** A saved character as stored in Firestore (and sent to its owner). */
 export interface CharacterData {
@@ -34,8 +34,8 @@ export function newCharacter(uid: string, name: string, cls: ClassId, appearance
     level: 1,
     xp: 0,
     hp: maxHpFor(cls, 1),
-    pos: [SPAWN_POINT[0], 0, SPAWN_POINT[1]],
-    yaw: Math.PI,
+    pos: [ARRIVAL_POINT[0], 0, ARRIVAL_POINT[1]],
+    yaw: ARRIVAL_YAW,
     inventory: [{ id: 'potion_small', qty: 3 }],
     equipment: {
       weapon: c.startingWeapon,
