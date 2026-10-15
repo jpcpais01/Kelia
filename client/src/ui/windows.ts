@@ -63,6 +63,7 @@ export function openHelp() {
       ...row(['Enter'], 'Chat'),
       ...row(['/wave', '/cheer', '/dance', '/sit'], 'Emotes'),
       ...row(['/who', '/roll', '/stuck'], 'Who is online, roll dice, get unstuck'),
+      ...row(['Tab'], 'Hold to see who is online (level, class, whereabouts, ping)'),
       ...row(['N'], 'Toggle name plates'),
       ...row(['F11'], 'Toggle fullscreen'),
       ...row(['F3'], 'Performance overlay (full, compact, off)'),

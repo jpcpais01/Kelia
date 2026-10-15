@@ -13,8 +13,14 @@ export const PATCH_NOTES: PatchNote[] = [
     at: '2026-10-15T15:55:00Z',
     title: 'Attacks with weight',
     lines: [
-      'Every attack now has a real swing: you coil into the wind-up, the blade snaps through, the hit freezes for a heartbeat on impact with a punch of the camera, and the follow-through carries your whole body. Swords step into the blow, bows draw and recoil, Frost Nova is now a staff slam and Mending Light raises the staff to the sky.',
-      'Hits land: monsters reel back and stagger away from your blows, heroes flinch when struck, dodges push off hard and land low, and skeletons rear back before they swing so you can read their attacks. Moving cuts an attack\'s recovery short.',
+      'Every attack now has a real swing: you coil into the wind-up, the blade snaps through, the hit freezes for a heartbeat on impact with a punch of the camera, and the follow-through carries your whole body. Monsters reel and stagger away from your blows, heroes flinch when struck, dodges push off hard, skeletons rear back before they swing, Frost Nova is now a staff slam and Mending Light raises the staff to the sky.',
+    ],
+  },
+  {
+    at: '2026-10-15T15:45:00Z',
+    title: 'Who is online',
+    lines: [
+      'Hold Tab to see everyone in Kelia: name, level, class, health, where they are (with an arrow and distance pointing the way) and each player\'s ping.',
     ],
   },
   {
@@ -29,7 +35,7 @@ export const PATCH_NOTES: PatchNote[] = [
     at: '2026-10-15T15:01:00Z',
     title: 'Heroes with anime flair',
     lines: [
-      'Heroes and monsters look like they stepped out of an anime: sparkling eyes, soft skin, glossy hair, gleaming metal, swinging capes and pulsing weapons, while skeletons get ivory bone and glowing eyes, and Bonelord Varrok burns with red seams and embers.',
+      'Heroes look like they stepped out of an anime: bigger sparkling eyes with catch-lights, soft rosy skin with a light blush, glossy hair with a shining highlight band, polished metal that gleams, crisp sunlit rims and cleaner outlines. Capes swing as you run, glowing weapons pulse with energy along the blade, and bows are freshly carved with gilded tips. Skeletons have ivory bone, glowing eyes and a faint soul light in their ribs, and flash white when struck. Bonelord Varrok now wears blackened armour with burning red seams, with a turning blood sigil, embers and dark wisps around him.',
     ],
   },
   {

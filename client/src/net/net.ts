@@ -119,7 +119,7 @@ export class Net {
 
   private startPing() {
     clearInterval(this.pingTimer);
-    const ping = () => this.send({ t: 'ping', c: performance.now() });
+    const ping = () => this.send({ t: 'ping', c: performance.now(), r: Math.round(this.rtt) });
     ping();
     this.pingTimer = window.setInterval(ping, 2000);
   }
