@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T14:45:00Z',
+    title: 'A server closer to home',
+    lines: [
+      'The game server is moving from the US to Frankfurt, so players in Europe get much lower ping: movement, hits and skills land noticeably faster.',
+    ],
+  },
+  {
     at: '2026-10-15T14:05:00Z',
     title: 'Hearthmere rebuilt',
     lines: [

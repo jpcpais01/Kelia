@@ -52,6 +52,12 @@ The free service sleeps when idle; the client wakes it on the login screen and
 shows its progress. Without `FIREBASE_SERVICE_ACCOUNT` the server falls back
 to a local file, which Render wipes on every restart.
 
+The server runs in **Frankfurt** (`region` in `render.yaml`), the closest
+Render region to Portugal. Render can't move an existing service to another
+region: to switch, copy the env vars above, delete the old service, create
+the Blueprint again, then point `VITE_SERVER_URL` on Vercel at the new
+service's URL and redeploy the client.
+
 ### 3. Vercel (client)
 
 Import the repository. Either root directory works: left as the repo root,
@@ -61,7 +67,7 @@ under **Settings → Environment Variables**, then redeploy:
 
 | Variable | Value |
 | --- | --- |
-| `VITE_SERVER_URL` | `wss://<your-render-service>.onrender.com` |
+| `VITE_SERVER_URL` | `wss://<your-render-service>.onrender.com` (copy the URL from the Render dashboard; change it here whenever the server moves) |
 | `VITE_FIREBASE_API_KEY` | From the Firebase web app config |
 | `VITE_FIREBASE_AUTH_DOMAIN` | e.g. `<project-id>.firebaseapp.com` |
 | `VITE_FIREBASE_PROJECT_ID` | Your Firebase project id |
