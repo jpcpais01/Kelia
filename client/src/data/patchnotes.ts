@@ -11,9 +11,9 @@ export interface PatchNote {
 export const PATCH_NOTES: PatchNote[] = [
   {
     at: '2026-10-15T12:15:00Z',
-    title: 'Follow the cursor',
+    title: 'Click, aim, strike',
     lines: [
-      'With the mouse free, your character now turns to face your cursor: W runs toward it, A and D strafe around it, and attacks and skills fire where you point. Click the world to switch back to the mouse-look camera.',
+      'Clicking the world works again: it captures the mouse for the action camera and attacks. With the mouse free, your character turns to face your cursor, W runs toward it, A and D strafe around it, and skills fire where you point.',
     ],
   },
   {
