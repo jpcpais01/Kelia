@@ -18,6 +18,7 @@ import {
 import { SHRINE, VILLAGE } from '@kelia/shared';
 import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
+import { GROUND, GROUND_GRASS_GLSL } from './palette';
 import { TOON_FOG_GLSL, TOON_FOG_UNIFORMS, bindToonFog, toon } from './toon';
 
 Effect.ShadersStore['keliaGrassVertexShader'] = /* glsl */ `
@@ -34,6 +35,13 @@ uniform vec4 wind;    // xy = dir, z = strength, w = gust scale
 uniform vec4 pushers[4];
 uniform sampler2D heightTex;
 uniform sampler2D splatTex;
+uniform sampler2D detailTex;
+uniform vec3 grassA;
+uniform vec3 grassB;
+uniform vec3 grassDry;
+uniform vec3 forestCol;
+varying vec3 vRoot;
+varying float vBloom;
 varying vec2 vUv;
 varying vec4 vColor;
 varying vec3 vPos;
@@ -53,6 +61,7 @@ float vnoise1(vec2 p) {
   return mix(mix(hash1(i), hash1(i + vec2(1.0, 0.0)), u.x), mix(hash1(i + vec2(0.0, 1.0)), hash1(i + vec2(1.0, 1.0)), u.x), u.y);
 }
 
+${GROUND_GRASS_GLSL}
 float terrainH(vec2 xz) {
   vec2 g = clamp(xz + 512.0, vec2(0.0), vec2(1023.99));
   vec2 i = floor(g);
@@ -75,7 +84,10 @@ void main(void) {
   vec4 sp = texelFetch(splatTex, ivec2(clamp(wp + 512.5, vec2(0.0), vec2(1024.0))), 0);
   vSplat = sp;
   float dens = clamp((1.0 - sp.g * 1.6) * (1.0 - sp.b * 1.8) * (1.0 - sp.a * 1.4), 0.0, 1.0);
-  if (shape.z > 0.5) dens *= (1.0 - sp.r) * 0.9; // flowers prefer open meadows
+  // flowers grow in drifts: whole patches of one kind, open meadow between
+  float drift = vnoise1(wp * 0.045 + 31.0) * 0.7 + vnoise1(wp * 0.13) * 0.3;
+  vBloom = drift;
+  if (shape.z > 0.5) dens *= (1.0 - sp.r) * smoothstep(0.42, 0.62, drift) * 1.6;
   else dens *= 1.0 - sp.r * 0.45;
   float keep = step(grassInst.z, dens * field.w);
   float fade = 1.0 - smoothstep(field.y * 0.6, field.y, dist);
@@ -125,6 +137,7 @@ void main(void) {
   vColor = color;
   vRand = grassInst.z;
   vPatch = vnoise1(wp * 0.06) * 0.65 + vnoise1(wp * 0.21 + 7.0) * 0.35;
+  vRoot = groundGrass(wp, sp);
 #ifdef GSHADOW
   vLightPos = lightMatrix * vec4(wpos, 1.0);
 #endif
@@ -142,16 +155,16 @@ varying vec4 vSplat;
 varying float vRand;
 varying float vPatch;
 varying float vFar;
+varying vec3 vRoot;
+varying float vBloom;
 uniform vec4 shape;
 uniform vec3 camPos;
 ${TOON_FOG_GLSL}
 uniform vec3 sunDir;
 uniform vec3 sunColor;
 uniform vec3 ambientColor;
-uniform vec3 baseColor;
 uniform vec3 tipColor;
 uniform vec3 dryColor;
-uniform vec3 forestColor;
 #ifdef GSHADOW
 varying vec4 vLightPos;
 uniform highp sampler2DShadow shadowTex;
@@ -173,48 +186,54 @@ float grassShadow() {
 #endif
 
 vec3 flowerPalette(float r) {
-  if (r < 0.2) return vec3(0.95, 0.93, 0.85);
-  if (r < 0.4) return vec3(1.0, 0.82, 0.25);
-  if (r < 0.6) return vec3(0.68, 0.45, 0.95);
-  if (r < 0.8) return vec3(0.98, 0.45, 0.55);
-  return vec3(0.45, 0.65, 1.0);
+  if (r < 0.22) return vec3(1.0, 0.98, 0.92);   // daisies
+  if (r < 0.42) return vec3(1.0, 0.8, 0.18);    // buttercups
+  if (r < 0.6) return vec3(0.62, 0.45, 1.0);    // violets
+  if (r < 0.8) return vec3(1.0, 0.5, 0.66);     // pinks
+  return vec3(0.42, 0.68, 1.0);                 // cornflowers
 }
 
 void main(void) {
   float h = vUv.y;
   vec3 col;
   if (shape.z > 0.5) {
-    // flowers: vertex colour alpha marks petals
-    vec3 petal = flowerPalette(fract(vRand * 7.31));
-    vec3 stem = vec3(0.22, 0.42, 0.14);
+    // flowers: vertex colour alpha marks petals (1) and the heart (0.35)
+    float kind = fract(vBloom * 3.7 + vRand * 0.18);
+    vec3 petal = flowerPalette(kind);
+    vec3 heart = kind < 0.22 ? vec3(1.0, 0.78, 0.15) : petal * 0.7 + vec3(0.25, 0.2, 0.0);
+    vec3 stem = vRoot * 0.85;
     // distant flowers become soft dabs of colour, not bright pixel sparkles
-    petal = mix(petal, mix(stem, petal, 0.45), vFar);
-    col = mix(stem, petal, vColor.a);
-    col = col * col; // to linear-ish
+    petal = mix(petal, mix(stem, petal, 0.55), vFar);
+    col = vColor.a > 0.9 ? petal * petal : vColor.a > 0.2 ? heart * heart : stem;
   } else {
-    float dry = smoothstep(0.55, 0.95, fract(vRand * 3.7));
-    vec3 tip = mix(tipColor, dryColor, dry * 0.7);
-    tip = mix(tip, forestColor * 1.4, vSplat.r * 0.8);
-    vec3 bse = mix(baseColor, forestColor * 0.6, vSplat.r);
+    // each blade starts as the ground it grows from and brightens to a sunny tip
+    float dry = smoothstep(0.6, 0.95, fract(vRand * 3.7));
+    vec3 tip = mix(vRoot * vec3(1.5, 1.55, 1.2) + vec3(0.035, 0.045, 0.0), tipColor, 0.25);
+    tip = mix(tip, dryColor, dry * 0.45);
+    vec3 bse = vRoot * 0.62;
     col = mix(bse, tip, smoothstep(0.0, 1.0, h));
-    col *= 0.8 + 0.4 * fract(vRand * 13.7) * (1.0 - 0.6 * vFar);
+    col *= 0.93 + 0.14 * fract(vRand * 13.7) * (1.0 - 0.7 * vFar);
     // distant blades lean toward the field's average colour (less per-blade contrast)
-    col = mix(col, mix(bse, tip, 0.5), vFar * 0.5);
+    col = mix(col, mix(vRoot, tip, 0.45), vFar * 0.55);
   }
-  // Stylized lighting: blades are lit as a soft, bright mass (no harsh
-  // per-blade shading), tips glow when the sun is behind them, and patches
-  // of lighter and darker green drift across the meadow like brush strokes.
-  col *= mix(0.86, 1.14, vPatch);
-  float ndl = clamp(sunDir.y * 0.7 + 0.35, 0.0, 1.0);
+  // Lit like the ground it grows from (an up-facing surface under the toon
+  // model), so roots melt into the terrain; tips glow when the sun is behind
+  // them, and soft drifts of lighter and darker green roll over the meadow.
+  col *= mix(0.92, 1.08, vPatch);
+  float soft = 0.06;
+  float litK = smoothstep(-soft, soft, sunDir.y) * (1.0 + 0.12 * smoothstep(0.5, 0.7, sunDir.y));
   vec3 V = normalize(camPos - vPos);
-  float trans = pow(clamp(dot(-V, sunDir), 0.0, 1.0), 4.0) * h * 0.8 * (1.0 - 0.75 * vFar);
-  float ao = mix(mix(0.62, 1.0, h), 0.85, vFar * 0.6);
+  float trans = pow(clamp(dot(-V, sunDir), 0.0, 1.0), 4.0) * h * 0.7 * (1.0 - 0.75 * vFar);
+  float ao = mix(mix(0.8, 1.0, h), 0.95, vFar * 0.6);
   float sh = 1.0;
 #ifdef GSHADOW
   sh = grassShadow();
 #endif
-  vec3 lit = col * (sunColor * (ndl * (0.62 + 0.38 * h) + trans) * sh * (1.0 - vSplat.r * 0.35) + ambientColor) * ao;
-  lit += col * vGust * 0.16 * sunColor * h * sh * (1.0 - 0.7 * vFar); // gusts catch the light
+  vec3 lit3 = col * (sunColor * (litK + trans) * sh * (1.0 - vSplat.r * 0.25) + ambientColor) * ao;
+  // rolling wind gusts catch the light: a silvery sheen sweeping over the field
+  float sheen = vGust * vGust * vGust;
+  lit3 += (col * 0.5 + vec3(0.05, 0.06, 0.03)) * sheen * 0.55 * sunColor * h * sh * (1.0 - 0.6 * vFar);
+  vec3 lit = lit3;
   gl_FragColor = vec4(kFog(lit, vPos, camPos), 1.0);
 }
 `;
@@ -255,36 +274,55 @@ function bladeGeometry(): VertexData {
 }
 
 function flowerGeometry(): VertexData {
-  // Thin stem + two crossed petal quads at the top (alpha = petal mask).
+  // A thin stem, a little leaf, and a cupped head of six rounded petals around
+  // a raised heart (vertex alpha: 0 = stem/leaf, 0.35 = heart, 1 = petal).
   const positions: number[] = [];
   const uvs: number[] = [];
   const colors: number[] = [];
   const indices: number[] = [];
-  const quad = (pts: number[][], petal: number, v0: number, v1: number) => {
-    const b = positions.length / 3;
-    for (const [i, p] of pts.entries()) {
-      positions.push(p[0], p[1], p[2]);
-      uvs.push(i === 0 || i === 3 ? 0 : 1, i < 2 ? v0 : v1);
-      colors.push(1, 1, 1, petal);
-    }
-    indices.push(b, b + 1, b + 2, b, b + 2, b + 3);
+  const vtx = (x: number, y: number, z: number, v: number, a: number) => {
+    positions.push(x, y, z);
+    uvs.push(0.5, v);
+    colors.push(1, 1, 1, a);
+    return positions.length / 3 - 1;
   };
-  const sw = 0.04;
-  quad([[-sw, 0, 0], [sw, 0, 0], [sw, 0.85, 0], [-sw, 0.85, 0]], 0, 0, 0.85);
-  // five petals in a slightly cupped star
-  const y = 0.85;
-  const center = positions.length / 3;
-  positions.push(0, y + 0.03, 0);
-  uvs.push(0.5, 1);
-  colors.push(1, 1, 1, 0.35);
-  for (let k = 0; k < 10; k++) {
-    const a = (k / 10) * Math.PI * 2;
-    const r = k % 2 === 0 ? 0.5 : 0.18;
-    positions.push(Math.cos(a) * r, y + (k % 2 === 0 ? 0.08 : 0.02), Math.sin(a) * r);
-    uvs.push(0.5, 1);
-    colors.push(1, 1, 1, 1);
+  const sw = 0.035;
+  const y = 0.82;
+  {
+    const a = vtx(-sw, 0, 0, 0, 0);
+    const b = vtx(sw, 0, 0, 0, 0);
+    const c = vtx(sw * 0.6, y, 0.04, y, 0);
+    const d = vtx(-sw * 0.6, y, 0.04, y, 0);
+    indices.push(a, b, c, a, c, d);
+    // a leaf halfway up
+    const l0 = vtx(0, 0.3, 0, 0.3, 0);
+    const l1 = vtx(0.22, 0.42, 0.06, 0.42, 0);
+    const l2 = vtx(0.1, 0.36, -0.07, 0.36, 0);
+    indices.push(l0, l1, l2);
   }
-  for (let k = 0; k < 10; k++) indices.push(center, center + 1 + k, center + 1 + ((k + 1) % 10));
+  // petal fans start from their own centre vertex (pure petal colour); the heart covers it
+  const heart = vtx(0, y + 0.05, 0.04, 1, 1);
+  const petals = 6;
+  for (let k = 0; k < petals; k++) {
+    const a0 = (k / petals) * Math.PI * 2;
+    // each petal: a rounded fan from the heart, tips curling up into a cup
+    const fan = [-0.42, -0.22, 0, 0.22, 0.42];
+    const ids = fan.map((o) => {
+      const a = a0 + o;
+      const r = 0.48 * Math.cos(o * 1.6);
+      return vtx(Math.cos(a) * r, y + 0.03 + r * 0.28, 0.04 + Math.sin(a) * r, 1, 1);
+    });
+    for (let i = 0; i < ids.length - 1; i++) indices.push(heart, ids[i], ids[i + 1]);
+  }
+  // the heart sits proud of the petals
+  const hr = 0.13;
+  const ring: number[] = [];
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    ring.push(vtx(Math.cos(a) * hr, y + 0.07, 0.04 + Math.sin(a) * hr, 1, 0.35));
+  }
+  const top = vtx(0, y + 0.11, 0.04, 1, 0.35);
+  for (let k = 0; k < 6; k++) indices.push(top, ring[k], ring[(k + 1) % 6]);
   const vd = new VertexData();
   vd.positions = positions;
   vd.uvs = uvs;
@@ -311,7 +349,7 @@ export class Grass {
   private pushArr: number[] = [];
   private shadowV = new Vector4();
 
-  constructor(private scene: Scene, private heightTex: Texture, private splatTex: Texture, private atmosphere: Atmosphere) {}
+  constructor(private scene: Scene, private heightTex: Texture, private splatTex: Texture, private detailTex: Texture, private atmosphere: Atmosphere) {}
 
   applyQuality(q: QualitySettings) {
     for (const f of this.fields) {
@@ -321,9 +359,9 @@ export class Grass {
     this.fields = [];
     const innerR = q.grassRadius * 0.34;
     // inner dense field, outer sparse field of bigger tufts, and flowers
-    this.addField('grassNear', bladeGeometry(), innerR, 0, q.grassDensity, { h: 0.4, w: 0.07, flower: false });
-    this.addField('grassFar', bladeGeometry(), q.grassRadius, innerR, q.grassDensity * 0.3, { h: 0.5, w: 0.12, flower: false });
-    this.addField('flowers', flowerGeometry(), Math.min(q.grassRadius, 46), 0, q.grassDensity * 0.05, { h: 0.3, w: 0.28, flower: true });
+    this.addField('grassNear', bladeGeometry(), innerR, 0, q.grassDensity, { h: 0.46, w: 0.078, flower: false });
+    this.addField('grassFar', bladeGeometry(), q.grassRadius, innerR, q.grassDensity * 0.3, { h: 0.55, w: 0.15, flower: false });
+    this.addField('flowers', flowerGeometry(), Math.min(q.grassRadius, 46), 0, q.grassDensity * 0.09, { h: 0.38, w: 0.3, flower: true });
   }
 
   private addField(name: string, geo: VertexData, radius: number, innerCut: number, density: number, shape: { h: number; w: number; flower: boolean }) {
@@ -357,8 +395,8 @@ export class Grass {
     const sg = this.atmosphere.shadows;
     const mat = new ShaderMaterial(name + 'Mat', this.scene, 'keliaGrass', {
       attributes: ['position', 'uv', 'color', 'grassInst'],
-      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'baseColor', 'tipColor', 'dryColor', 'forestColor', 'lightMatrix', 'shadowInfo'],
-      samplers: ['heightTex', 'splatTex', 'shadowTex'],
+      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo'],
+      samplers: ['heightTex', 'splatTex', 'detailTex', 'shadowTex'],
       defines: sg ? ['GSHADOW'] : [],
     });
     if (sg) {
@@ -373,10 +411,10 @@ export class Grass {
     mat.backFaceCulling = false;
     mat.setTexture('heightTex', this.heightTex);
     mat.setTexture('splatTex', this.splatTex);
-    mat.setColor3('baseColor', Color3.FromHexString('#2f6a2a').toLinearSpace());
-    mat.setColor3('tipColor', Color3.FromHexString('#9cd055').toLinearSpace());
-    mat.setColor3('dryColor', Color3.FromHexString('#d8cf6a').toLinearSpace());
-    mat.setColor3('forestColor', Color3.FromHexString('#3b7a34').toLinearSpace());
+    mat.setTexture('detailTex', this.detailTex);
+    mat.setColor3('tipColor', Color3.FromHexString('#c4e46a').toLinearSpace());
+    mat.setColor3('dryColor', Color3.FromHexString('#e2d77a').toLinearSpace());
+    for (const k of ['grassA', 'grassB', 'grassDry', 'forestCol'] as const) mat.setColor3(k, Color3.FromArray(GROUND[k]));
     mesh.material = mat;
     const fv = new Vector4(period, radius, innerCut, 1);
     this.fields.push({ mesh, mat, shape: [shape.h, shape.w, shape.flower ? 1 : 0], fv });
@@ -396,8 +434,8 @@ export class Grass {
     const a = this.atmosphere;
     const sun = this.sunCol.set(toon.sun.x, toon.sun.y, toon.sun.z);
     const sh = toon.shade;
-    // grass sits in the sky light; shadowed meadow keeps a cool tint
-    const amb = this.ambCol.set(toon.sky.x * sh.x * 0.9, toon.sky.y * sh.y * 0.9, toon.sky.z * sh.z * 0.9);
+    // the same sky fill the toon model gives flat ground, so blades and soil match
+    const amb = this.ambCol.set(toon.sky.x * sh.x, toon.sky.y * sh.y, toon.sky.z * sh.z);
     const dir = this.dirV.set(toon.sunDir.x, toon.sunDir.y, toon.sunDir.z);
     const sg = a.shadows;
     this.pushArr.length = 0;

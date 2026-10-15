@@ -10,6 +10,15 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T13:25:00Z',
+    title: 'A painted wilderness',
+    lines: [
+      'Every tree has been regrown: big, soft crowns of hand-painted leaves that light up like balls of sunlit foliage, tiered pines with drooping boughs, white birches, and pink blossom trees ringing Hearthmere and dotting the meadows.',
+      'The meadows are lush and soft now: every blade of grass grows out of the colour of the ground beneath it, silvery wind gusts roll across the fields, and wildflowers bloom in drifts of daisies, buttercups, violets, pinks and cornflowers.',
+      'Cliffs show layered rock strata with mossy ledges, boulders are chunky and faceted with moss on top, and bushes are fuller, some flowering.',
+    ],
+  },
+  {
     at: '2026-10-15T12:45:00Z',
     title: 'A calmer stride',
     lines: [
