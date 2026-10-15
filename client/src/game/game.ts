@@ -27,6 +27,7 @@ import { PRESETS, autoQuality, saveSettings, type UserSettings } from '../core/q
 import { Net } from '../net/net';
 import { signOut } from '../net/auth';
 import { CreatorScreen, type CreatorTab } from '../ui/creator';
+import type { RosterEntry } from '../ui/roster';
 import { h, mount } from '../ui/dom';
 import { Hud } from '../ui/hud';
 import { LoginScreen } from '../ui/login';
@@ -61,6 +62,9 @@ export class Game {
   private player: LocalPlayer | null = null;
   private character: CharacterData | null = null;
   private myId = -1;
+  /** Latest round trip per player, from the server (Tab roster). */
+  private pings = new Map<number, number>();
+  private rosterTimer = 0;
   private remotes = new Map<number, RemotePlayer>();
   private monsters = new Map<number, MonsterEntity>();
   private combat: CombatController | null = null;
@@ -396,6 +400,10 @@ export class Game {
       else this.remotes.get(m.id)?.emote(m.e);
     });
     net.on('correct', (m) => this.player?.correct(m.x, m.y, m.z));
+    net.on('pings', (m) => {
+      this.pings.clear();
+      for (const [id, ms] of m.p) this.pings.set(id, ms);
+    });
   }
 
   private emoteLocal(e: string) {
@@ -547,6 +555,7 @@ export class Game {
       saveSettings(this.settings);
     }
     input.typing = hud.chatOpen;
+    this.updateRoster(dt, input.key('Tab') && !isWindowOpen());
     if (input.mouseDX || input.mouseDY) this.follow.look(input.mouseDX, input.mouseDY);
     if (input.wheel) this.follow.zoom(input.wheel);
 
@@ -620,6 +629,28 @@ export class Game {
       this.currentZone = zone;
     }
     perf.end('ui');
+  }
+
+  /** Hold Tab: who is online, where they are and their ping. */
+  private updateRoster(dt: number, held: boolean) {
+    const roster = this.hud!.roster;
+    roster.show(held);
+    if (!held) {
+      this.rosterTimer = 0;
+      return;
+    }
+    this.rosterTimer -= dt;
+    if (this.rosterTimer > 0) return;
+    this.rosterTimer = 0.25;
+    const c = this.character!;
+    const me = this.player!.pos;
+    const entries: RosterEntry[] = [
+      { id: this.myId, name: c.name, cls: c.cls, level: c.level, hp: this.combat ? c.hp / this.combat.maxHp : 1, dead: !!this.combat?.dead, x: me.x, z: me.z, ping: Math.round(this.net.rtt) || null, you: true },
+    ];
+    for (const [id, r] of this.remotes) {
+      entries.push({ id, name: r.info.name, cls: r.info.cls, level: r.info.level, hp: r.hpFrac, dead: r.dead, x: r.pos.x, z: r.pos.z, ping: this.pings.get(id) ?? null, you: false });
+    }
+    roster.update(entries, { x: me.x, z: me.z }, this.follow.yaw, this.hud!.clockText);
   }
 
   /** Where the character's head should look: ahead along the camera ray. */

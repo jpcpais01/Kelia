@@ -46,6 +46,8 @@ export class Session {
   player: Player | null = null;
   chatTimes: number[] = [];
   alive = true;
+  /** Round trip the client last reported (ms), for the Tab roster. */
+  ping = 0;
   constructor(readonly ws: WebSocket, readonly ip: string) {}
 
   send(msg: ServerMessage) {
@@ -107,6 +109,7 @@ export class World {
   readonly heightmap: Heightmap;
   readonly combat: Combat;
   private lastTick = Date.now();
+  private tickCount = 0;
 
   constructor(private store: CharacterStore) {
     const t0 = Date.now();
@@ -197,8 +200,11 @@ export class World {
       case 'emote':
         if (s.player && (EMOTES as readonly string[]).includes(msg.e)) this.broadcast({ t: 'emote', id: s.player.id, e: msg.e });
         return;
-      case 'ping':
+      case 'ping': {
+        const r = Number(msg.r);
+        if (Number.isFinite(r) && r >= 0) s.ping = Math.min(9999, Math.round(r));
         return s.send({ t: 'pong', c: Number(msg.c) || 0, s: Date.now() });
+      }
       case 'act':
         if (s.player) this.combat.act(s.player, msg.k, Number(msg.i) | 0, Number(msg.yaw), Number(msg.tx), Number(msg.tz));
         return;
@@ -423,6 +429,8 @@ export class World {
     // players see everyone, but only the monsters around them
     const head = JSON.stringify({ t: 's', ts: now, e }).slice(0, -1);
     for (const p of this.players.values()) p.session.sendRaw(`${head},"m":${JSON.stringify(this.combat.snapshot(p.x, p.z, 110))}}`);
+    // everyone's ping for the Tab roster, every 2 s
+    if (++this.tickCount % 40 === 0) this.broadcast({ t: 'pings', p: [...this.players.values()].map((p) => [p.id, p.session.ping] as [number, number]) });
   }
 
   private syncCharacter(p: Player) {

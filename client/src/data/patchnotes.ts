@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T15:45:00Z',
+    title: 'Who is online',
+    lines: [
+      'Hold Tab to see everyone in Kelia: name, level, class, health, where they are (with an arrow and distance pointing the way) and each player\'s ping.',
+    ],
+  },
+  {
     at: '2026-10-15T15:10:00Z',
     title: 'Spectacular combat',
     lines: [
@@ -22,8 +29,7 @@ export const PATCH_NOTES: PatchNote[] = [
     at: '2026-10-15T15:01:00Z',
     title: 'Heroes with anime flair',
     lines: [
-      'Heroes look like they stepped out of an anime: bigger sparkling eyes with catch-lights, soft rosy skin with a light blush, glossy hair with a shining highlight band, polished metal that gleams, crisp sunlit rims and cleaner outlines. Capes swing as you run, glowing weapons pulse with energy along the blade, and bows are freshly carved with gilded tips.',
-      'Skeletons have ivory bone, glowing eyes and a faint soul light in their ribs, and flash white when struck. Bonelord Varrok now wears blackened armour with burning red seams, with a turning blood sigil, embers and dark wisps around him.',
+      'Heroes look like they stepped out of an anime: bigger sparkling eyes with catch-lights, soft rosy skin with a light blush, glossy hair with a shining highlight band, polished metal that gleams, crisp sunlit rims and cleaner outlines. Capes swing as you run, glowing weapons pulse with energy along the blade, and bows are freshly carved with gilded tips. Skeletons have ivory bone, glowing eyes and a faint soul light in their ribs, and flash white when struck. Bonelord Varrok now wears blackened armour with burning red seams, with a turning blood sigil, embers and dark wisps around him.',
     ],
   },
   {
