@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T21:00:00Z',
+    title: 'Install Kelia as an app',
+    lines: [
+      'Kelia can now be installed like a real game: look for Install Kelia on the title screen (or the download button in the top-right menu) and it gets its own window, its own desktop and taskbar icon (a golden compass star over a twilight valley) and opens straight into fullscreen. It also starts faster on return visits, since models and game files are kept on your computer and only re-downloaded when an update changes them. You always get the newest version when you open it.',
+    ],
+  },
+  {
     // the 20:00 hour already has its five lines, so this opens the next group
     at: '2026-10-15T21:00:00Z',
     title: 'Painted cliffs',

@@ -8,6 +8,7 @@ import { RigLibrary } from './char/library';
 import { perf } from './core/perf';
 import { perfOverlay } from './ui/perfOverlay';
 import './ui/fullscreen';
+import './ui/pwa';
 import { Game } from './game/game';
 import { loadTerrainData } from './world/terrainData';
 import { World } from './world/world';
