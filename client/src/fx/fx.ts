@@ -16,6 +16,7 @@ import {
   VertexData,
   type Scene,
 } from '@babylonjs/core';
+import { perf } from '../core/perf';
 
 interface Live {
   t: number;
@@ -43,6 +44,7 @@ export class Effects {
 
   constructor(private scene: Scene) {
     this.root = new TransformNode('fx', scene);
+    perf.tag(this.root, 'fx');
     this.dot = this.makeTexture('fxDot', 64, (ctx, s) => {
       const g = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
       g.addColorStop(0, 'rgba(255,255,255,1)');

@@ -3,6 +3,7 @@
 // stride-matched locomotion the players use.
 import { Color3, PBRMaterial, TransformNode, Vector3, type AbstractMesh, type InstantiatedEntries, type Scene } from '@babylonjs/core';
 import type { MonsterDef } from '@kelia/shared';
+import { perf } from '../core/perf';
 import { Animator, measureStride } from './animator';
 import type { RigLibrary } from './library';
 import { CHARACTER_HEIGHT } from './model';
@@ -23,6 +24,7 @@ export class MonsterModel {
 
   constructor(scene: Scene, lib: RigLibrary, readonly def: MonsterDef, name: string) {
     this.root = new TransformNode(name, scene);
+    perf.tag(this.root, 'characters');
     this.body = new TransformNode(name + '_body', scene);
     this.body.parent = this.root;
     const wanted = new Set(def.parts);

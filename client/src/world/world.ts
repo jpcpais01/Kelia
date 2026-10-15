@@ -1,6 +1,7 @@
 // Assembles the 3D world: scene, camera, sky & lighting, terrain, water,
 // vegetation, props and ambient life.
 import { Color4, Scene, UniversalCamera, Vector3, type AbstractEngine } from '@babylonjs/core';
+import { perf } from '../core/perf';
 import type { QualitySettings } from '../core/quality';
 import { Atmosphere } from './atmosphere';
 import { PostFX } from './postfx';
@@ -37,6 +38,7 @@ export class World {
     scene.autoClear = true;
     scene.autoClearDepthAndStencil = true;
     scene.blockMaterialDirtyMechanism = false;
+    perf.watch(scene);
 
     this.camera = new UniversalCamera('cam', new Vector3(0, 30, -120), scene);
     this.camera.inputs.clear();
@@ -44,33 +46,35 @@ export class World {
     this.camera.maxZ = 2500;
     this.camera.fov = (60 * Math.PI) / 180;
 
-    this.atmosphere = new Atmosphere(scene);
-    this.terrain = new Terrain(scene, data);
+    // Scopes tag the meshes each system creates, so the profiler can say what costs what.
+    this.atmosphere = perf.scope('sky', () => new Atmosphere(scene));
+    this.terrain = perf.scope('terrain', () => new Terrain(scene, data));
     this.postfx = new PostFX(scene, this.camera, this.atmosphere.sky.sunBillboard);
-    this.water = new Water(scene, this.terrain.heightTexture, this.atmosphere);
-    this.grass = new Grass(scene, this.terrain.heightTexture, this.terrain.splatTexture, this.atmosphere);
-    this.foliage = new Foliage(scene, data.heightmap, this.atmosphere);
-    this.props = new Props(scene, data.heightmap, this.atmosphere, this.foliage);
+    this.water = perf.scope('water', () => new Water(scene, this.terrain.heightTexture, this.atmosphere));
+    this.grass = perf.scope('grass', () => new Grass(scene, this.terrain.heightTexture, this.terrain.splatTexture, this.atmosphere));
+    this.foliage = perf.scope('foliage', () => new Foliage(scene, data.heightmap, this.atmosphere));
+    this.props = perf.scope('props', () => new Props(scene, data.heightmap, this.atmosphere, this.foliage));
     this.applyQuality(quality);
-    this.terrain.buildInitial(this.camera.position);
+    perf.scope('terrain', () => this.terrain.buildInitial(this.camera.position));
   }
 
   applyQuality(q: QualitySettings) {
     this.quality = q;
     this.engine.setHardwareScalingLevel(1 / (q.renderScale * Math.min(window.devicePixelRatio || 1, 1.5)));
-    this.atmosphere.applyQuality(q);
+    perf.scope('sky', () => this.atmosphere.applyQuality(q));
     this.terrain.setShadowGenerator(this.atmosphere.shadows);
     this.postfx.apply(q);
-    this.grass?.applyQuality(q);
-    this.foliage?.applyQuality(q);
+    perf.scope('grass', () => this.grass?.applyQuality(q));
+    perf.scope('foliage', () => this.foliage?.applyQuality(q));
     this.camera.maxZ = q.viewDistance + 1000;
   }
 
   /** Load streamed glTF content (props). Safe to call once. */
   async loadAssets() {
     await this.props.load();
-    this.ambient = new Ambient(this.scene, this.data.heightmap, this.atmosphere, this.props.lights);
-    this.secrets = new Secrets(this.scene, this.data.heightmap, this.atmosphere, this.foliage, this.ambient);
+    perf.claimUntagged('props');
+    this.ambient = perf.scope('ambient', () => new Ambient(this.scene, this.data.heightmap, this.atmosphere, this.props.lights));
+    this.secrets = perf.scope('secrets', () => new Secrets(this.scene, this.data.heightmap, this.atmosphere, this.foliage, this.ambient!));
   }
 
   onUpdate(fn: (dt: number) => void) {
@@ -84,16 +88,37 @@ export class World {
 
   update(dt: number) {
     this.time += dt;
+    const cam = this.camera.globalPosition;
+    perf.begin('sky');
     this.atmosphere.update(dt, this.camera);
-    this.terrain.update(this.camera.globalPosition);
-    this.water.update(this.time, this.camera.globalPosition);
-    this.grass.update(this.time, this.camera.globalPosition);
-    this.foliage.update(this.time, this.camera.globalPosition, this.grass.wind);
+    perf.end('sky');
+    perf.begin('terrain');
+    this.terrain.update(cam);
+    perf.end('terrain');
+    perf.begin('water');
+    this.water.update(this.time, cam);
+    perf.end('water');
+    perf.begin('grass');
+    this.grass.update(this.time, cam);
+    perf.end('grass');
+    perf.begin('foliage');
+    this.foliage.update(this.time, cam, this.grass.wind);
+    perf.end('foliage');
+    perf.begin('props');
     this.props.update(this.time);
-    this.ambient?.update(dt, this.camera.globalPosition);
+    perf.end('props');
+    perf.begin('ambient');
+    this.ambient?.update(dt, cam);
+    perf.end('ambient');
+    perf.begin('secrets');
     this.secrets?.update(this.time);
+    perf.end('secrets');
+    perf.begin('game');
     for (const fn of this.updaters) fn(dt);
+    perf.end('game');
+    perf.begin('postfx');
     this.postfx.update(this.atmosphere.exposure);
+    perf.end('postfx');
     const sunVis = Math.max(0, Math.min(1, (this.atmosphere.sunDir.y + 0.02) / 0.12));
     this.postfx.shaftStrength = sunVis;
   }

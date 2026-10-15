@@ -27,6 +27,7 @@ import {
   type Appearance,
   type ClassId,
 } from '@kelia/shared';
+import { perf } from '../core/perf';
 import { Animator, measureStride } from './animator';
 import { createBow } from './bow';
 import type { RigLibrary } from './library';
@@ -110,6 +111,7 @@ export class CharacterModel {
 
   constructor(private scene: Scene, private lib: RigLibrary, look: Look, name = 'character') {
     this.root = new TransformNode(name, scene);
+    perf.tag(this.root, 'characters');
     this.body = new TransformNode(name + '_body', scene);
     this.body.parent = this.root;
     this.setLook(look);

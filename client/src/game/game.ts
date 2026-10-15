@@ -22,6 +22,7 @@ import { CharacterModel, type Look } from '../char/model';
 import { MonsterModel } from '../char/monsterModel';
 import { Effects } from '../fx/fx';
 import type { RigLibrary } from '../char/library';
+import { perf } from '../core/perf';
 import { PRESETS, autoQuality, saveSettings, type UserSettings } from '../core/quality';
 import { Net } from '../net/net';
 import { signOut } from '../net/auth';
@@ -91,6 +92,11 @@ export class Game {
     this.input.onLockChange = (locked) => this.hud?.setPointerLocked(locked);
     world.onUpdate((dt) => this.update(dt));
     this.serverReady = Net.wake((msg) => this.login?.setServer('waking', msg));
+  }
+
+  /** Smoothed round-trip time to the server, or null when offline. */
+  get ping() {
+    return this.net.connected ? this.net.rtt : null;
   }
 
   // ------------------------------------------------------------------ title & login
@@ -539,12 +545,19 @@ export class Game {
     if (input.mouseDX || input.mouseDY) this.follow.look(input.mouseDX, input.mouseDY);
     if (input.wheel) this.follow.zoom(input.wheel);
 
+    perf.begin('combat');
     this.combat?.update(dt);
+    perf.end('combat');
+    perf.begin('player');
     player.update(dt, input, this.follow);
     player.model.lookTarget = this.combat?.dead ? null : this.camLookPoint();
+    perf.end('player');
 
     const now = this.net.serverNow();
+    perf.begin('remotes');
     for (const r of this.remotes.values()) r.update(dt, now);
+    perf.end('remotes');
+    perf.begin('monsters');
     const pnow = performance.now();
     let boss: MonsterEntity | null = null;
     for (const [id, mo] of this.monsters) {
@@ -557,10 +570,14 @@ export class Game {
       mo.update(dt, now);
       if (mo.def.boss && mo.alive && Vector3.Distance(mo.pos, player.pos) < 38) boss = mo;
     }
+    perf.end('monsters');
     hud.setBoss(boss ? boss.def.name : null, boss?.hpFrac ?? 1);
+    perf.begin('fx');
     this.fx.update(dt);
+    perf.end('fx');
 
     // camera (blend in from the previous shot when entering)
+    perf.begin('camera');
     this.follow.update(dt, this.focusPoint(), player.vel, player.sprinting);
     if (this.camBlend < 1) {
       this.camBlend = Math.min(1, this.camBlend + dt / 2.2);
@@ -571,8 +588,10 @@ export class Game {
       cam.position = Vector3.Lerp(this.camFrom.pos, toPos, e);
       cam.setTarget(Vector3.Lerp(this.camFrom.target, toT, e));
     }
+    perf.end('camera');
 
     // HUD
+    perf.begin('ui');
     const plates = [{ id: this.myId, pos: player.pos.add(new Vector3(0, 2.25, 0)), hp: 1, visible: true }];
     for (const [id, r] of this.remotes) plates.push({ id, pos: r.pos.add(new Vector3(0, 2.25, 0)), hp: r.hpFrac, visible: true });
     for (const [id, mo] of this.monsters) {
@@ -593,6 +612,7 @@ export class Game {
       if (zone && zone !== this.currentZone && !zone.hidden && this.character?.discovered.includes(zone.id)) hud.zoneToast(zone, false);
       this.currentZone = zone;
     }
+    perf.end('ui');
   }
 
   /** Where the character's head should look: ahead along the camera ray. */

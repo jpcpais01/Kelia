@@ -5,6 +5,8 @@ import './styles/main.css';
 import { createEngine, markWebGPUBroken } from './core/engine';
 import { PRESETS, autoQuality, loadSettings } from './core/quality';
 import { RigLibrary } from './char/library';
+import { perf } from './core/perf';
+import { perfOverlay } from './ui/perfOverlay';
 import { Game } from './game/game';
 import { loadTerrainData } from './world/terrainData';
 import { World } from './world/world';
@@ -39,12 +41,25 @@ async function boot() {
   await world.scene.whenReadyAsync();
   progress(1, 'Welcome');
 
+  let game: Game | null = null;
+  perfOverlay.init(engine, {
+    api,
+    gpu,
+    quality: () => `${world.quality.level} · ${Math.round(world.quality.renderScale * 100)}% scale`,
+    ping: () => game?.ping ?? null,
+  });
+
   let lastErrorFrames = 0;
   engine.runRenderLoop(() => {
     const dt = Math.min(engine.getDeltaTime() / 1000, 0.1);
     try {
+      perf.frameBegin();
       world.update(dt);
+      perf.begin('render');
       world.scene.render();
+      perf.end('render');
+      perf.frameEnd();
+      perfOverlay.update();
       lastErrorFrames = 0;
     } catch (err) {
       if (++lastErrorFrames === 1) console.error(err);
@@ -55,14 +70,14 @@ async function boot() {
     }
   });
   window.addEventListener('resize', () => engine.resize());
-  (window as unknown as { kelia: unknown }).kelia = { world, engine, lib, monsterLib };
+  (window as unknown as { kelia: unknown }).kelia = { world, engine, lib, monsterLib, perf };
 
   const cam = params.get('cam')?.split(',').map(Number);
   if (cam) {
     // Developer view: fixed camera for screenshots (?cam=x,y,z,tx,ty,tz&t=dayTime&rel).
     await devView(world, lib, params, cam, monsterLib);
   } else {
-    const game = new Game(world, lib, settings, gpu, monsterLib);
+    game = new Game(world, lib, settings, gpu, monsterLib);
     (window as unknown as { game: unknown }).game = game;
     void game.start();
   }

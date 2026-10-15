@@ -10,6 +10,14 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T11:15:00Z',
+    title: 'Under the hood',
+    lines: [
+      'Press F3 for a performance overlay: FPS with a live frame graph, CPU time for every part of the game (terrain, grass, water, trees, characters, combat, HUD, network…) and GPU time for every render pass (shadows, the scene, bloom, light shafts, grading).',
+      'Press F4 with it open to measure what each part of the world costs the GPU, and use “Copy report” to share the numbers. F3 again switches to a compact view, then hides it.',
+    ],
+  },
+  {
     at: '2026-10-15T04:40:00Z',
     title: 'A valley that breathes',
     lines: [
