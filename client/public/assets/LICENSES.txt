@@ -1,0 +1,10 @@
+Third-party assets used by Kelia (all CC0 1.0 Universal / public domain)
+
+- KayKit Character Pack: Adventurers 1.0, by Kay Lousberg (kaylousberg.com) — CC0
+- KayKit Character Pack: Skeletons 1.0, by Kay Lousberg — CC0
+- KayKit Dungeon Remastered 1.0, by Kay Lousberg — CC0
+- KayKit Medieval Hexagon Pack 1.0, by Kay Lousberg — CC0
+  Source: https://github.com/KayKit-Game-Assets
+- HDRI skies from Poly Haven (polyhaven.com) via @pmndrs/assets — CC0
+
+Everything else (terrain, water, sky, grass, trees, flowers, effects, UI) is generated in code.
