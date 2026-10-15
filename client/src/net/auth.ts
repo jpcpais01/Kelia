@@ -1,16 +1,19 @@
 // Sign-in: Firebase (email/password or Google) when configured, plus guest
 // play. Firebase is loaded lazily so guests never download it.
 import type { Auth, User } from 'firebase/auth';
-import { FIREBASE_CONFIG } from '../config';
+import { FIREBASE_CONFIG, FIREBASE_PROBLEM, maskKey } from '../config';
 
 const GUEST_KEY = 'kelia.guest.v1';
 
-export const firebaseEnabled = !!FIREBASE_CONFIG;
+export const firebaseEnabled = !!FIREBASE_CONFIG && !FIREBASE_PROBLEM;
+/** Shown on the title screen when the build's Firebase settings can't work. */
+export const firebaseProblem = FIREBASE_PROBLEM;
 
 let authPromise: Promise<{ auth: Auth; mod: typeof import('firebase/auth') }> | null = null;
 
 function getAuthMod() {
   if (!FIREBASE_CONFIG) throw new Error('Account login is not set up yet. Play as a guest for now.');
+  if (FIREBASE_PROBLEM) throw new Error(FIREBASE_PROBLEM);
   authPromise ??= (async () => {
     const [{ initializeApp }, mod] = await Promise.all([import('firebase/app'), import('firebase/auth')]);
     const app = initializeApp(FIREBASE_CONFIG!);
@@ -23,7 +26,7 @@ function getAuthMod() {
 
 /** Returns the signed-in Firebase user from a previous visit, if any. */
 export async function restoreUser(): Promise<User | null> {
-  if (!FIREBASE_CONFIG) return null;
+  if (!firebaseEnabled) return null;
   const { auth } = await getAuthMod();
   await auth.authStateReady();
   return auth.currentUser;
@@ -57,7 +60,7 @@ export async function resetPassword(email: string) {
 }
 
 export async function signOut() {
-  if (!FIREBASE_CONFIG) return;
+  if (!firebaseEnabled) return;
   const { auth, mod } = await getAuthMod();
   await mod.signOut(auth);
 }
@@ -102,5 +105,12 @@ function friendly(err: unknown): string {
     'auth/network-request-failed': 'Network error. Check your connection.',
     'auth/unauthorized-domain': 'This site is not yet authorised for Google sign-in (add it in Firebase → Authentication → Settings).',
   };
+  if (code.startsWith('auth/api-key-not-valid') || code === 'auth/invalid-api-key') {
+    return `Firebase rejected this build's API key (${maskKey(FIREBASE_CONFIG?.apiKey ?? '')}). Copy the Web API key from Firebase → Project settings → General into VITE_FIREBASE_API_KEY on Vercel, then redeploy. Guest play still works.`;
+  }
+  if (code === 'auth/requests-from-referer-blocked') {
+    return 'This API key is restricted to other websites. Add this site to the key in Google Cloud → Credentials.';
+  }
+  if (code === 'auth/operation-not-allowed') return 'That sign-in method is turned off in Firebase → Authentication → Sign-in method.';
   return map[code] ?? (err as Error).message ?? 'Sign-in failed.';
 }
