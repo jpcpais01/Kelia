@@ -10,13 +10,19 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T19:35:00Z',
+    title: 'Teleport from the map',
+    lines: [
+      'Hover a place on the world map and click it to teleport there: a violet circle gathers at your feet for three seconds, then a column of light sets you down nearby, on dry ground and clear of any monster camp. Moving, attacking or taking a hit breaks the spell, you cannot teleport while monsters are hunting you, and it recharges for 20 seconds after each jump. Secret places become destinations once you have found them.',
+    ],
+  },
+  {
     at: '2026-10-15T19:25:00Z',
     title: 'The valley comes alive with sound',
     lines: [
       'Kelia now has a soundscape, all of it created by the game itself: thrushes, warblers and tits sing from the trees, skylarks pour out their song high over the meadows, woodpeckers drum and cuckoos call in the Whisperwood, and a hawk cries over the Greyspine crags. Each bird sings from a real spot around you, so you can walk towards it, and a dawn chorus greets the sunrise.',
       'At night the crickets take over the fields, owls hoot in the wood and frogs croak along the river and Mirror Lake. Leaves rustle and swell with every gust, the wind whistles around the peaks with an echo off the rock, the river babbles beside you, Silverfall roars long before you see it and waves lap at the lake shore.',
-      'Hearthmere has its own life: the smith\'s hammer rings on the anvil by day, the windmill creaks, chimes stir in the breeze, torches crackle and the chapel bell rings at dawn, noon and dusk.',
-      'New background music, "Dawn in the Highlands", fades gently in and out and returns after a quiet pause. Sound starts after your first click, goes quiet when you switch tabs, and Settings has a new Sound section with Master, Music and Ambience sliders.',
+      'Hearthmere has its own life: the smith\'s hammer rings on the anvil by day, the windmill creaks, chimes stir, torches crackle and the chapel bell rings at dawn, noon and dusk. New music, "Dawn in the Highlands", fades gently in and out between quiet pauses. Sound starts after your first click, goes quiet when you switch tabs, and Settings has a new Sound section with Master, Music and Ambience sliders.',
     ],
   },
   {

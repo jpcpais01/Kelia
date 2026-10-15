@@ -428,3 +428,9 @@ button { font-family: inherit; }
 .wm-tip p { margin: 5px 0 6px; font-size: 12.5px; line-height: 1.45; color: var(--ink-2); }
 .wm-tip small { font-size: 11px; color: var(--ink-3); }
 @media (max-width: 900px) { .wm-legend, .wm-hint { display: none; } }
+.wm-travel { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); font-size: 12px; font-weight: 600; color: #cdb8ff; }
+.cast-bar { position: absolute; left: 50%; bottom: 168px; width: 300px; transform: translate(-50%, 6px); opacity: 0; transition: opacity 0.2s, transform 0.2s; text-align: center; pointer-events: none; }
+.cast-bar.on { opacity: 1; transform: translate(-50%, 0); }
+.cast-label { margin-bottom: 6px; white-space: nowrap; font-family: var(--serif); font-size: 13px; letter-spacing: 0.12em; color: var(--gold-2); text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9); }
+.cast-track { height: 8px; border-radius: 999px; background: rgba(0, 0, 0, 0.5); border: 1px solid var(--line-2); overflow: hidden; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35); }
+.cast-track i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #8f7cf0, #e4d8ff); box-shadow: 0 0 12px rgba(180, 155, 255, 0.8); }

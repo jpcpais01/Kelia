@@ -38,6 +38,8 @@ export type ClientMessage =
   /** Equip (or drink) the item in inventory slot i. */
   | { t: 'equip'; i: number }
   | { t: 'unequip'; slot: 'offhand' | 'outfit' }
+  /** Teleport to a named place (a point-of-interest id); an empty id cancels. */
+  | { t: 'travel'; poi: string }
   | { t: 'discard'; i: number };
 
 export type ActKind = 'c' | 's' | 'd';
@@ -105,6 +107,11 @@ export type ServerMessage =
   | { t: 'chat'; id: number; name: string; text: string; sys?: boolean }
   | { t: 'emote'; id: number; e: string }
   | { t: 'correct'; x: number; y: number; z: number }
+  /**
+   * Teleports: `start` begins a channel of `ms`, `cancel` ends it early, and
+   * `arrive` lands the player at x/y/z (sent after the traveller's `correct`).
+   */
+  | { t: 'travel'; id: number; s: 'start' | 'cancel' | 'arrive'; poi: string; ms?: number; x?: number; y?: number; z?: number }
   | { t: 'pong'; c: number; s: number }
   /** Everyone's latest round trip: [entityId, ms][] (every couple of seconds). */
   | { t: 'pings'; p: [number, number][] };

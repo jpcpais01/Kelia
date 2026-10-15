@@ -28,6 +28,8 @@ import {
   validateName,
   waterAt,
   POINTS_OF_INTEREST,
+  TRAVEL_CHANNEL_MS,
+  TRAVEL_COOLDOWN_MS,
   type CharacterData,
   type ClientMessage,
   type PublicCharacter,
@@ -38,6 +40,7 @@ import {
 import { verifyToken, type AuthResult } from './auth';
 import { config } from './config';
 import { Combat, PlayerCombat, type Fighter } from './combat';
+import { travelSpot } from './travel';
 import type { CharacterStore } from './store';
 
 export class Session {
@@ -70,6 +73,9 @@ export class Player {
   corrections = 0;
   stats: Stats;
   combat = new PlayerCombat();
+  /** A teleport being channelled: where to, when it began, and where/how healthy the player stood. */
+  travel: { poi: string; at: number; x: number; z: number; hp: number } | null = null;
+  travelReadyAt = 0;
 
   constructor(readonly id: number, readonly session: Session, public character: CharacterData) {
     [this.x, this.y, this.z] = character.pos;
@@ -205,7 +211,11 @@ export class World {
         if (Number.isFinite(r) && r >= 0) s.ping = Math.min(9999, Math.round(r));
         return s.send({ t: 'pong', c: Number(msg.c) || 0, s: Date.now() });
       }
+      case 'travel':
+        if (s.player) this.onTravel(s.player, String(msg.poi ?? ''));
+        return;
       case 'act':
+        if (s.player?.travel) this.endTravel(s.player, 'cancel');
         if (s.player) this.combat.act(s.player, msg.k, Number(msg.i) | 0, Number(msg.yaw), Number(msg.tx), Number(msg.tz));
         return;
       case 'use':
@@ -337,6 +347,57 @@ export class World {
     this.discover(p);
   }
 
+  // ------------------------------------------------------------------ teleports
+  /** Start channelling a teleport to a place the player can see on their map. */
+  private onTravel(p: Player, id: string) {
+    const reply = (t: string) => p.session.send({ t: 'chat', id: 0, name: '', text: t, sys: true });
+    if (!id) {
+      if (p.travel) this.endTravel(p, 'cancel');
+      return;
+    }
+    const poi = POINTS_OF_INTEREST.find((o) => o.id === id);
+    // secret places only once you've found them, like on the map
+    if (!poi || (poi.hidden && !p.character.discovered.includes(poi.id))) return;
+    const now = Date.now();
+    if (p.combat.dead) return;
+    if (this.combat.monsters.some((m) => m.alive && m.target === p.id)) return reply('You cannot teleport while monsters are hunting you.');
+    if (now < p.travelReadyAt) return reply(`Teleport is recharging (${Math.ceil((p.travelReadyAt - now) / 1000)} s).`);
+    if (Math.hypot(p.x - poi.pos[0], p.z - poi.pos[1]) < 25) return reply(`You are already at ${poi.name}.`);
+    p.travel = { poi: poi.id, at: now, x: p.x, z: p.z, hp: p.character.hp };
+    this.broadcast({ t: 'travel', id: p.id, s: 'start', poi: poi.id, ms: TRAVEL_CHANNEL_MS });
+  }
+
+  private endTravel(p: Player, how: 'cancel' | 'arrive', why?: string) {
+    const t = p.travel;
+    if (!t) return;
+    p.travel = null;
+    if (how === 'cancel') {
+      this.broadcast({ t: 'travel', id: p.id, s: 'cancel', poi: t.poi });
+      if (why) p.session.send({ t: 'chat', id: 0, name: '', text: why, sys: true });
+      return;
+    }
+    const poi = POINTS_OF_INTEREST.find((o) => o.id === t.poi)!;
+    const [x, z] = travelSpot(this.heightmap, poi);
+    p.x = x;
+    p.z = z;
+    p.y = this.heightmap.sample(x, z);
+    p.lastMoveAt = Date.now();
+    p.travelReadyAt = Date.now() + TRAVEL_COOLDOWN_MS;
+    p.session.send({ t: 'correct', x: q(p.x), y: q(p.y), z: q(p.z) });
+    this.broadcast({ t: 'travel', id: p.id, s: 'arrive', poi: poi.id, x: q(p.x), y: q(p.y), z: q(p.z) });
+    this.discover(p);
+  }
+
+  /** Channels finish after TRAVEL_CHANNEL_MS unless the player moves, gets hurt or dies. */
+  private tickTravel(p: Player, now: number) {
+    const t = p.travel;
+    if (!t) return;
+    if (p.combat.dead) return this.endTravel(p, 'cancel');
+    if (Math.hypot(p.x - t.x, p.z - t.z) > 1.2) return this.endTravel(p, 'cancel', 'Teleport interrupted: you moved.');
+    if (p.character.hp < t.hp) return this.endTravel(p, 'cancel', 'Teleport interrupted: you were hit.');
+    if (now - t.at >= TRAVEL_CHANNEL_MS) this.endTravel(p, 'arrive');
+  }
+
   /** Mark points of interest as discovered when a player walks close. */
   private discover(p: Player) {
     const c = p.character;
@@ -418,6 +479,7 @@ export class World {
     this.combat.tick(dt);
     const e: SnapEntity[] = [];
     for (const p of this.players.values()) {
+      this.tickTravel(p, now);
       const hpFrac = Math.round((p.character.hp / p.maxHp) * 255);
       e.push([p.id, q(p.x), q(p.y), q(p.z), Math.round(p.yaw * 1000) / 1000, p.combat.dead ? MoveState.Dead : p.state, hpFrac]);
       if (now - p.lastSaveAt > SAVE_INTERVAL_MS) {
