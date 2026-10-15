@@ -29,7 +29,7 @@ export const PATCH_NOTES: PatchNote[] = [
     lines: [
       'Kelia now has a hand-painted anime style: soft cel shading with cool tinted shadows, glowing rim light, inked outlines on heroes and monsters, a painted sky with fluffy clouds, and a warm haze that glows toward the sun.',
       'Shadows are crisp and stable (no more flicker as you move), trees, rocks, heroes and buildings now cast them onto the grass, and distant flowers, grass tips and water glints no longer glitter.',
-      'Much faster graphics: shadows and post-processing cost a fraction of what they did, trees draw far less, and WebGPU is now quicker than WebGL2 instead of slower. The F3 performance overlay also widens to show every name and number in full.',
+      'Much faster graphics: shadows and post-processing cost a fraction of what they did, trees draw far less, and WebGPU is now quicker than WebGL2 instead of slower. The world now needs far less CPU to draw (fewer, cheaper draw calls for terrain, props and wildlife), turning near forests no longer hitches, and the F3 overlay widens to show every name and number in full.',
     ],
   },
   {

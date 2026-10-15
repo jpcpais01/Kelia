@@ -1,6 +1,7 @@
 // Assembles the 3D world: scene, camera, sky & lighting, terrain, water,
 // vegetation, props and ambient life.
 import { Color4, Scene, UniversalCamera, Vector3, type AbstractEngine } from '@babylonjs/core';
+import { refreshStatics } from './frozen';
 import { perf } from '../core/perf';
 import type { QualitySettings } from '../core/quality';
 import { Atmosphere } from './atmosphere';
@@ -73,6 +74,8 @@ export class World {
     setOutlines(q.outlines);
     // MSAA sample counts changed: WebGPU's cached render bundles must be rebuilt
     this.scene.resetDrawCache();
+    // shadows on/off and map changes alter shader variants: let static materials re-derive once
+    refreshStatics(this.scene);
     perf.scope('grass', () => this.grass?.applyQuality(q));
     perf.scope('foliage', () => this.foliage?.applyQuality(q));
     this.camera.maxZ = q.viewDistance + 1000;

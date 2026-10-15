@@ -5,6 +5,7 @@ import { hash2, type Heightmap } from '@kelia/shared';
 import type { Ambient } from './ambient';
 import type { Atmosphere } from './atmosphere';
 import type { Foliage } from './foliage';
+import { freezeStatic } from './frozen';
 import { mergeStatic } from './merge';
 
 export class Secrets {
@@ -29,6 +30,8 @@ export class Secrets {
       m.parent = this.root;
       const lit = !glowing.has(m.material as StandardMaterial);
       if (lit && m.visibility >= 1) this.atmosphere.addShadowCaster(m, false);
+      // glowing materials pulse in update(); everything else never changes
+      if (lit) freezeStatic(m.material);
     }
   }
 

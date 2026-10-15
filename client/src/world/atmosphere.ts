@@ -9,6 +9,7 @@
 import {
   Color3,
   DirectionalLight,
+  Mesh,
   Scene,
   ShadowGenerator,
   Vector3,
@@ -45,6 +46,7 @@ export class Atmosphere {
   exposureBias = 1;
   private casters = new Map<AbstractMesh, Caster>();
   private renderList: AbstractMesh[] = [];
+  private listAnchor: AbstractMesh;
   private shadowRadius = 60;
   private shadowTexel = 0.05;
   /** Where the shadow map is centred (the player, or the camera target). */
@@ -65,6 +67,8 @@ export class Atmosphere {
     this.sun.shadowMinZ = 0;
     this.sun.shadowMaxZ = 520;
     this.state = skyStateAt(this.dayTime);
+    this.listAnchor = new Mesh('shadowListAnchor', scene);
+    this.listAnchor.setEnabled(false);
   }
 
   applyQuality(q: QualitySettings) {
@@ -88,7 +92,15 @@ export class Atmosphere {
     sg.frustumEdgeFalloff = 0.35;
     sg.transparencyShadow = false;
     const map = sg.getShadowMap()!;
-    map.renderList = this.renderList;
+    // Hand the casters over through getCustomRenderList, never by editing
+    // map.renderList: Babylon watches that array, and every time it goes from
+    // empty to non-empty it marks the lighting of every mesh in the scene as
+    // dirty, which re-validates every material on the next draw. Refilling it
+    // each frame did exactly that, costing milliseconds of CPU per frame.
+    // The watched list keeps one permanent placeholder because materials only
+    // enable shadow receiving while the shadow map's renderList is non-empty.
+    map.renderList = [this.listAnchor];
+    map.getCustomRenderList = () => this.renderList;
     this.shadows = sg;
   }
 

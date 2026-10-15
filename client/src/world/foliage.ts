@@ -33,6 +33,7 @@ import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
 import { MeshBuilder2 } from './meshgen';
 import { createShaderPlugin, type ShaderPlugin } from './shaderPlugin';
+import { freezeStatic } from './frozen';
 import { setToon } from './toon';
 
 const CHUNK = 64;
@@ -274,6 +275,7 @@ export class Foliage {
         wgsl: { vertex: { CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_WGSL } },
       });
       plugin.values.windStrength = t.wind;
+      freezeStatic(mat);
       const total = this.totals[i] ?? 0;
       const mk = (lod: number, name: string): Slot => {
         const m = new Mesh(name, this.scene);
@@ -501,7 +503,9 @@ export class Foliage {
         const dz = m[o + 14] - cam.z;
         const d2 = dx * dx + dz * dz;
         if (d2 < lo2 || d2 >= hi2) continue;
-        buf.set(m.subarray(o, o + 16), n * 16);
+        // plain copy: subarray() here allocated an object per instance and the garbage caused hitches
+        const w = n * 16;
+        for (let k = 0; k < 16; k++) buf[w + k] = m[o + k];
         n++;
       }
     }

@@ -1,5 +1,5 @@
 // Streaming, level-of-detail terrain built from the shared heightmap.
-// 16×16 chunks of 64 m; each picks a resolution by camera distance and is
+// 8×8 chunks of 128 m; each picks a resolution by camera distance and is
 // (re)built a few per frame so movement never hitches.
 import {
   Color3,
@@ -15,9 +15,12 @@ import { WORLD_HALF } from '@kelia/shared';
 import type { TerrainData } from './terrainData';
 import { createShaderPlugin } from './shaderPlugin';
 import { createDetailTexture } from './textures';
+import { freezeStatic } from './frozen';
 import { setToon } from './toon';
 
-const CHUNK = 64;
+// 8×8 chunks of 128 m: a quarter of the draw calls of 64 m chunks, with LOD
+// distances matched so the same detail reaches the same range.
+const CHUNK = 128;
 const CHUNKS = (WORLD_HALF * 2) / CHUNK;
 const LOD_STEPS = [1, 2, 4, 8];
 
@@ -109,6 +112,7 @@ export class Terrain {
     mat.roughness = 0.97;
     mat.albedoColor = Color3.White();
     this.material = mat;
+    freezeStatic(mat);
     // ground has no rim light (it would make every distant slope glow)
     setToon(mat, { rim: 0 });
     const plugin = createShaderPlugin(mat, {
@@ -147,7 +151,7 @@ export class Terrain {
 
   private desiredLod(c: Chunk, cam: Vector3) {
     const d = Math.hypot(c.cx - cam.x, c.cz - cam.z) / this.lodScale;
-    return d < 110 ? 0 : d < 230 ? 1 : d < 430 ? 2 : 3;
+    return d < 140 ? 0 : d < 260 ? 1 : d < 460 ? 2 : 3;
   }
 
   /** Build everything at a coarse LOD immediately, then refine near the camera. */

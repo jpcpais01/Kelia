@@ -5,18 +5,21 @@
 import {
   Color3,
   Color4,
+  Matrix,
   Mesh,
   MeshBuilder,
   ParticleSystem,
   StandardMaterial,
   TransformNode,
   Vector3,
+  VertexData,
   type Scene,
   type Texture,
 } from '@babylonjs/core';
 import { FALL_S1, Simplex2, VILLAGE_PROPS, forestMask, hash2, riverWaterY, waterAt, type Heightmap } from '@kelia/shared';
 import type { Atmosphere } from './atmosphere';
 import type { Light } from './props';
+import { freezeStatic } from './frozen';
 import { createCloudSpriteTexture, createSoftDotTexture } from './textures';
 import { riverPointAt } from './water';
 
@@ -30,14 +33,27 @@ interface Emitter {
 }
 
 interface Critter {
-  node: TransformNode;
-  wings: [Mesh, Mesh];
+  pos: Vector3;
+  yaw: number;
+  flap: number;
+  size: number;
+  color: Color3;
+  on: boolean;
   phase: number;
   speed: number;
   anchor: Vector3;
   radius: number;
   height: number;
 }
+
+const mY = new Matrix();
+const mT = new Matrix();
+const mBody = new Matrix();
+const mS = new Matrix();
+const mR = new Matrix();
+const mA = new Matrix();
+const mB = new Matrix();
+const RY_PI = Matrix.RotationY(Math.PI);
 
 const smooth = (a: number, b: number, x: number) => {
   const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
@@ -56,6 +72,10 @@ export class Ambient {
   private noise = new Simplex2(4242);
   private time = 0;
   private root: TransformNode;
+  /** Every butterfly and bird wing is one thin instance of a single mesh: one draw call for all of them. */
+  private wings: Mesh | null = null;
+  private wingBuf = new Float32Array(0);
+  private haloMat: StandardMaterial | null = null;
 
   constructor(private scene: Scene, private hm: Heightmap, private atmosphere: Atmosphere, lights: Light[]) {
     this.root = new TransformNode('ambient', scene);
@@ -72,6 +92,7 @@ export class Ambient {
     this.leaves.start();
     this.makeButterflies();
     this.makeBirds();
+    this.makeWings();
   }
 
   // ---------------------------------------------------------------- emitters
@@ -103,14 +124,19 @@ export class Ambient {
     halo.position.copyFrom(pos).addInPlaceFromFloats(0, 0.15, 0);
     halo.parent = this.root;
     halo.isPickable = false;
-    const hm = new StandardMaterial('haloMat', this.scene);
-    hm.disableLighting = true;
-    hm.emissiveColor = new Color3(1, 0.5, 0.15);
-    hm.opacityTexture = this.dot;
-    hm.alphaMode = 1; // ALPHA_ADD
-    hm.disableDepthWrite = true;
-    hm.alpha = 0.35;
-    halo.material = hm;
+    if (!this.haloMat) {
+      // one shared material for every halo (fewer state changes per frame)
+      const hm = new StandardMaterial('haloMat', this.scene);
+      hm.disableLighting = true;
+      hm.emissiveColor = new Color3(1, 0.5, 0.15);
+      hm.opacityTexture = this.dot;
+      hm.alphaMode = 1; // ALPHA_ADD
+      hm.disableDepthWrite = true;
+      hm.alpha = 0.35;
+      this.haloMat = hm;
+      freezeStatic(hm);
+    }
+    halo.material = this.haloMat;
     this.emitters.push({ pos, range: 80, ps, on: false });
     return ps;
   }
@@ -253,44 +279,81 @@ export class Ambient {
   }
 
   // ---------------------------------------------------------------- critters
-  private wingMesh(name: string, color: Color3, size: number, glow = 0) {
-    const mat = new StandardMaterial(name + 'Mat', this.scene);
-    mat.diffuseColor = color;
-    mat.emissiveColor = color.scale(0.35 + glow);
+  /** A flat unit wing hinged at x = 0, reaching out along +x. */
+  private makeWings() {
+    const all = [...this.butterflies, ...this.birds];
+    const m = new Mesh('wings', this.scene);
+    const vd = new VertexData();
+    vd.positions = [0, 0, -0.4, 1, 0, -0.4, 1, 0, 0.4, 0, 0, 0.4];
+    vd.normals = [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0];
+    vd.indices = [0, 2, 1, 0, 3, 2];
+    vd.applyToMesh(m);
+    const mat = new StandardMaterial('wingsMat', this.scene);
+    // per-wing colour comes from the instance colour; a little over 1 keeps them as bright as before
+    mat.diffuseColor = new Color3(1.3, 1.3, 1.3);
     mat.specularColor = Color3.Black();
     mat.backFaceCulling = false;
-    const make = (side: number) => {
-      const w = MeshBuilder.CreatePlane(name, { width: size, height: size * 0.8 }, this.scene);
-      w.material = mat;
-      w.isPickable = false;
-      // hinge on the body: shift the plane so its inner edge is at the origin
-      w.setPivotPoint(new Vector3((-side * size) / 2, 0, 0));
-      w.position.x = (side * size) / 2;
-      w.rotation.x = Math.PI / 2;
-      return w;
-    };
-    return [make(1), make(-1)] as [Mesh, Mesh];
+    m.material = mat;
+    freezeStatic(mat);
+    m.isPickable = false;
+    m.alwaysSelectAsActiveMesh = true;
+    m.doNotSyncBoundingInfo = true;
+    this.wingBuf = new Float32Array(all.length * 2 * 16);
+    const cols = new Float32Array(all.length * 2 * 4);
+    all.forEach((c, i) => {
+      for (let s = 0; s < 2; s++) cols.set([c.color.r, c.color.g, c.color.b, 1], (i * 2 + s) * 4);
+    });
+    m.thinInstanceSetBuffer('matrix', this.wingBuf, 16, false);
+    m.thinInstanceSetBuffer('color', cols, 4, true);
+    this.wings = m;
+  }
+
+  private critter(color: Color3, size: number, phase: number, speed: number, anchor: Vector3, radius: number, height: number): Critter {
+    return { pos: new Vector3(), yaw: 0, flap: 0, size, color, on: false, phase, speed, anchor, radius, height };
+  }
+
+  /** Write both wings of every critter into the instance buffer. */
+  private writeWings() {
+    if (!this.wings) return;
+    const buf = this.wingBuf;
+    let o = 0;
+    for (const c of [this.butterflies, this.birds]) {
+      for (const b of c) {
+        if (!b.on) {
+          buf.fill(0, o, o + 32);
+          o += 32;
+          continue;
+        }
+        Matrix.RotationYToRef(b.yaw, mY);
+        Matrix.TranslationToRef(b.pos.x, b.pos.y, b.pos.z, mT);
+        mY.multiplyToRef(mT, mBody);
+        for (let side = 0; side < 2; side++) {
+          Matrix.ScalingToRef(b.size, b.size, b.size, mS);
+          Matrix.RotationZToRef(b.flap, mR);
+          mS.multiplyToRef(mR, mA);
+          // the left wing is the right one turned half way round
+          if (side === 1) mA.multiplyToRef(RY_PI, mB);
+          else mB.copyFrom(mA);
+          mB.multiplyToRef(mBody, mA);
+          mA.copyToArray(buf, o);
+          o += 16;
+        }
+      }
+    }
+    this.wings.thinInstanceBufferUpdated('matrix');
   }
 
   private makeButterflies() {
     const colors = ['#ffd24a', '#ff8fb8', '#8fd8ff', '#ffffff', '#ffa040', '#c8a8ff'];
     for (let i = 0; i < 12; i++) {
-      const node = new TransformNode('butterfly', this.scene);
-      node.parent = this.root;
-      const wings = this.wingMesh('bwing', Color3.FromHexString(colors[i % colors.length]), 0.09);
-      wings.forEach((w) => (w.parent = node));
-      this.butterflies.push({ node, wings, phase: hash2(i, 1, 9) * 100, speed: 0.6 + hash2(i, 2, 9) * 0.6, anchor: new Vector3(), radius: 3 + hash2(i, 3, 9) * 6, height: 0.5 + hash2(i, 4, 9) });
+      this.butterflies.push(this.critter(Color3.FromHexString(colors[i % colors.length]), 0.09, hash2(i, 1, 9) * 100, 0.6 + hash2(i, 2, 9) * 0.6, new Vector3(), 3 + hash2(i, 3, 9) * 6, 0.5 + hash2(i, 4, 9)));
     }
   }
 
   private makeBirds() {
     for (let i = 0; i < 10; i++) {
-      const node = new TransformNode('bird', this.scene);
-      node.parent = this.root;
-      const wings = this.wingMesh('wing', new Color3(0.12, 0.12, 0.14), 0.7);
-      wings.forEach((w) => (w.parent = node));
       const flock = i < 5 ? 0 : 1;
-      this.birds.push({ node, wings, phase: flock * 3 + (i % 5) * 0.08, speed: 0.09 + flock * 0.03, anchor: new Vector3(flock ? 120 : -60, 0, flock ? -80 : 60), radius: flock ? 70 : 95, height: 42 + (i % 5) * 1.6 + flock * 10 });
+      this.birds.push(this.critter(new Color3(0.12, 0.12, 0.14), 0.7, flock * 3 + (i % 5) * 0.08, 0.09 + flock * 0.03, new Vector3(flock ? 120 : -60, 0, flock ? -80 : 60), flock ? 70 : 95, 42 + (i % 5) * 1.6 + flock * 10));
     }
   }
 
@@ -327,7 +390,7 @@ export class Ambient {
     const t = this.time;
     for (const b of this.butterflies) {
       const on = day > 0.4 && fm < 0.5;
-      b.node.setEnabled(on);
+      b.on = on;
       if (!on) continue;
       if (Vector3.DistanceSquared(b.anchor, cam) > 900 || b.anchor.lengthSquared() === 0) {
         b.anchor.set(cam.x + (Math.random() - 0.5) * 30, 0, cam.z + (Math.random() - 0.5) * 30);
@@ -336,29 +399,24 @@ export class Ambient {
       const x = b.anchor.x + Math.cos(p) * b.radius + this.noise.noise(p * 0.7, b.phase) * 1.5;
       const z = b.anchor.z + Math.sin(p * 1.3) * b.radius * 0.7 + this.noise.noise(b.phase, p * 0.7) * 1.5;
       const y = this.hm.sample(x, z) + b.height + Math.sin(p * 3.1) * 0.25;
-      const n = b.node;
-      const prev = n.position.clone();
-      n.position.set(x, y, z);
-      n.rotation.y = Math.atan2(x - prev.x, z - prev.z);
-      const flap = Math.sin(t * 22 + b.phase) * 1.1;
-      b.wings[0].rotation.z = flap;
-      b.wings[1].rotation.z = -flap;
+      b.yaw = Math.atan2(x - b.pos.x, z - b.pos.z);
+      b.pos.set(x, y, z);
+      b.flap = Math.sin(t * 22 + b.phase) * 1.1;
     }
 
     // birds circling high above by day
     for (const b of this.birds) {
-      b.node.setEnabled(day > 0.3);
-      if (day <= 0.3) continue;
+      b.on = day > 0.3;
+      if (!b.on) continue;
       const a = b.phase + t * b.speed;
       const x = b.anchor.x + Math.cos(a) * b.radius;
       const z = b.anchor.z + Math.sin(a) * b.radius;
       const y = this.hm.sample(x, z) * 0.4 + b.height + Math.sin(t * 0.3 + b.phase) * 3;
-      b.node.position.set(x, y, z);
-      b.node.rotation.y = Math.atan2(-Math.sin(a), Math.cos(a));
+      b.pos.set(x, y, z);
+      b.yaw = Math.atan2(-Math.sin(a), Math.cos(a));
       // glide with an occasional flap
-      const flap = Math.sin(t * 9 + b.phase * 7) * (Math.sin(t * 0.7 + b.phase) > 0.4 ? 0.6 : 0.08) + 0.12;
-      b.wings[0].rotation.z = flap;
-      b.wings[1].rotation.z = -flap;
+      b.flap = Math.sin(t * 9 + b.phase * 7) * (Math.sin(t * 0.7 + b.phase) > 0.4 ? 0.6 : 0.08) + 0.12;
     }
+    this.writeWings();
   }
 }
