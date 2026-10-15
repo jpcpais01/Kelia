@@ -454,8 +454,10 @@ export class Game {
     this.input.releaseLock();
     openSettings({
       settings: this.settings,
+      renderSize: () => this.world.renderSize(),
       onChange: (s, reload) => {
         const qualityChanged = s.quality !== this.settings.quality;
+        const scaleChanged = s.renderScale !== this.settings.renderScale;
         this.settings = s;
         saveSettings(s);
         this.applyCameraSettings();
@@ -463,6 +465,7 @@ export class Game {
           const level = s.quality === 'auto' ? autoQuality(this.gpu) : s.quality;
           this.world.applyQuality(PRESETS[level]);
         }
+        if (scaleChanged) this.world.setRenderScale(s.renderScale);
         if (reload) setTimeout(() => location.reload(), 300);
       },
       onLogout: async () => {

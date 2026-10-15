@@ -73,6 +73,8 @@ export function openHelp() {
 
 export interface SettingsCallbacks {
   settings: UserSettings;
+  /** Current scene resolution in pixels (shown next to the resolution slider). */
+  renderSize?: () => [number, number];
   onChange(s: UserSettings, needsReload: boolean): void;
   onLogout(): void;
 }
@@ -91,9 +93,39 @@ export function openSettings(cb: SettingsCallbacks) {
   const range = (label: string, min: number, max: number, step: number, value: number, set: (v: number) => void) =>
     h('div', { class: 'setting' }, label, h('input', { type: 'range', min, max, step, value, oninput: (e: Event) => set(Number((e.target as HTMLInputElement).value)) }));
   const apply = (reload = false) => cb.onChange({ ...s }, reload);
+  // Rendering resolution: automatic (from the preset) or 50–200% of native pixels.
+  const resLabel = h('span', { class: 'muted', style: 'font-size:12px;margin-left:auto;margin-right:10px;white-space:nowrap' });
+  const showRes = () => {
+    const pct = s.renderScale > 0 ? `${Math.round(s.renderScale * 100)}%` : 'Auto';
+    // the engine resizes on the next frame
+    requestAnimationFrame(() => {
+      const size = cb.renderSize?.();
+      resLabel.textContent = size ? `${pct} · ${size[0]}×${size[1]}` : pct;
+    });
+  };
+  const resSlider = h('input', {
+    type: 'range', min: 50, max: 200, step: 5, value: Math.round((s.renderScale || 1) * 100),
+    oninput: (e: Event) => {
+      s.renderScale = Number((e.target as HTMLInputElement).value) / 100;
+      autoBox.checked = false;
+      apply();
+      showRes();
+    },
+  }) as HTMLInputElement;
+  const autoBox = h('input', {
+    type: 'checkbox', checked: s.renderScale === 0,
+    onchange: (e: Event) => {
+      s.renderScale = (e.target as HTMLInputElement).checked ? 0 : Number(resSlider.value) / 100;
+      apply();
+      showRes();
+    },
+  }) as HTMLInputElement;
+  showRes();
   windowFrame(
     'SETTINGS',
     h('div', { class: 'setting' }, 'Graphics', seg<QualityLevel | 'auto'>([['auto', 'Auto'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['ultra', 'Ultra']], s.quality, (v) => { s.quality = v; apply(); })),
+    h('div', { class: 'setting' }, 'Render resolution', resLabel, resSlider),
+    h('label', { class: 'toggle setting' }, 'Automatic resolution', autoBox, h('i')),
     h('div', { class: 'setting' }, 'Renderer', seg<UserSettings['renderer']>([['auto', 'Auto'], ['webgpu', 'WebGPU'], ['webgl2', 'WebGL2']], s.renderer, (v) => { s.renderer = v; apply(true); })),
     range('Field of view', 50, 80, 1, s.fov, (v) => { s.fov = v; apply(); }),
     range('Mouse sensitivity', 0.3, 2.5, 0.05, s.mouseSensitivity, (v) => { s.mouseSensitivity = v; apply(); }),

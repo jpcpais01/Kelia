@@ -30,6 +30,7 @@ export class World {
   ambient: Ambient | null = null;
   secrets: Secrets | null = null;
   quality!: QualitySettings;
+  private userRenderScale = 0;
   private updaters: ((dt: number) => void)[] = [];
   time = 0;
 
@@ -68,7 +69,7 @@ export class World {
 
   applyQuality(q: QualitySettings) {
     this.quality = q;
-    this.engine.setHardwareScalingLevel(1 / (q.renderScale * Math.min(window.devicePixelRatio || 1, 1.5)));
+    this.applyResolution();
     perf.scope('sky', () => this.atmosphere.applyQuality(q));
     this.postfx.apply(q);
     setOutlines(q.outlines);
@@ -79,6 +80,31 @@ export class World {
     perf.scope('grass', () => this.grass?.applyQuality(q));
     perf.scope('foliage', () => this.foliage?.applyQuality(q));
     this.camera.maxZ = q.viewDistance + 1000;
+  }
+
+  /** Player-chosen rendering resolution (fraction of native pixels); 0 = from the quality preset. */
+  setRenderScale(scale: number) {
+    this.userRenderScale = scale;
+    this.applyResolution();
+    this.scene.resetDrawCache();
+  }
+
+  private applyResolution() {
+    const dpr = window.devicePixelRatio || 1;
+    // automatic: the preset's scale, capped at 1.5× device pixels so HiDPI
+    // screens don't render 4K; chosen: exactly that share of native pixels
+    const s = this.userRenderScale > 0 ? this.userRenderScale * dpr : this.quality.renderScale * Math.min(dpr, 1.5);
+    this.engine.setHardwareScalingLevel(1 / s);
+  }
+
+  /** e.g. "85% scale" (chosen) or "auto 100% scale" (from the preset). */
+  scaleLabel() {
+    return this.userRenderScale > 0 ? `${Math.round(this.userRenderScale * 100)}% scale` : `auto ${Math.round(this.quality.renderScale * 100)}% scale`;
+  }
+
+  /** The size the scene is rendered at, in pixels. */
+  renderSize(): [number, number] {
+    return [this.engine.getRenderWidth(), this.engine.getRenderHeight()];
   }
 
   /** Load streamed glTF content (props). Safe to call once. */

@@ -20,7 +20,7 @@ export const PATCH_NOTES: PatchNote[] = [
     at: '2026-10-15T12:15:00Z',
     title: 'Click, aim, strike, go fullscreen',
     lines: [
-      'Clicking the world works again: it captures the mouse for the action camera and attacks. With the mouse free, your character turns to face your cursor, W runs toward it, A and D strafe around it, and skills fire where you point. A new button next to Settings (or F11) takes Kelia fullscreen and back.',
+      'Clicking the world works again: it captures the mouse for the action camera and attacks. With the mouse free, your character turns to face your cursor, W runs toward it, A and D strafe around it, and skills fire where you point. A new button next to Settings (or F11) takes Kelia fullscreen and back, and Settings can now set the render resolution (50–200% of your screen, or automatic).',
     ],
   },
   {
