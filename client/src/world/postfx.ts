@@ -10,13 +10,6 @@
 //     -> composite  full res: bloom, shafts, portrait focus blur, tone mapping,
 //                   anime colour grade, vignette and FXAA, straight to screen.
 //
-// Eye adaptation runs beside the chain, on the GPU only (no read-back): right
-// after the prefilter, the HDR scene is boiled down to a 32×18 grid of log
-// luminance, and a single pixel eases toward its centre-weighted average each
-// frame. The composite reads that pixel, so walking into a dark forest slowly
-// opens the exposure up and stepping back into a sunny meadow or looking at
-// the sky closes it down, around the artist-set exposure for the time of day.
-//
 // The sky writes "how open is the sky" into the scene's alpha channel, which is
 // what lets shafts work without a depth or occlusion pass. Exposure and every
 // other per-frame value are plain uniforms here, so nothing re-validates
@@ -24,10 +17,7 @@
 import {
   Constants,
   Effect,
-  EffectRenderer,
-  EffectWrapper,
   PostProcess,
-  type RenderTargetWrapper,
   Texture,
   Vector3,
   Vector4,
@@ -35,9 +25,6 @@ import {
   type Scene,
 } from '@babylonjs/core';
 import type { QualitySettings } from '../core/quality';
-
-const LUM_W = 32;
-const LUM_H = 18;
 
 Effect.ShadersStore['keliaPrefilterFragmentShader'] = /* glsl */ `
 precision highp float;
@@ -128,8 +115,6 @@ uniform vec4 shaftC;     // rgb = shaft colour × strength
 uniform vec4 focus;      // xy = focus uv, z = radius, w = amount (0 = off)
 uniform vec4 tintShadow; // rgb = shadow lift tint
 uniform vec4 tintLight;  // rgb = highlight tint
-uniform sampler2D adaptSampler; // 1×1: r = adapted log2 luminance of the scene
-uniform vec4 autoExp;    // x = target log2 luminance, y = strength, z = min / w = max log2 change
 
 vec3 neutralTonemap(vec3 color) {
   const float start = 0.76;
@@ -193,12 +178,7 @@ void main(void) {
   col += blur * bloomC.rgb * bloomC.w;
   col += shaftC.rgb * q.a;
 
-  // eye adaptation: pull the exposed scene's average toward the target, partly
-  // (a NaN or garbage value here would black out the whole frame: fall back to neutral)
-  float ad = texture2D(adaptSampler, vec2(0.5)).r;
-  if (!(ad > -20.0 && ad < 20.0)) ad = autoExp.x - log2(grade.x);
-  float la = ad + log2(grade.x);
-  col *= grade.x * exp2(clamp((autoExp.x - la) * autoExp.y, autoExp.z, autoExp.w));
+  col *= grade.x;
   col = neutralTonemap(col);
   // anime grade: richer colour, cool lifted shadows, warm highlights
   float l = dot(col, vec3(0.2126, 0.7152, 0.0722));
@@ -211,50 +191,6 @@ void main(void) {
   vec2 vv = vUV - 0.5;
   col *= 1.0 - dot(vv, vv) * grade.w;
   gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
-}
-`;
-
-Effect.ShadersStore['keliaLumFragmentShader'] = /* glsl */ `
-precision highp float;
-varying vec2 vUV;
-uniform sampler2D textureSampler; // full res HDR scene
-uniform vec2 span;                // one luminance cell, in uv
-void main(void) {
-  // 9 bilinear taps over the cell
-  vec3 c = vec3(0.0);
-  for (int j = -1; j <= 1; j++)
-    for (int i = -1; i <= 1; i++) c += texture2D(textureSampler, vUV + vec2(float(i), float(j)) * span * 0.33).rgb;
-  float l = dot(c / 9.0, vec3(0.2126, 0.7152, 0.0722));
-  // one NaN / Inf pixel must not poison the average (and the adapted value) forever
-  if (!(l >= 0.0 && l < 65000.0)) l = 0.18;
-  // the sun disc and glints must not dominate the average
-  gl_FragColor = vec4(log2(clamp(l, 0.002, 12.0)), 0.0, 0.0, 1.0);
-}
-`;
-
-Effect.ShadersStore['keliaAdaptFragmentShader'] = /* glsl */ `
-precision highp float;
-varying vec2 vUV;
-uniform sampler2D lumSampler;   // ${LUM_W}×${LUM_H} log luminance
-uniform sampler2D prevSampler;  // 1×1 adapted value from last frame
-uniform vec4 adaptP;            // x = blend toward the new value (0..1), y = 1 to snap
-void main(void) {
-  float s = 0.0;
-  float w = 0.0;
-  for (int j = 0; j < ${LUM_H}; j++) {
-    for (int i = 0; i < ${LUM_W}; i++) {
-      vec2 d = (vec2(float(i), float(j)) + 0.5) / vec2(${LUM_W}.0, ${LUM_H}.0) - 0.5;
-      // what you look at counts most
-      float k = exp(-dot(d * vec2(1.6, 2.0), d * vec2(1.6, 2.0)) * 3.0);
-      s += texelFetch(lumSampler, ivec2(i, j), 0).r * k;
-      w += k;
-    }
-  }
-  float target = s / w;
-  if (!(target > -20.0 && target < 20.0)) target = -2.5;
-  float prev = texelFetch(prevSampler, ivec2(0, 0), 0).r;
-  if (!(prev > -20.0 && prev < 20.0)) prev = target;
-  gl_FragColor = vec4(adaptP.y > 0.5 ? target : mix(prev, target, adaptP.x), 0.0, 0.0, 1.0);
 }
 `;
 
@@ -275,14 +211,8 @@ export class PostFX {
   private focusV = new Vector4(0.5, 0.5, 0.2, 0);
   private focusWorld: Vector3 | null = null;
   private focusRadius = 0.2;
-  /** Target exposed log2 luminance (from the time of day) and how much of the gap adaptation closes. */
-  autoKey = -1.55;
-  autoStrength = 0.55;
-  private adapt: AutoExposure;
 
-  constructor(private scene: Scene, private camera: Camera) {
-    this.adapt = new AutoExposure(scene);
-  }
+  constructor(private scene: Scene, private camera: Camera) {}
 
   apply(q: QualitySettings) {
     this.dispose();
@@ -292,8 +222,6 @@ export class PostFX {
 
     const pre = new PostProcess('bloomPrefilter', 'keliaPrefilter', ['texel', 'bloomP', 'sunP'], null, 1, cam, BL, engine, false, null, HALF);
     pre.samples = Math.max(1, q.msaa);
-    // eye adaptation measures the HDR scene right after the prefilter has used it
-    pre.onAfterRenderObservable.add(() => this.adapt.run(pre));
     pre.onApply = (e) => {
       e.setFloat2('texel', 1 / pre.width, 1 / pre.height);
       // creator portrait mode blurs the whole scene; otherwise only bright parts bloom
@@ -314,8 +242,8 @@ export class PostFX {
     const comp = new PostProcess(
       'gradeComposite',
       'keliaComposite',
-      ['sceneTexel', 'bloomTexel', 'grade', 'bloomC', 'shaftC', 'focus', 'tintShadow', 'tintLight', 'autoExp'],
-      ['sceneSampler', 'adaptSampler'],
+      ['sceneTexel', 'bloomTexel', 'grade', 'bloomC', 'shaftC', 'focus', 'tintShadow', 'tintLight'],
+      ['sceneSampler'],
       0.25,
       cam,
       BL,
@@ -334,9 +262,6 @@ export class PostFX {
       e.setVector4('focus', this.focusV);
       e.setFloat4('tintShadow', 0.006, 0.01, 0.028, 0);
       e.setFloat4('tintLight', 1.03, 1.0, 0.95, 0);
-      const live = this.adapt.bind(e, 'adaptSampler') && !this.dofWanted;
-      // brighten by up to ~1.5×, darken by up to ~0.7×
-      e.setFloat4('autoExp', this.autoKey, live ? this.autoStrength : 0, -0.5, 0.6);
     };
     this.passes.push(comp);
   }
@@ -379,61 +304,5 @@ export class PostFX {
   dispose() {
     for (const p of this.passes) p.dispose(this.camera);
     this.passes = [];
-  }
-}
-
-/** The GPU-side luminance measure and the adapted value (ping-pong 1×1 targets). */
-class AutoExposure {
-  private renderer: EffectRenderer;
-  private lumFx: EffectWrapper;
-  private adaptFx: EffectWrapper;
-  private lum: RenderTargetWrapper;
-  private px: RenderTargetWrapper[];
-  private cur = 0;
-  private frames = 0;
-  private last = 0;
-  private source: PostProcess | null = null;
-
-  constructor(private scene: Scene) {
-    const engine = scene.getEngine();
-    this.renderer = new EffectRenderer(engine);
-    const opts = { generateMipMaps: false, generateDepthBuffer: false, generateStencilBuffer: false, type: HALF, samplingMode: Constants.TEXTURE_NEAREST_SAMPLINGMODE };
-    this.lum = engine.createRenderTargetTexture({ width: LUM_W, height: LUM_H }, opts);
-    this.px = [engine.createRenderTargetTexture({ width: 1, height: 1 }, opts), engine.createRenderTargetTexture({ width: 1, height: 1 }, opts)];
-    this.lumFx = new EffectWrapper({ engine, name: 'keliaLum', fragmentShader: 'keliaLum', useShaderStore: true, uniformNames: ['span'], samplerNames: ['textureSampler'] });
-    this.adaptFx = new EffectWrapper({ engine, name: 'keliaAdapt', fragmentShader: 'keliaAdapt', useShaderStore: true, uniformNames: ['adaptP'], samplerNames: ['lumSampler', 'prevSampler'] });
-    this.lumFx.onApplyObservable.add(() => {
-      const e = this.lumFx.effect;
-      if (this.source) e.setTextureFromPostProcess('textureSampler', this.source);
-      e.setFloat2('span', 1 / LUM_W, 1 / LUM_H);
-    });
-    this.adaptFx.onApplyObservable.add(() => {
-      const e = this.adaptFx.effect;
-      e._bindTexture('lumSampler', this.lum.texture);
-      e._bindTexture('prevSampler', this.px[1 - this.cur].texture);
-      const dt = Math.min(0.25, Math.max(0, this.scene.getEngine().getDeltaTime() / 1000));
-      // eyes open up to the dark more slowly than they close down to the light
-      e.setFloat4('adaptP', 1 - Math.exp(-dt * 1.4), this.frames < 3 ? 1 : 0, 0, 0);
-    });
-  }
-
-  /** Measure the scene `pp` holds and step the adaptation. */
-  run(pp: PostProcess) {
-    if (!this.lumFx.isReady() || !this.adaptFx.isReady()) return;
-    // once per frame, even if the chain renders twice
-    const id = this.scene.getFrameId();
-    if (id === this.last) return;
-    this.last = id;
-    this.source = pp;
-    this.cur = 1 - this.cur;
-    this.renderer.render(this.lumFx, this.lum);
-    this.renderer.render(this.adaptFx, this.px[this.cur]);
-    this.frames++;
-  }
-
-  /** Bind the adapted value; false until it holds a real measurement. */
-  bind(e: Effect, name: string) {
-    e._bindTexture(name, this.px[this.cur].texture);
-    return this.frames >= 3;
   }
 }
