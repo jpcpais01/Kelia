@@ -106,12 +106,13 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
       const m = new MonsterModel(world.scene, monsterLib, MONSTERS[id], 'dm' + i);
       const x = ox + (i - 2) * 2.2;
       m.root.position.set(x, world.groundAt(x, oz), oz);
-      m.root.rotation.y = 0;
+      m.root.rotation.y = Number(params.get('yaw') ?? 0);
       m.setShadowCaster((mm) => world.atmosphere.addShadowCaster(mm, false));
       if (anim) m.animator.play(anim, { loop: true, upper: false });
       return m;
     });
     world.onUpdate((dt) => ms.forEach((m) => m.update(dt, Vector3.Zero())));
+    (window as unknown as { monsters: unknown }).monsters = ms;
     return;
   }
   if (!params.get('chars')) return;
@@ -127,7 +128,10 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
   const anims = (params.get('anim') || 'Idle').split(',');
   const [ox, oz] = (params.get('at') || '-62,-11').split(',').map(Number);
   const chars = looks.map((l, i) => {
-    const c = new CharacterModel(world.scene, lib, JSON.parse(JSON.stringify(l)), 'c' + i);
+    const look = JSON.parse(JSON.stringify(l));
+    // &hg=1 / &hg=0 forces every headgear on or off
+    if (params.has('hg')) look.appearance.headgear = params.get('hg') === '1';
+    const c = new CharacterModel(world.scene, lib, look, 'c' + i);
     const x = ox + (i - 2.5) * 1.6;
     c.root.position.set(x, world.groundAt(x, oz), oz);
     c.root.rotation.y = Math.PI;

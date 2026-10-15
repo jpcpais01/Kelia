@@ -2,7 +2,6 @@
 // to its appearance, animated with blended locomotion, and finished with
 // two-bone foot IK on uneven ground, head look-at and turn lean.
 import {
-  Color3,
   Mesh,
   Node,
   PBRMaterial,
@@ -33,7 +32,8 @@ import { Animator, measureStride } from './animator';
 import { createBow } from './bow';
 import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
-import { inkCharacter } from './style';
+import { setToon } from '../world/toon';
+import { INK, InkScaler, inkCharacter, inkFor } from './style';
 
 export interface Look {
   appearance: Appearance;
@@ -107,6 +107,23 @@ export class CharacterModel {
   private entries: InstantiatedEntries | null = null;
   private nodes = new Map<string, TransformNode>();
   private recolors: RecolorPlugin[] = [];
+  /** Recolour plugins of the materials that carry the face. */
+  private faceRecolors: RecolorPlugin[] = [];
+  /** Recolour plugins of glowing weapons (animated). */
+  private glowRecolors: RecolorPlugin[] = [];
+  /** Head centre (head node space), radius (head node units) and face axes, for face shading. */
+  private headLocal = new Vector3();
+  private headRadius = 0;
+  private faceFwd = new Vector3(0, 0, 1);
+  private faceUp = new Vector3(0, 1, 0);
+  /** The head node and its ancestors, root first (refreshed each frame for face shading). */
+  private headChain: TransformNode[] = [];
+  private ink: InkScaler | null = null;
+  private cape: { mesh: AbstractMesh; base: Quaternion; axis: Vector3; angle: number; vel: number } | null = null;
+  private capeT = Math.random() * 10;
+  /** Portrait lighting (character creator): a stronger rim to model the figure. */
+  private showcase = false;
+  private time = Math.random() * 100;
   private extra: Mesh[] = [];
   private materials: Material[] = [];
   animator!: Animator;
@@ -166,17 +183,22 @@ export class CharacterModel {
     const meshes = rootNode.getChildMeshes(false);
     this.meshes = meshes;
     // Weapon glow needs its own material (cloned before any plugin is attached).
+    const glowOf = new Map<Material, string>();
     for (const id of [look.weapon, look.offhand]) {
       const it = id ? ITEMS[id] : null;
       if (!it?.glow || !it.mesh || it.mesh.startsWith('bow:')) continue;
       const wm = meshes.find((m) => m.name === it.mesh);
       if (wm && wm.material) {
         const gm = (wm.material as PBRMaterial).clone(wm.material.name + '_glow') as PBRMaterial;
-        gm.emissiveColor = Color3.FromHexString(it.glow).toLinearSpace().scale(0.9);
         wm.material = gm;
+        glowOf.set(gm, it.glow);
       }
     }
+    const faceMesh = meshes.find((m) => m.name.endsWith('__face'));
+    const faceId = faceMesh ? faceMesh.name.slice(5, -6) : null;
     const seen = new Set<Material>();
+    this.faceRecolors = [];
+    this.glowRecolors = [];
     for (const m of meshes) {
       m.isPickable = false;
       m.receiveShadows = true;
@@ -188,15 +210,26 @@ export class CharacterModel {
       if (mat instanceof PBRMaterial) {
         mat.metallic = 0;
         mat.roughness = 0.62;
-        const baseName = mat.name.replace(/^Clone of /, '').replace(/\.\d+$/, '');
+        const baseName = mat.name.replace(/^Clone of /, '').replace(/\.\d+$/, '').replace(/_glow$/, '');
         const refs = this.lib.swatches[baseName] ?? this.lib.swatches[Object.keys(this.lib.swatches)[0]];
         if (refs) {
           const rc = addRecolor(mat, refs);
           rc.set(SKIN_TONES[a.skin].color, HAIR_COLORS[a.hairColor].color, EYE_COLORS[a.eyes].color);
           this.recolors.push(rc);
+          if (faceMesh && faceMesh.material === mat) {
+            rc.setFace(faceId);
+            this.faceRecolors.push(rc);
+          }
+          const glow = glowOf.get(mat);
+          if (glow) {
+            rc.setGlow(glow, 1);
+            this.glowRecolors.push(rc);
+          }
         }
       }
     }
+    this.measureHead(faceMesh ?? null);
+    this.setupCape();
     if (bow) {
       const b = createBow(this.scene, bow);
       const slot = this.nodes.get('handslot.l');
@@ -230,8 +263,66 @@ export class CharacterModel {
     this.thighMean = [null, null];
     this.applyStrides();
     if (prevAction) this.animator.play(prevAction, { loop: true });
-    inkCharacter(this.meshes);
+    inkCharacter(this.meshes, { rim: this.showcase ? 2.1 : 1.3 });
+    this.inkColors(a);
+    this.ink = new InkScaler(this.meshes);
+    this.headChain = [];
+    for (let n: Node | null = head ?? null; n; n = n.parent) if (n instanceof TransformNode) this.headChain.unshift(n);
     this.setVisible(this.visible);
+  }
+
+  /** Outline colours per part: hair and face lines take their own dark tone. */
+  private inkColors(a: Appearance) {
+    const hair = inkFor(HAIR_COLORS[a.hairColor].color);
+    const skin = inkFor(SKIN_TONES[a.skin].color);
+    // keep face lines warm and soft, never darker than the default ink
+    skin.r = Math.max(skin.r, 0.06);
+    for (const m of this.meshes) {
+      const c = m.name.endsWith('__hair') ? hair : m.name.endsWith('__face') && !m.name.startsWith('head_hooded') ? skin : INK;
+      m.outlineColor.copyFrom(c);
+    }
+  }
+
+  /**
+   * Find the head's centre and size from the face mesh in its rest pose, in
+   * head-node space, plus which way the face looks (for face shading, blush
+   * and the hair gradient).
+   */
+  private measureHead(face: AbstractMesh | null) {
+    const head = this.nodes.get('head');
+    this.headRadius = 0;
+    if (!head || !face) return;
+    const chain: TransformNode[] = [];
+    for (let n: Node | null = head; n; n = n.parent) if (n instanceof TransformNode) chain.unshift(n);
+    for (const n of chain) n.computeWorldMatrix(true);
+    face.computeWorldMatrix(true);
+    const bb = face.getBoundingInfo().boundingBox;
+    const inv = head.getWorldMatrix().clone().invert();
+    Vector3.TransformCoordinatesToRef(bb.centerWorld, inv, this.headLocal);
+    const ext = bb.extendSizeWorld;
+    const headScale = Vector3.TransformNormal(Vector3.Right(), head.getWorldMatrix()).length();
+    // a sphere a bit smaller than the box: KayKit heads are rounded cubes
+    this.headRadius = ((ext.x + ext.y + ext.z) / 3) * 0.95 / Math.max(headScale, 1e-6);
+    const rootW = this.root.getWorldMatrix();
+    const fwd = Vector3.TransformNormal(new Vector3(0, 0, 1), rootW);
+    const up = Vector3.TransformNormal(new Vector3(0, 1, 0), rootW);
+    Vector3.TransformNormalToRef(fwd, inv, this.faceFwd);
+    Vector3.TransformNormalToRef(up, inv, this.faceUp);
+    this.faceFwd.normalize();
+    this.faceUp.normalize();
+  }
+
+  /** Move the face-shading sphere with the head (after animation and IK). */
+  private updateFace() {
+    if (!this.recolors.length || this.headRadius <= 0) return;
+    const chain = this.headChain;
+    if (!chain.length) return;
+    for (let i = 0; i < chain.length; i++) chain[i].computeWorldMatrix(true);
+    const w = chain[chain.length - 1].getWorldMatrix();
+    const m = w.m;
+    const scale = Math.hypot(m[0], m[1], m[2]);
+    // every material: skin near the head, hair and face may each sit in a different atlas
+    for (const rc of this.recolors) rc.setHead(w, this.headLocal, this.headRadius * scale, this.faceFwd, this.faceUp);
   }
 
   /** Model units → metres. */
@@ -267,9 +358,16 @@ export class CharacterModel {
     for (const m of this.meshes) m.setEnabled(v);
   }
 
+  /** Portrait lighting for the character creator stage (stronger rim light). */
+  setShowcase(on: boolean) {
+    this.showcase = on;
+    for (const m of this.meshes) setToon(m.material, { rim: on ? 2.1 : 1.3 });
+  }
+
   /** Recolour without rebuilding (live preview in the creator). */
   setColors(a: Appearance) {
     for (const rc of this.recolors) rc.set(SKIN_TONES[a.skin].color, HAIR_COLORS[a.hairColor].color, EYE_COLORS[a.eyes].color);
+    this.inkColors(a);
     this.look = { ...this.look, appearance: { ...this.look.appearance, skin: a.skin, hairColor: a.hairColor, eyes: a.eyes } };
   }
 
@@ -299,6 +397,54 @@ export class CharacterModel {
     this.lean += (targetLean - this.lean) * (1 - Math.exp(-dt * 6));
     this.body.rotation.z = this.lean;
     this.dt = dt;
+    this.swayCape(dt, Math.max(0, localZ), Math.abs(localX));
+  }
+
+  /**
+   * Find the cape (a rigid mesh hung from the chest), pivot it at its top edge
+   * and work out which local axis swings its hem backwards.
+   */
+  private setupCape() {
+    this.cape = null;
+    const cape = this.meshes.find((m) => m.name.startsWith('cape_'));
+    if (!cape || cape.skeleton) return;
+    cape.computeWorldMatrix(true);
+    const bb = cape.getBoundingInfo().boundingBox;
+    const top = new Vector3((bb.minimum.x + bb.maximum.x) / 2, bb.maximum.y, (bb.minimum.z + bb.maximum.z) / 2);
+    const hem = new Vector3(top.x, bb.minimum.y, top.z);
+    cape.setPivotPoint(top);
+    if (!cape.rotationQuaternion) cape.rotationQuaternion = Quaternion.FromEulerVector(cape.rotation);
+    const inv = cape.getWorldMatrix().clone().invert();
+    const back = Vector3.TransformNormal(Vector3.TransformNormal(new Vector3(0, 0, -1), this.root.getWorldMatrix()), inv).normalize();
+    const axis = Vector3.Cross(hem.subtract(top), back);
+    if (axis.lengthSquared() < 1e-10) return;
+    axis.normalize();
+    const base = cape.rotationQuaternion.clone();
+    // check the sign: the hem must move backwards
+    const before = Vector3.TransformCoordinates(hem, cape.computeWorldMatrix(true));
+    cape.rotate(axis, 0.3, Space.LOCAL);
+    const after = Vector3.TransformCoordinates(hem, cape.computeWorldMatrix(true));
+    cape.rotationQuaternion.copyFrom(base);
+    cape.computeWorldMatrix(true);
+    const backW = Vector3.TransformNormal(new Vector3(0, 0, -1), this.root.getWorldMatrix());
+    if (Vector3.Dot(after.subtract(before), backW) < 0) axis.scaleInPlace(-1);
+    this.cape = { mesh: cape, base, axis, angle: 0, vel: 0 };
+  }
+
+  /** Cheap secondary motion: the cape lifts behind a running character and breathes at rest. */
+  private swayCape(dt: number, forward: number, sideways: number) {
+    const c = this.cape;
+    if (!c || !c.mesh.rotationQuaternion || dt <= 0) return;
+    this.capeT += dt;
+    const target = Math.min(0.75, forward * 0.085 + sideways * 0.03) + 0.035 * Math.sin(this.capeT * 1.7) + 0.02 * Math.sin(this.capeT * 2.9 + 1.3) + (forward > 0.5 ? 0.05 * Math.sin(this.capeT * 9) : 0);
+    // a damped spring, so it settles back with a little swing
+    const k = 60;
+    const damp = 9;
+    const h = Math.min(dt, 0.05);
+    c.vel += ((target - c.angle) * k - c.vel * damp) * h;
+    c.angle = Math.max(-0.05, Math.min(0.9, c.angle + c.vel * h));
+    c.mesh.rotationQuaternion.copyFrom(c.base);
+    c.mesh.rotate(c.axis, c.angle, Space.LOCAL);
   }
 
   private dt = 0.016;
@@ -307,6 +453,11 @@ export class CharacterModel {
     if (!this.visible || !this.entries) return;
     this.applyLookAt();
     if (this.ikEnabled && this.groundAt) this.applyFootIK();
+    this.updateFace();
+    this.time += this.dt;
+    for (const rc of this.glowRecolors) rc.setTime(this.time);
+    const cam = this.scene.activeCamera;
+    if (cam && this.ink) this.ink.update(this.root.position, cam.globalPosition);
   }
 
   private applyLookAt() {

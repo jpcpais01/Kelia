@@ -11,9 +11,9 @@ export interface ColorOption extends Option {
 }
 
 export const BODY_TYPES: (Option & { width: number; height: number; head: number })[] = [
-  { id: 'lean', name: 'Lean', width: 0.9, height: 1.03, head: 0.98 },
-  { id: 'average', name: 'Average', width: 1.0, height: 1.0, head: 1.0 },
-  { id: 'broad', name: 'Broad', width: 1.14, height: 0.98, head: 1.02 },
+  { id: 'lean', name: 'Lean', width: 0.9, height: 1.03, head: 0.86 },
+  { id: 'average', name: 'Average', width: 1.0, height: 1.0, head: 0.88 },
+  { id: 'broad', name: 'Broad', width: 1.14, height: 0.98, head: 0.9 },
 ];
 
 export const SKIN_TONES: ColorOption[] = [

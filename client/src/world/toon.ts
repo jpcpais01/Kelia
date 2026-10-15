@@ -79,6 +79,84 @@ vec3 kToon(vec3 albedo, vec3 N, vec3 V, float sh, vec3 emis) {
   col += toonSun.rgb * sp;
   return col + emis;
 }
+
+// --- Character surfaces (KCHAR materials only) ---------------------------
+// Per-fragment surface description, written by a character's surface plugin
+// (char/recolor.ts) before lighting and read by kToonChar. Nothing else
+// writes them, so they stay zero for every other material.
+vec4 kSurf = vec4(0.0);  // skin, hair, metal, eye
+vec4 kSurf2 = vec4(0.0); // gold, bone, catch-light, face-normal weight
+vec4 kSurfN = vec4(0.0, 1.0, 0.0, 0.0); // smooth face normal
+vec4 kRimC = vec4(0.0);  // rgb = extra rim colour, a = amount
+vec4 kGlow = vec4(0.0);  // rgb = emission, a = extra emission at grazing angles
+
+#ifdef KCHAR
+vec3 kToonChar(vec3 albedo, vec3 N0, vec3 V, float sh, vec3 emis, vec3 P) {
+  float skin = kSurf.x;
+  float hair = kSurf.y;
+  float eye = kSurf.w;
+  float gold = kSurf2.x;
+  float metal = max(max(kSurf.z, gold), toonMat.w);
+  float bone = kSurf2.y;
+  // faces are lit through a smooth head-shaped normal: clean, bright, no blotches
+  vec3 N = normalize(mix(N0, kSurfN.xyz, kSurf2.w));
+  vec3 L = toonSunDir.xyz;
+  float ndl = dot(N, L);
+  float soft = toonShade.w + skin * 0.2 + bone * 0.05;
+  float shd = mix(1.0, sh, toonSunDir.w * (1.0 - 0.45 * skin));
+  float lit = smoothstep(-soft, soft, ndl + skin * 0.2) * shd;
+  float up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+  vec3 amb = mix(toonGround.rgb, toonSky.rgb, up);
+  // skin shadows are rosy, bone shadows cold
+  vec3 tint = toonShade.rgb;
+  tint *= mix(vec3(1.0), vec3(1.25, 0.95, 0.9), skin);
+  tint *= mix(vec3(1.0), vec3(0.8, 0.88, 1.15), bone);
+  vec3 dark = amb * tint * (1.0 + 0.3 * skin);
+  vec3 light = dark + toonSun.rgb * lit * (1.0 + 0.12 * smoothstep(0.5, 0.7, ndl));
+  // warm scattering along the skin's terminator
+  float band = lit * (1.0 - lit) * 4.0;
+  light += toonSun.rgb * band * skin * vec3(0.32, 0.07, 0.03);
+  // slightly more vivid cloth and leather; hair turns deeper and richer in shadow
+  float alum = dot(albedo, vec3(0.2126, 0.7152, 0.0722));
+  vec3 albedoS = max(mix(vec3(alum), albedo, 1.0 + 0.14 * (1.0 - skin) * (1.0 - bone) * (1.0 - eye)), vec3(0.0));
+  float amax = max(max(albedoS.r, albedoS.g), max(albedoS.b, 0.002));
+  vec3 a = albedoS * mix(vec3(1.0), albedoS / amax, hair * (1.0 - lit) * 0.5);
+  vec3 col = a * light;
+  // eyes stay bright in any light
+  col = mix(col, a * (light * 0.55 + (amb + toonSun.rgb) * 0.4), eye);
+  float nv = clamp(dot(N0, V), 0.0, 1.0);
+  float rimK = smoothstep(0.6, 0.95, 1.0 - nv) * toonSky.w * toonMat.y;
+  col += rimK * (amb * 0.55 + toonSun.rgb * 0.3 * lit) * (0.3 + a) * (1.0 - eye);
+  col += smoothstep(0.62, 0.92, 1.0 - nv) * kRimC.rgb * kRimC.a;
+  // a crisp, sunlit rim line along the silhouette
+  float rimH = smoothstep(0.7, 0.76, 1.0 - nv) * smoothstep(0.05, 0.35, dot(N0, L)) * shd * toonMat.y * (1.0 - eye);
+  col += rimH * toonSun.rgb * (0.22 + 0.5 * a) * mix(vec3(1.0), vec3(1.15, 0.9, 0.8), skin);
+  // metal: a stylised horizon reflection with one crisp bright band
+  vec3 R = reflect(-V, N0);
+  float env = smoothstep(-0.04, 0.04, R.y);
+  float bandM = smoothstep(0.0, 0.05, R.y) * (1.0 - smoothstep(0.1, 0.26, R.y));
+  vec3 skyRef = toonSky.rgb * 1.1 + toonSun.rgb * 0.3;
+  vec3 tone = mix(vec3(1.0), a * 1.6 + 0.08, gold);
+  vec3 metalCol = a * (dark * 0.55 + toonSun.rgb * lit * 0.6) + a * skyRef * env * 0.55 + skyRef * tone * bandM * (0.45 + 0.55 * lit);
+  col = mix(col, metalCol, metal);
+  vec3 Hs = normalize(L + V);
+  float sp = smoothstep(0.955 - metal * 0.035, 0.975 - metal * 0.02, dot(N, Hs)) * (toonMat.z + metal * 1.1) * lit;
+  col += toonSun.rgb * sp * tone;
+  // hair: an anisotropic "angel ring" around the head that follows the view
+  // (matcap style: a band where the normal points a little upward on screen)
+  vec3 sUp = vec3(0.0, 1.0, 0.0) - V * V.y;
+  float sl = length(sUp);
+  sUp = sl > 0.001 ? sUp / sl : vec3(0.0, 0.0, 1.0);
+  float su = dot(N0, sUp);
+  float jag = 0.5 + 0.5 * sin((P.x * 1.3 + P.z * 0.9) * 70.0 + P.y * 9.0);
+  float ring = smoothstep(0.3, 0.36, su) * (1.0 - smoothstep(0.5 + 0.1 * jag, 0.56 + 0.1 * jag, su)) * smoothstep(0.2, 0.45, nv);
+  col += hair * ring * (0.45 + 0.55 * lit) * (toonSun.rgb * 0.5 + toonSky.rgb * 0.6) * (0.35 + a * 1.4);
+  // catch-lights in the eyes and glowing runes, edges or embers
+  col += kSurf2.z * (vec3(0.9) + toonSun.rgb * 0.2);
+  col += kGlow.rgb * (1.0 + kGlow.a * (1.0 - nv) * (1.0 - nv));
+  return col + emis;
+}
+#endif
 `;
 
 const FOG_GLSL_BODY = /* glsl */ `
@@ -117,6 +195,71 @@ fn kToon(albedo: vec3f, N: vec3f, V: vec3f, sh: f32, emis: vec3f) -> vec3f {
   col += uniforms.toonSun.rgb * sp;
   return col + emis;
 }
+
+// Character surfaces (see the GLSL version for the meaning of each value).
+var<private> kSurf: vec4f = vec4f(0.0);
+var<private> kSurf2: vec4f = vec4f(0.0);
+var<private> kSurfN: vec4f = vec4f(0.0, 1.0, 0.0, 0.0);
+var<private> kRimC: vec4f = vec4f(0.0);
+var<private> kGlow: vec4f = vec4f(0.0);
+
+#ifdef KCHAR
+fn kToonChar(albedo: vec3f, N0: vec3f, V: vec3f, sh: f32, emis: vec3f, P: vec3f) -> vec3f {
+  let skin = kSurf.x;
+  let hair = kSurf.y;
+  let eye = kSurf.w;
+  let gold = kSurf2.x;
+  let metal = max(max(kSurf.z, gold), uniforms.toonMat.w);
+  let bone = kSurf2.y;
+  let N = normalize(mix(N0, kSurfN.xyz, kSurf2.w));
+  let L = uniforms.toonSunDir.xyz;
+  let ndl = dot(N, L);
+  let soft = uniforms.toonShade.w + skin * 0.2 + bone * 0.05;
+  let shd = mix(1.0, sh, uniforms.toonSunDir.w * (1.0 - 0.45 * skin));
+  let lit = smoothstep(-soft, soft, ndl + skin * 0.2) * shd;
+  let up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
+  let amb = mix(uniforms.toonGround.rgb, uniforms.toonSky.rgb, up);
+  var tint = uniforms.toonShade.rgb;
+  tint *= mix(vec3f(1.0), vec3f(1.25, 0.95, 0.9), skin);
+  tint *= mix(vec3f(1.0), vec3f(0.8, 0.88, 1.15), bone);
+  let dark = amb * tint * (1.0 + 0.3 * skin);
+  var light = dark + uniforms.toonSun.rgb * lit * (1.0 + 0.12 * smoothstep(0.5, 0.7, ndl));
+  let band = lit * (1.0 - lit) * 4.0;
+  light += uniforms.toonSun.rgb * band * skin * vec3f(0.32, 0.07, 0.03);
+  let alum = dot(albedo, vec3f(0.2126, 0.7152, 0.0722));
+  let albedoS = max(mix(vec3f(alum), albedo, 1.0 + 0.14 * (1.0 - skin) * (1.0 - bone) * (1.0 - eye)), vec3f(0.0));
+  let amax = max(max(albedoS.r, albedoS.g), max(albedoS.b, 0.002));
+  let a = albedoS * mix(vec3f(1.0), albedoS / amax, hair * (1.0 - lit) * 0.5);
+  var col = a * light;
+  col = mix(col, a * (light * 0.55 + (amb + uniforms.toonSun.rgb) * 0.4), eye);
+  let nv = clamp(dot(N0, V), 0.0, 1.0);
+  let rimK = smoothstep(0.6, 0.95, 1.0 - nv) * uniforms.toonSky.w * uniforms.toonMat.y;
+  col += rimK * (amb * 0.55 + uniforms.toonSun.rgb * 0.3 * lit) * (vec3f(0.3) + a) * (1.0 - eye);
+  col += smoothstep(0.62, 0.92, 1.0 - nv) * kRimC.rgb * kRimC.a;
+  let rimH = smoothstep(0.7, 0.76, 1.0 - nv) * smoothstep(0.05, 0.35, dot(N0, L)) * shd * uniforms.toonMat.y * (1.0 - eye);
+  col += rimH * uniforms.toonSun.rgb * (vec3f(0.22) + 0.5 * a) * mix(vec3f(1.0), vec3f(1.15, 0.9, 0.8), skin);
+  let R = reflect(-V, N0);
+  let env = smoothstep(-0.04, 0.04, R.y);
+  let bandM = smoothstep(0.0, 0.05, R.y) * (1.0 - smoothstep(0.1, 0.26, R.y));
+  let skyRef = uniforms.toonSky.rgb * 1.1 + uniforms.toonSun.rgb * 0.3;
+  let tone = mix(vec3f(1.0), a * 1.6 + vec3f(0.08), gold);
+  let metalCol = a * (dark * 0.55 + uniforms.toonSun.rgb * lit * 0.6) + a * skyRef * env * 0.55 + skyRef * tone * bandM * (0.45 + 0.55 * lit);
+  col = mix(col, metalCol, metal);
+  let Hs = normalize(L + V);
+  let sp = smoothstep(0.955 - metal * 0.035, 0.975 - metal * 0.02, dot(N, Hs)) * (uniforms.toonMat.z + metal * 1.1) * lit;
+  col += uniforms.toonSun.rgb * sp * tone;
+  var sUp = vec3f(0.0, 1.0, 0.0) - V * V.y;
+  let sl = length(sUp);
+  if (sl > 0.001) { sUp = sUp / sl; } else { sUp = vec3f(0.0, 0.0, 1.0); }
+  let su = dot(N0, sUp);
+  let jag = 0.5 + 0.5 * sin((P.x * 1.3 + P.z * 0.9) * 70.0 + P.y * 9.0);
+  let ring = smoothstep(0.3, 0.36, su) * (1.0 - smoothstep(0.5 + 0.1 * jag, 0.56 + 0.1 * jag, su)) * smoothstep(0.2, 0.45, nv);
+  col += hair * ring * (0.45 + 0.55 * lit) * (uniforms.toonSun.rgb * 0.5 + uniforms.toonSky.rgb * 0.6) * (vec3f(0.35) + a * 1.4);
+  col += kSurf2.z * (vec3f(0.9) + uniforms.toonSun.rgb * 0.2);
+  col += kGlow.rgb * (1.0 + kGlow.a * (1.0 - nv) * (1.0 - nv));
+  return col + emis;
+}
+#endif
 
 fn kFog(col: vec3f, P: vec3f, E: vec3f) -> vec3f {
   let d = P - E;
@@ -164,6 +307,13 @@ export interface ToonOptions {
   lit?: boolean;
   /** Apply the world fog. */
   fog?: boolean;
+  /**
+   * Character shading (skin, hair, eyes, metal, bone... as described per
+   * fragment by the character surface plugin in char/recolor.ts).
+   */
+  char?: boolean;
+  /** Character shading only: treat the whole material as polished metal (0..1). */
+  metal?: number;
 }
 
 export class ToonPlugin extends MaterialPluginBase {
@@ -172,9 +322,11 @@ export class ToonPlugin extends MaterialPluginBase {
   spec = 0;
   lit = true;
   fog = true;
+  char = false;
+  metal = 0;
 
   constructor(material: Material) {
-    super(material, 'KeliaToon', 400, { KTOON: false, KFOG: false });
+    super(material, 'KeliaToon', 400, { KTOON: false, KFOG: false, KCHAR: false });
     this._enable(true);
   }
 
@@ -191,9 +343,11 @@ export class ToonPlugin extends MaterialPluginBase {
     if (o.translucency !== undefined) this.translucency = o.translucency;
     if (o.rim !== undefined) this.rim = o.rim;
     if (o.spec !== undefined) this.spec = o.spec;
-    if ((o.lit !== undefined && o.lit !== this.lit) || (o.fog !== undefined && o.fog !== this.fog)) {
+    if (o.metal !== undefined) this.metal = o.metal;
+    if ((o.lit !== undefined && o.lit !== this.lit) || (o.fog !== undefined && o.fog !== this.fog) || (o.char !== undefined && o.char !== this.char)) {
       if (o.lit !== undefined) this.lit = o.lit;
       if (o.fog !== undefined) this.fog = o.fog;
+      if (o.char !== undefined) this.char = o.char;
       this.markAllDefinesAsDirty();
     }
   }
@@ -204,6 +358,7 @@ export class ToonPlugin extends MaterialPluginBase {
     d.KTOON = this.lit && !m.disableLighting && !m.unlit;
     // unlit materials are glows and effects (often additive): fogging them toward the fog colour would make them brighter
     d.KFOG = this.fog && !m.disableLighting;
+    d.KCHAR = d.KTOON && this.char;
   }
 
   getUniforms(lang?: ShaderLanguage) {
@@ -218,7 +373,7 @@ export class ToonPlugin extends MaterialPluginBase {
       const v = VALUES[name];
       ubo.updateFloat4(name, v.x, v.y, v.z, v.w);
     }
-    ubo.updateFloat4('toonMat', this.translucency, this.rim, this.spec, 0);
+    ubo.updateFloat4('toonMat', this.translucency, this.rim, this.spec, this.metal);
   }
 
   getCustomCode(shaderType: string, lang?: ShaderLanguage): Record<string, string> | null {
@@ -231,8 +386,12 @@ export class ToonPlugin extends MaterialPluginBase {
       return {
         CUSTOM_FRAGMENT_DEFINITIONS: FUNCS_WGSL,
         CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: `
+#ifdef KCHAR
+  ${target} = vec4f(kToonChar(${albedo}, normalW, viewDirectionW, shadow, ${emis}, fragmentInputs.vPositionW), ${target}.a);
+#else
 #ifdef KTOON
   ${target} = vec4f(kToon(${albedo}, normalW, viewDirectionW, shadow, ${emis}), ${target}.a);
+#endif
 #endif
 #ifdef KFOG
   ${target} = vec4f(kFog(${target}.rgb, fragmentInputs.vPositionW, scene.vEyePosition.xyz), ${target}.a);
@@ -246,8 +405,12 @@ export class ToonPlugin extends MaterialPluginBase {
     return {
       CUSTOM_FRAGMENT_DEFINITIONS: FUNCS_GLSL + FOG_GLSL_BODY,
       CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: `
+#ifdef KCHAR
+  ${target}.rgb = kToonChar(${albedo}, normalW, viewDirectionW, shadow, ${emis}, vPositionW);
+#else
 #ifdef KTOON
   ${target}.rgb = kToon(${albedo}, normalW, viewDirectionW, shadow, ${emis});
+#endif
 #endif
 #ifdef KFOG
   ${target}.rgb = kFog(${target}.rgb, vPositionW, vEyePosition.xyz);

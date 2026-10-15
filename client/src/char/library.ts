@@ -2,7 +2,7 @@
 // assembly: heads are split into face and hair so any face can wear any
 // hairstyle, atlas swatches are measured for recolouring, and locomotion
 // clips are measured for stride length (so feet never slide).
-import { Mesh, VertexBuffer, type AssetContainer, type Scene, type TransformNode } from '@babylonjs/core';
+import { Mesh, Vector3, VertexBuffer, type AssetContainer, type Scene, type TransformNode } from '@babylonjs/core';
 import { loadContainer } from '../core/assets';
 
 /** Swatch cells (column, row) in the 8×4 KayKit colour atlas. */
@@ -60,6 +60,7 @@ export class RigLibrary {
         part.makeGeometryUnique();
         part.setIndices(ids);
         part.skeleton = m.skeleton;
+        if (suffix === '__face') enlargeEyes(part, ids);
         this.scene.removeMesh(part);
         c.meshes.push(part);
       }
@@ -108,4 +109,59 @@ export class RigLibrary {
   node(nodes: TransformNode[], name: string) {
     return nodes.find((n) => n.name === name || n.name.endsWith('_' + name));
   }
+}
+
+/**
+ * Anime eyes: scale each eye (the eye-cell triangles, one island per side of
+ * the face) about its own centre, a little more in height than in width, and
+ * lift it off the face so the surrounding skin cannot swallow the new edge.
+ */
+function enlargeEyes(mesh: Mesh, ids: number[], sx = 1.28, sy = 1.42) {
+  const uv = mesh.getVerticesData(VertexBuffer.UVKind);
+  const pos = mesh.getVerticesData(VertexBuffer.PositionKind);
+  const nrm = mesh.getVerticesData(VertexBuffer.NormalKind);
+  if (!uv || !pos || !nrm) return;
+  const sides: Set<number>[] = [new Set(), new Set()];
+  for (let t = 0; t < ids.length; t += 3) {
+    const i = ids[t];
+    if (Math.floor(uv[i * 2] * 8) !== EYE_CELL[0] || Math.floor(uv[i * 2 + 1] * 4) !== EYE_CELL[1]) continue;
+    for (let k = 0; k < 3; k++) {
+      const v = ids[t + k];
+      sides[pos[v * 3] < 0 ? 0 : 1].add(v);
+    }
+  }
+  const out = Float32Array.from(pos);
+  for (const side of sides) {
+    if (side.size < 3) continue;
+    const c = new Vector3();
+    const n = new Vector3();
+    for (const v of side) {
+      c.addInPlaceFromFloats(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]);
+      n.addInPlaceFromFloats(nrm[v * 3], nrm[v * 3 + 1], nrm[v * 3 + 2]);
+    }
+    c.scaleInPlace(1 / side.size);
+    if (n.lengthSquared() < 1e-8) continue;
+    n.normalize();
+    const u = new Vector3(0, 1, 0).subtract(n.scale(n.y));
+    if (u.lengthSquared() < 1e-6) continue;
+    u.normalize();
+    const r = Vector3.Cross(u, n);
+    let size = 0;
+    const d = new Vector3();
+    for (const v of side) {
+      d.set(pos[v * 3] - c.x, pos[v * 3 + 1] - c.y, pos[v * 3 + 2] - c.z);
+      size = Math.max(size, Math.abs(Vector3.Dot(d, r)), Math.abs(Vector3.Dot(d, u)));
+    }
+    const push = size * 0.18;
+    for (const v of side) {
+      d.set(pos[v * 3] - c.x, pos[v * 3 + 1] - c.y, pos[v * 3 + 2] - c.z);
+      const dn = Vector3.Dot(d, n) + push;
+      const du = Vector3.Dot(d, u) * sy;
+      const dr = Vector3.Dot(d, r) * sx;
+      out[v * 3] = c.x + n.x * dn + u.x * du + r.x * dr;
+      out[v * 3 + 1] = c.y + n.y * dn + u.y * du + r.y * dr;
+      out[v * 3 + 2] = c.z + n.z * dn + u.z * du + r.z * dr;
+    }
+  }
+  mesh.setVerticesData(VertexBuffer.PositionKind, out, false);
 }
