@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T11:45:00Z',
+    title: 'Steer with your mouse',
+    lines: [
+      'Your character now faces wherever you aim: W runs toward your mouse, A and D strafe sideways while you keep your eyes forward, S backs up. Standing still, look far enough around and you turn to follow.',
+    ],
+  },
+  {
     at: '2026-10-15T11:15:00Z',
     title: 'Under the hood',
     lines: [
