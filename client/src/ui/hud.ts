@@ -10,6 +10,7 @@ import { Roster } from './roster';
 import { closeWindow } from './windows';
 import type { TimeOfDay } from '../core/quality';
 import { fullscreenSupported, onFullscreenChange, toggleFullscreen } from './fullscreen';
+import { onInstallChange, promptInstall } from './pwa';
 
 export interface Plate {
   el: HTMLElement;
@@ -126,6 +127,7 @@ export class Hud {
         h('button', { class: 'icon-btn', title: 'Settings', onclick: () => cb.openSettings() }, icon('gear', 18)),
         timeButton(cb),
         fullscreenButton(),
+        installButton(),
       ),
       this.toastArea,
       this.hint,
@@ -549,6 +551,12 @@ function timeButton(cb: HudCallbacks) {
   };
   btn.onclick = () => show(cb.cycleTimeOfDay());
   show(cb.timeOfDay());
+  return btn;
+}
+
+function installButton() {
+  const btn = h('button', { class: 'icon-btn', title: 'Install Kelia as an app', onclick: () => void promptInstall() }, icon('install', 18));
+  onInstallChange((can) => (btn.style.display = can ? '' : 'none'));
   return btn;
 }
 
