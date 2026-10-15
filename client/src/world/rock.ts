@@ -1,18 +1,19 @@
-// Chiselled stylised rock, shared by the terrain and the far mountain ranges.
+// Painted stylised rock, shared by the terrain and the far mountain ranges.
 //
-// The ground is cut into jittered cells (seen from the side, a cliff reads as
-// a row of columns and slabs). Every cell gets its own tilt, so the cel
-// terminator breaks a slope into crisp lit and shaded planes, and its own
-// strata spacing and phase, so ledges stop at each crack instead of running
-// round the mountain like the layers of a cake. Each ledge has a sunlit lip
-// and a shadowed seam; sky-facing lips carry moss, and the high peaks snow.
+// Cliffs are broken into big, irregular planes (domain-warped Voronoi cells),
+// each with its own tilt and tone, so the cel terminator carves a slope into
+// bold lit and shaded faces the way a painted backdrop would. Over that run
+// vertical gullies and water stains (side-projected streaks), soft warm/cool
+// colour drift with altitude, ochre patches, dark crevices between planes and
+// grass caps on sky-facing ledges. Snow settles on flat tops and trickles
+// down the gullies.
 //
 // Everything is anti-aliased with screen-space derivatives (no branches, so
-// WGSL's uniformity rules are happy) and fades to plain cell tones once the
-// detail would shrink below a pixel.
+// WGSL's uniformity rules are happy) and the crevices fade once they would
+// shrink below a pixel.
 
 export const ROCK_UNIFORMS = {
-  /** x = cell size (m), y = snow line (m), z = facet strength, w = strata scale. */
+  /** x = facet cell size (m), y = snow line (m), z = facet strength, w = gully texture scale. */
   rockP: 'vec4',
   rockWarm: 'vec3',
   rockCool: 'vec3',
@@ -21,7 +22,7 @@ export const ROCK_UNIFORMS = {
 } as const;
 
 export const ROCK_DEFAULTS = {
-  rockP: [13, 128, 1, 1],
+  rockP: [26, 128, 1, 1],
 };
 
 export const ROCK_GLSL_DEFS = /* glsl */ `
@@ -73,80 +74,87 @@ fn kVoro(p: vec2f) -> vec4f {
 
 /**
  * GLSL statements. Inputs: `kP` (world position), `kNr` (unit normal),
- * `kD`, `kD2`, `kD3` (detail noise samples at fine/mid/coarse scale).
- * Outputs: `kRockCol` (albedo), `kRockN` (chiselled normal), `kRockH` (0..1
- * "height" for height-blending), `kSnow` (0..1 snow cover for any layer).
+ * `kD`, `kD2`, `kD3` (detail noise samples at fine/mid/coarse scale) and the
+ * `detailTex` sampler. Outputs: `kRockCol` (albedo), `kRockN` (chiselled
+ * normal), `kRockH` (0..1 "height" for height-blending), `kSnow` (0..1 snow
+ * cover for any layer).
  */
 export const ROCK_GLSL = /* glsl */ `
-  float kCell = rockP.x;
-  vec2 kG = kP.xz / kCell + (kD2.rg - 0.5) * 0.4;
+  // big chiselled planes: each cell of a warped cellular pattern is one flat,
+  // tilted face, so the cel terminator carves the slope into bold shapes
+  vec2 kG = kP.xz / rockP.x + (kD3.rg - 0.5) * 0.35 + (kD2.rg - 0.5) * 0.12;
   vec4 kV = kVoro(kG);
   vec2 kRnd = kHash2(kV.xy + 17.0);
-  float kSteep = smoothstep(0.12, 0.5, 1.0 - kNr.y);
-  // strata: every cell keeps its own spacing and phase
-  float kSy = kP.y * mix(0.13, 0.24, kRnd.x) * rockP.w + kRnd.y * 9.0 + kD.b * 0.18;
-  float kStr = fract(kSy);
-  float kAA = fwidth(kSy);
-  float kFadeS = (1.0 - smoothstep(0.07, 0.2, kAA)) * kSteep;
-  float kW = kAA + 0.015;
-  float kSeam = 1.0 - smoothstep(0.035, 0.035 + kW, kStr) * (1.0 - smoothstep(0.995 - kW, 0.995, kStr));
-  float kLip = smoothstep(0.8 - kW, 0.86, kStr) * (1.0 - smoothstep(0.97 - kW, 0.99, kStr));
-  float kUnder = 1.0 - smoothstep(0.04, 0.38, kStr);
-  // cracks between cells
-  float kEdgeAA = fwidth(kG.x) + fwidth(kG.y);
-  float kCrack = (1.0 - smoothstep(0.0, 0.03 + kEdgeAA * 1.5, kV.w - kV.z)) * (1.0 - smoothstep(0.15, 0.45, kEdgeAA)) * kSteep;
-  // chiselled normal: each cell a tilted plane
+  float kSteep = smoothstep(0.15, 0.55, 1.0 - kNr.y);
   vec3 kT = normalize(vec3(-kNr.z, 0.0, kNr.x) + vec3(1e-4, 0.0, 0.0));
-  vec3 kRockN = kNr + (kT * (kRnd.x - 0.5) * 0.9 + vec3(0.0, (kRnd.y - 0.5) * 0.45, 0.0)) * rockP.z;
-  kRockN = normalize(kRockN);
-  // colour: warm low, cool high, every slab and band its own tone
-  float kTone = kRnd.x * 0.55 + fract(floor(kSy) * 0.618) * 0.45 * kSteep;
-  float kAlt = clamp(kP.y / 150.0 + (kD3.a - 0.5) * 0.7, 0.0, 1.0);
-  vec3 kRockCol = mix(rockWarm, rockCool, kAlt) * (0.8 + 0.32 * kTone) * (0.92 + 0.16 * kD.r);
-  kRockCol = mix(kRockCol, kRockCol * vec3(1.12, 0.98, 0.8), smoothstep(0.6, 0.85, kD2.b) * 0.55);
-  kRockCol *= mix(1.0, 0.66, kSeam * kFadeS);
-  kRockCol *= mix(1.0, 0.86, kUnder * kFadeS);
-  kRockCol *= 1.0 + 0.1 * kLip * kFadeS;
-  kRockCol *= mix(1.0, 0.68, kCrack);
-  // moss on sky-facing lips and ledges
-  float kMoss = smoothstep(0.72, 0.78, kRockN.y + (kD.r - 0.5) * 0.25) * (1.0 - smoothstep(rockP.y - 40.0, rockP.y - 10.0, kP.y));
-  kRockCol = mix(kRockCol, mossCol * (0.82 + 0.3 * kD.r), kMoss * 0.85);
-  float kRockH = clamp(0.35 + kRnd.x * 0.3 + kLip * 0.3 - kCrack * 0.3, 0.0, 1.0);
-  // snow on the peaks: on gentle faces, a crisp cel edge
+  vec3 kRockN = normalize(kNr + (kT * (kRnd.x - 0.5) * 1.1 + vec3(0.0, (kRnd.y - 0.5) * 0.5, 0.0)) * rockP.z);
+  // crevices between the planes: a thin dark crack inside a soft occluded band
+  float kEdgeAA = fwidth(kG.x) + fwidth(kG.y);
+  float kEdge = kV.w - kV.z;
+  float kCrev = (1.0 - smoothstep(0.0, 0.025 + kEdgeAA * 1.5, kEdge)) * (1.0 - smoothstep(0.1, 0.35, kEdgeAA));
+  float kCrevSoft = 1.0 - smoothstep(0.0, 0.2, kEdge);
+  // gullies and water stains running down the faces
+  float kAx = abs(kNr.x) / (abs(kNr.x) + abs(kNr.z) + 1e-4);
+  float kStA = texture2D(detailTex, vec2(kP.z * 0.011, kP.y * 0.006) * rockP.w).b;
+  float kStB = texture2D(detailTex, vec2(kP.x * 0.011, kP.y * 0.006) * rockP.w).b;
+  float kStreak = mix(kStB, kStA, kAx);
+  float kGully = smoothstep(0.56, 0.74, kStreak) * kSteep;
+  float kRidge = smoothstep(0.32, 0.14, kStreak) * kSteep;
+  // soft, irregular colour layers instead of hard strata lines
+  float kLayer = sin(kP.y * 0.085 + kD3.a * 6.0 + kD2.b * 2.5) * 0.5 + 0.5;
+  // palette: warm taupe low, blue-grey high, ochre drifts, a tone per plane
+  float kAlt = clamp(kP.y / 160.0 + (kD3.a - 0.5) * 0.6, 0.0, 1.0);
+  vec3 kRockCol = mix(rockWarm, rockCool, kAlt);
+  kRockCol = mix(kRockCol, rockWarm * vec3(1.18, 0.96, 0.7), smoothstep(0.5, 0.8, kD3.b + kRnd.y * 0.3 - 0.1) * 0.55);
+  kRockCol *= (0.82 + 0.3 * kRnd.x) * mix(0.93, 1.06, kLayer * kSteep) * (0.93 + 0.12 * kD.r);
+  kRockCol *= 1.0 - 0.3 * kGully + 0.1 * kRidge;
+  kRockCol *= mix(1.0, 0.8, kCrevSoft * kSteep) * mix(1.0, 0.5, kCrev * kSteep * smoothstep(0.35, 0.65, kD2.b + kRnd.y * 0.35));
+  // grass caps on ledges and gentle tops: crisp edge, a shadowed lip beneath
+  float kTop = kNr.y + (kD.r - 0.5) * 0.12 + (kD2.g - 0.5) * 0.2;
+  float kBelowSnow = 1.0 - smoothstep(rockP.y - 30.0, rockP.y - 5.0, kP.y);
+  float kCap = smoothstep(0.74, 0.765, kTop) * kBelowSnow;
+  kRockCol *= mix(1.0, 0.68, smoothstep(0.64, 0.74, kTop) * (1.0 - kCap) * kBelowSnow);
+  kRockCol = mix(kRockCol, mossCol * (0.85 + 0.25 * kD.r), kCap);
+  kRockN = normalize(mix(kRockN, kNr, kCap * 0.8));
+  float kRockH = clamp(0.4 + kRnd.x * 0.3 - kCrev * 0.3 - kGully * 0.2, 0.0, 1.0);
+  // snow: crisp caps on gentle faces, and streaks down the gullies below
   float kSnowL = rockP.y + (kD3.a - 0.5) * 36.0 + (kD2.r - 0.5) * 10.0;
-  float kSnow = smoothstep(kSnowL, kSnowL + 2.5, kP.y) * smoothstep(0.38, 0.46, kRockN.y + (kD.g - 0.5) * 0.2);
+  float kSnow = smoothstep(kSnowL, kSnowL + 2.0, kP.y) * smoothstep(0.4, 0.47, kNr.y + (kD.g - 0.5) * 0.15 + (kRnd.y - 0.5) * 0.14);
+  kSnow = max(kSnow, smoothstep(kSnowL - 28.0, kSnowL - 4.0, kP.y) * smoothstep(0.6, 0.72, kStreak) * smoothstep(0.1, 0.4, kNr.y + 0.3));
 `;
 
 export const ROCK_WGSL = /* wgsl */ `
-  let kCell = uniforms.rockP.x;
-  let kG = kP.xz / kCell + (kD2.rg - vec2f(0.5)) * 0.4;
+  let kG = kP.xz / uniforms.rockP.x + (kD3.rg - vec2f(0.5)) * 0.35 + (kD2.rg - vec2f(0.5)) * 0.12;
   let kV = kVoro(kG);
   let kRnd = kHash2(kV.xy + vec2f(17.0));
-  let kSteep = smoothstep(0.12, 0.5, 1.0 - kNr.y);
-  let kSy = kP.y * mix(0.13, 0.24, kRnd.x) * uniforms.rockP.w + kRnd.y * 9.0 + kD.b * 0.18;
-  let kStr = fract(kSy);
-  let kAA = fwidth(kSy);
-  let kFadeS = (1.0 - smoothstep(0.07, 0.2, kAA)) * kSteep;
-  let kW = kAA + 0.015;
-  let kSeam = 1.0 - smoothstep(0.035, 0.035 + kW, kStr) * (1.0 - smoothstep(0.995 - kW, 0.995, kStr));
-  let kLip = smoothstep(0.8 - kW, 0.86, kStr) * (1.0 - smoothstep(0.97 - kW, 0.99, kStr));
-  let kUnder = 1.0 - smoothstep(0.04, 0.38, kStr);
-  let kEdgeAA = fwidth(kG.x) + fwidth(kG.y);
-  let kCrack = (1.0 - smoothstep(0.0, 0.03 + kEdgeAA * 1.5, kV.w - kV.z)) * (1.0 - smoothstep(0.15, 0.45, kEdgeAA)) * kSteep;
+  let kSteep = smoothstep(0.15, 0.55, 1.0 - kNr.y);
   let kT = normalize(vec3f(-kNr.z, 0.0, kNr.x) + vec3f(1e-4, 0.0, 0.0));
-  var kRockN = kNr + (kT * (kRnd.x - 0.5) * 0.9 + vec3f(0.0, (kRnd.y - 0.5) * 0.45, 0.0)) * uniforms.rockP.z;
-  kRockN = normalize(kRockN);
-  let kTone = kRnd.x * 0.55 + fract(floor(kSy) * 0.618) * 0.45 * kSteep;
-  let kAlt = clamp(kP.y / 150.0 + (kD3.a - 0.5) * 0.7, 0.0, 1.0);
-  var kRockCol = mix(uniforms.rockWarm, uniforms.rockCool, kAlt) * (0.8 + 0.32 * kTone) * (0.92 + 0.16 * kD.r);
-  kRockCol = mix(kRockCol, kRockCol * vec3f(1.12, 0.98, 0.8), smoothstep(0.6, 0.85, kD2.b) * 0.55);
-  kRockCol *= mix(1.0, 0.66, kSeam * kFadeS);
-  kRockCol *= mix(1.0, 0.86, kUnder * kFadeS);
-  kRockCol *= 1.0 + 0.1 * kLip * kFadeS;
-  kRockCol *= mix(1.0, 0.68, kCrack);
-  let kMoss = smoothstep(0.72, 0.78, kRockN.y + (kD.r - 0.5) * 0.25) * (1.0 - smoothstep(uniforms.rockP.y - 40.0, uniforms.rockP.y - 10.0, kP.y));
-  kRockCol = mix(kRockCol, uniforms.mossCol * (0.82 + 0.3 * kD.r), kMoss * 0.85);
-  let kRockH = clamp(0.35 + kRnd.x * 0.3 + kLip * 0.3 - kCrack * 0.3, 0.0, 1.0);
+  var kRockN = normalize(kNr + (kT * (kRnd.x - 0.5) * 1.1 + vec3f(0.0, (kRnd.y - 0.5) * 0.5, 0.0)) * uniforms.rockP.z);
+  let kEdgeAA = fwidth(kG.x) + fwidth(kG.y);
+  let kEdge = kV.w - kV.z;
+  let kCrev = (1.0 - smoothstep(0.0, 0.025 + kEdgeAA * 1.5, kEdge)) * (1.0 - smoothstep(0.1, 0.35, kEdgeAA));
+  let kCrevSoft = 1.0 - smoothstep(0.0, 0.2, kEdge);
+  let kAx = abs(kNr.x) / (abs(kNr.x) + abs(kNr.z) + 1e-4);
+  let kStA = textureSample(detailTex, detailTexSampler, vec2f(kP.z * 0.011, kP.y * 0.006) * uniforms.rockP.w).b;
+  let kStB = textureSample(detailTex, detailTexSampler, vec2f(kP.x * 0.011, kP.y * 0.006) * uniforms.rockP.w).b;
+  let kStreak = mix(kStB, kStA, kAx);
+  let kGully = smoothstep(0.56, 0.74, kStreak) * kSteep;
+  let kRidge = smoothstep(0.32, 0.14, kStreak) * kSteep;
+  let kLayer = sin(kP.y * 0.085 + kD3.a * 6.0 + kD2.b * 2.5) * 0.5 + 0.5;
+  let kAlt = clamp(kP.y / 160.0 + (kD3.a - 0.5) * 0.6, 0.0, 1.0);
+  var kRockCol = mix(uniforms.rockWarm, uniforms.rockCool, kAlt);
+  kRockCol = mix(kRockCol, uniforms.rockWarm * vec3f(1.18, 0.96, 0.7), smoothstep(0.5, 0.8, kD3.b + kRnd.y * 0.3 - 0.1) * 0.55);
+  kRockCol *= (0.82 + 0.3 * kRnd.x) * mix(0.93, 1.06, kLayer * kSteep) * (0.93 + 0.12 * kD.r);
+  kRockCol *= 1.0 - 0.3 * kGully + 0.1 * kRidge;
+  kRockCol *= mix(1.0, 0.8, kCrevSoft * kSteep) * mix(1.0, 0.5, kCrev * kSteep * smoothstep(0.35, 0.65, kD2.b + kRnd.y * 0.35));
+  let kTop = kNr.y + (kD.r - 0.5) * 0.12 + (kD2.g - 0.5) * 0.2;
+  let kBelowSnow = 1.0 - smoothstep(uniforms.rockP.y - 30.0, uniforms.rockP.y - 5.0, kP.y);
+  let kCap = smoothstep(0.74, 0.765, kTop) * kBelowSnow;
+  kRockCol *= mix(1.0, 0.68, smoothstep(0.64, 0.74, kTop) * (1.0 - kCap) * kBelowSnow);
+  kRockCol = mix(kRockCol, uniforms.mossCol * (0.85 + 0.25 * kD.r), kCap);
+  kRockN = normalize(mix(kRockN, kNr, kCap * 0.8));
+  let kRockH = clamp(0.4 + kRnd.x * 0.3 - kCrev * 0.3 - kGully * 0.2, 0.0, 1.0);
   let kSnowL = uniforms.rockP.y + (kD3.a - 0.5) * 36.0 + (kD2.r - 0.5) * 10.0;
-  let kSnow = smoothstep(kSnowL, kSnowL + 2.5, kP.y) * smoothstep(0.38, 0.46, kRockN.y + (kD.g - 0.5) * 0.2);
+  var kSnow = smoothstep(kSnowL, kSnowL + 2.0, kP.y) * smoothstep(0.4, 0.47, kNr.y + (kD.g - 0.5) * 0.15 + (kRnd.y - 0.5) * 0.14);
+  kSnow = max(kSnow, smoothstep(kSnowL - 28.0, kSnowL - 4.0, kP.y) * smoothstep(0.6, 0.72, kStreak) * smoothstep(0.1, 0.4, kNr.y + 0.3));
 `;
