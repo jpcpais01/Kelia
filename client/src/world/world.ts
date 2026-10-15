@@ -111,7 +111,7 @@ export class World {
   async loadAssets() {
     await this.props.load();
     perf.claimUntagged('props');
-    this.ambient = perf.scope('ambient', () => new Ambient(this.scene, this.data.heightmap, this.atmosphere, this.props.lights));
+    this.ambient = perf.scope('ambient', () => new Ambient(this.scene, this.data.heightmap, this.atmosphere, this.props.lights, this.props.village?.chimneys ?? []));
     this.secrets = perf.scope('secrets', () => new Secrets(this.scene, this.data.heightmap, this.atmosphere, this.foliage, this.ambient!));
   }
 
@@ -153,7 +153,7 @@ export class World {
     }
     perf.end('foliage');
     perf.begin('props');
-    this.props.update(this.time);
+    this.props.update(this.time, cam);
     perf.end('props');
     perf.begin('ambient');
     this.ambient?.update(dt, cam);

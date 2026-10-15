@@ -20,6 +20,7 @@ import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
 import { GROUND, GROUND_GRASS_GLSL } from './palette';
 import { TOON_FOG_GLSL, TOON_FOG_UNIFORMS, bindToonFog, toon } from './toon';
+import { PLAZA } from './village';
 
 Effect.ShadersStore['keliaGrassVertexShader'] = /* glsl */ `
 precision highp float;
@@ -101,6 +102,8 @@ void main(void) {
   s *= mix(1.0, 1.35, sp.r) * (1.0 - sp.a * 0.5);
   // kept short in the village and around the shrine
   s *= mix(0.6, 1.0, smoothstep(${VILLAGE.radius.toFixed(1)} - 12.0, ${VILLAGE.radius.toFixed(1)} + 6.0, length(wp - vec2(${VILLAGE.center[0].toFixed(1)}, ${VILLAGE.center[1].toFixed(1)}))));
+  // none on the cobbled square
+  s *= smoothstep(${(PLAZA.r + 0.1).toFixed(1)}, ${(PLAZA.r + 1.2).toFixed(1)}, length(wp - vec2(${PLAZA.x.toFixed(1)}, ${PLAZA.z.toFixed(1)})));
   s *= mix(0.5, 1.0, smoothstep(${SHRINE.radius.toFixed(1)} - 2.0, ${SHRINE.radius.toFixed(1)} + 6.0, length(wp - vec2(${SHRINE.center[0].toFixed(1)}, ${SHRINE.center[1].toFixed(1)}))));
 
   float ang = grassInst.z * 43.7 + grassInst.w * 17.0;
