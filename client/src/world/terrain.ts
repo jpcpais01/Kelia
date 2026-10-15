@@ -16,6 +16,7 @@ import type { TerrainData } from './terrainData';
 import { createShaderPlugin } from './shaderPlugin';
 import { createDetailTexture } from './textures';
 import { freezeStatic } from './frozen';
+import { GROUND } from './palette';
 import { setToon } from './toon';
 
 // 8×8 chunks of 128 m: a quarter of the draw calls of 64 m chunks, with LOD
@@ -38,9 +39,20 @@ const GLSL_FRAGMENT = /* glsl */ `
   float kGrass = kGrassW * (0.7 + kD2.g * 0.6);
   vec3 kGrassCol = mix(grassA, grassB, smoothstep(0.25, 0.75, kD3.a));
   kGrassCol = mix(kGrassCol, grassDry, smoothstep(0.55, 0.85, kD2.a) * 0.6);
-  kGrassCol *= 0.82 + 0.36 * kD.r;
+  kGrassCol *= 0.9 + 0.2 * kD.r;
   kGrassCol = mix(kGrassCol, forestCol * (0.8 + 0.45 * kD.g), kSp.r);
-  vec3 kRockCol = rockCol * (0.68 + 0.55 * kD.b) * (0.85 + 0.3 * kD2.r);
+  // cliffs: stylized horizontal strata with dark seams, sampled from the side
+  // (not projected from above, which smears steep faces into streaks)
+  vec3 kNr = normalize(normalW);
+  float kSide = abs(kNr.x) > abs(kNr.z) ? vPositionW.z : vPositionW.x;
+  vec4 kR = texture2D(detailTex, vec2(kSide * 0.045, vPositionW.y * 0.09));
+  float kSy = vPositionW.y * 0.55 + kR.a * 0.6 + kR.r * 0.25;
+  float kStr = fract(kSy);
+  float kSeam = mix(1.0, smoothstep(0.0, 0.06, kStr) * (1.0 - smoothstep(0.93, 1.0, kStr)), smoothstep(0.25, 0.55, 1.0 - kNr.y) * (1.0 - smoothstep(90.0, 260.0, distance(vPositionW, vEyePosition.xyz))));
+  float kTone = fract(floor(kSy) * 0.618);
+  vec3 kRockCol = rockCol * (0.8 + 0.3 * kTone + 0.12 * kR.g) * mix(0.66, 1.0, kSeam);
+  // ledges that face the sky carry moss
+  kRockCol = mix(kRockCol, grassA * (0.9 + 0.2 * kD.r), smoothstep(0.78, 0.9, kNr.y) * 0.8);
   vec3 kSandCol = sandCol * (0.88 + 0.2 * kD.r);
   vec3 kDirtCol = dirtCol * (0.75 + 0.4 * kD.g) * (0.9 + 0.2 * kD2.r);
   float kSum = max(kGrass + kRock + kSand + kDirt, 0.0001);
@@ -63,9 +75,18 @@ const WGSL_FRAGMENT = /* wgsl */ `
   let kGrass = kGrassW * (0.7 + kD2.g * 0.6);
   var kGrassCol = mix(uniforms.grassA, uniforms.grassB, smoothstep(0.25, 0.75, kD3.a));
   kGrassCol = mix(kGrassCol, uniforms.grassDry, smoothstep(0.55, 0.85, kD2.a) * 0.6);
-  kGrassCol = kGrassCol * (0.82 + 0.36 * kD.r);
+  kGrassCol = kGrassCol * (0.9 + 0.2 * kD.r);
   kGrassCol = mix(kGrassCol, uniforms.forestCol * (0.8 + 0.45 * kD.g), kSp.r);
-  let kRockCol = uniforms.rockCol * (0.68 + 0.55 * kD.b) * (0.85 + 0.3 * kD2.r);
+  let kNr = normalize(normalW);
+  var kSide = fragmentInputs.vPositionW.x;
+  if (abs(kNr.x) > abs(kNr.z)) { kSide = fragmentInputs.vPositionW.z; }
+  let kR = textureSample(detailTex, detailTexSampler, vec2f(kSide * 0.045, fragmentInputs.vPositionW.y * 0.09));
+  let kSy = fragmentInputs.vPositionW.y * 0.55 + kR.a * 0.6 + kR.r * 0.25;
+  let kStr = fract(kSy);
+  let kSeam = mix(1.0, smoothstep(0.0, 0.06, kStr) * (1.0 - smoothstep(0.93, 1.0, kStr)), smoothstep(0.25, 0.55, 1.0 - kNr.y) * (1.0 - smoothstep(90.0, 260.0, distance(fragmentInputs.vPositionW, scene.vEyePosition.xyz))));
+  let kTone = fract(floor(kSy) * 0.618);
+  var kRockCol = uniforms.rockCol * (0.8 + 0.3 * kTone + 0.12 * kR.g) * mix(0.66, 1.0, kSeam);
+  kRockCol = mix(kRockCol, uniforms.grassA * (0.9 + 0.2 * kD.r), smoothstep(0.78, 0.9, kNr.y) * 0.8);
   let kSandCol = uniforms.sandCol * (0.88 + 0.2 * kD.r);
   let kDirtCol = uniforms.dirtCol * (0.75 + 0.4 * kD.g) * (0.9 + 0.2 * kD2.r);
   let kSum = max(kGrass + kRock + kSand + kDirt, 0.0001);
@@ -73,11 +94,6 @@ const WGSL_FRAGMENT = /* wgsl */ `
   kCol = kCol * mix(1.0, 0.78, smoothstep(0.35, 0.9, kSp.b) * 0.5);
   surfaceAlbedo = kCol;
 `;
-
-const lin = (hex: string) => {
-  const c = Color3.FromHexString(hex).toLinearSpace();
-  return [c.r, c.g, c.b];
-};
 
 interface Chunk {
   ci: number;
@@ -122,15 +138,7 @@ export class Terrain {
       glsl: { fragment: { CUSTOM_FRAGMENT_BEFORE_LIGHTS: GLSL_FRAGMENT } },
       wgsl: { fragment: { CUSTOM_FRAGMENT_BEFORE_LIGHTS: WGSL_FRAGMENT } },
     });
-    Object.assign(plugin.values, {
-      grassA: lin('#3c7a2c'),
-      grassB: lin('#5d9c37'),
-      grassDry: lin('#b0ac58'),
-      forestCol: lin('#2e6230'),
-      rockCol: lin('#8d8e96'),
-      sandCol: lin('#e3d3a2'),
-      dirtCol: lin('#9a7a58'),
-    });
+    Object.assign(plugin.values, GROUND);
     plugin.textures.splatMap = this.splatTexture;
     plugin.textures.detailTex = this.detailTexture;
 

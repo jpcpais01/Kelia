@@ -60,7 +60,7 @@ export class World {
     this.terrain = perf.scope('terrain', () => new Terrain(scene, data));
     this.postfx = new PostFX(scene, this.camera);
     this.water = perf.scope('water', () => new Water(scene, this.terrain.heightTexture, this.atmosphere));
-    this.grass = perf.scope('grass', () => new Grass(scene, this.terrain.heightTexture, this.terrain.splatTexture, this.atmosphere));
+    this.grass = perf.scope('grass', () => new Grass(scene, this.terrain.heightTexture, this.terrain.splatTexture, this.terrain.detailTexture, this.atmosphere));
     this.foliage = perf.scope('foliage', () => new Foliage(scene, data.heightmap, this.atmosphere));
     this.props = perf.scope('props', () => new Props(scene, data.heightmap, this.atmosphere, this.foliage));
     this.applyQuality(quality);

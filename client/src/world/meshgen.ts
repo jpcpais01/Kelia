@@ -1,24 +1,75 @@
 // Tiny procedural mesh toolkit for stylized trees, bushes and rocks.
 import { VertexData } from '@babylonjs/core';
 import { Simplex2 } from '@kelia/shared';
+import { cellUV, type AtlasCell } from './leafAtlas';
+
+/** Vertex kind holding the camera-space corner offset of billboard leaf cards. */
+export const CARD_CORNER_KIND = 'cardCorner';
 
 export class MeshBuilder2 {
   positions: number[] = [];
   normals: number[] = [];
   colors: number[] = [];
   indices: number[] = [];
+  /** Atlas UVs (vertices added without one sample the opaque bark cell). */
+  uvs: number[] = [];
+  /** Billboard corner offsets in metres (0 for ordinary geometry). */
+  corners: number[] = [];
+  private hasCards = false;
 
   get vertexCount() {
     return this.positions.length / 3;
   }
 
+  /** Give every vertex added so far without UVs the default (opaque) UV and no card offset. */
+  private pad() {
+    const n = this.vertexCount;
+    if (this.uvs.length / 2 < n) {
+      const [u, v] = cellUV('bark', 0.5, 0.5);
+      while (this.uvs.length / 2 < n) this.uvs.push(u, v);
+    }
+    while (this.corners.length / 2 < n) this.corners.push(0, 0);
+  }
+
   toVertexData(): VertexData {
+    this.pad();
     const vd = new VertexData();
     vd.positions = this.positions;
     vd.normals = this.normals;
     vd.colors = this.colors;
     vd.indices = this.indices;
+    vd.uvs = this.uvs;
     return vd;
+  }
+
+  /** Billboard corner offsets for the mesh (null when there are no cards). */
+  cornerData(): Float32Array | null {
+    this.pad();
+    return this.hasCards ? new Float32Array(this.corners) : null;
+  }
+
+  /**
+   * One camera-facing leaf card centred on `center`. The vertex shader turns
+   * it to face the camera; `normal` is the shading normal (usually pointing
+   * away from the canopy centre, so a whole crown shades like one soft ball).
+   */
+  card(center: number[], size: number, normal: number[], color: number[], sway: number, cell: AtlasCell, rot: number) {
+    this.pad();
+    this.hasCards = true;
+    const start = this.vertexCount;
+    const c = Math.cos(rot);
+    const s = Math.sin(rot);
+    const h = size * 0.5;
+    const n = normalize(normal);
+    for (const [cx, cy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      this.positions.push(center[0], center[1], center[2]);
+      this.normals.push(n[0], n[1], n[2]);
+      this.colors.push(color[0], color[1], color[2], sway);
+      const [u, v] = cellUV(cell, (cx + 1) / 2, (1 - cy) / 2);
+      this.uvs.push(u, v);
+      this.corners.push((cx * c - cy * s) * h, (cx * s + cy * c) * h);
+    }
+    this.indices.push(start, start + 1, start + 2, start, start + 2, start + 3);
   }
 
   /** Tapered, slightly bent cylinder from `base` along `dir`. a = sway weight. */
@@ -39,6 +90,7 @@ export class MeshBuilder2 {
     const up: [number, number, number] = Math.abs(dy) < 0.95 ? [0, 1, 0] : [1, 0, 0];
     const u = normalize(cross(up, [dx, dy, dz]));
     const v = cross([dx, dy, dz], u);
+    this.pad();
     const start = this.vertexCount;
     for (let r = 0; r <= rings; r++) {
       const t = r / rings;
@@ -55,6 +107,9 @@ export class MeshBuilder2 {
         this.positions.push(cx + nx * rad, cy + ny * rad, cz + nz * rad);
         this.normals.push(nx, ny, nz);
         this.colors.push(color[0] * shade, color[1] * shade, color[2] * shade, sway0 + (sway1 - sway0) * t);
+        const [bu, bv] = cellUV('bark', s / segs, (t * length * 0.35) % 1);
+        this.uvs.push(bu, bv);
+        this.corners.push(0, 0);
       }
     }
     for (let r = 0; r < rings; r++) {
@@ -65,6 +120,86 @@ export class MeshBuilder2 {
         const d = b + segs;
         this.indices.push(a, c, b, b, c, d);
       }
+    }
+  }
+
+  /**
+   * A chunky, faceted boulder: an icosphere cut by random planes, so it has a
+   * few big flat faces and crisp edges (the stylized-rock look) instead of
+   * noisy facets. Faces pointing up get a clean cap of moss.
+   */
+  boulder(
+    center: number[],
+    radius: number[],
+    seed: number,
+    stone: number[],
+    stoneDark: number[],
+    moss: number[],
+    o: { cuts?: number; subdiv?: number; mossLine?: number; sway?: number } = {},
+  ) {
+    this.pad();
+    const r = mulberry(seed * 7919 + 17);
+    const ico = icosphere(o.subdiv ?? 2);
+    const planes: number[][] = [];
+    const cuts = o.cuts ?? 9;
+    for (let i = 0; i < cuts; i++) {
+      // a flat-ish top, steep sides and one or two slanted faces
+      let n: number[];
+      if (i === 0) n = [(r() - 0.5) * 0.5, 1, (r() - 0.5) * 0.5];
+      else {
+        const a = r() * Math.PI * 2;
+        const y = (r() - 0.35) * 1.1;
+        n = [Math.cos(a), y, Math.sin(a)];
+      }
+      n = normalize(n);
+      planes.push([n[0], n[1], n[2], i === 0 ? 0.55 + r() * 0.2 : 0.6 + r() * 0.28]);
+    }
+    const pts: number[] = [];
+    for (let i = 0; i < ico.positions.length; i += 3) {
+      let x = ico.positions[i];
+      let y = ico.positions[i + 1];
+      let z = ico.positions[i + 2];
+      for (const p of planes) {
+        const d = x * p[0] + y * p[1] + z * p[2];
+        if (d > p[3]) {
+          x -= p[0] * (d - p[3]);
+          y -= p[1] * (d - p[3]);
+          z -= p[2] * (d - p[3]);
+        }
+      }
+      if (y < -0.35) y = -0.35 + (y + 0.35) * 0.3; // sit flat on the ground
+      pts.push(center[0] + x * radius[0], center[1] + y * radius[1], center[2] + z * radius[2]);
+    }
+    const mossLine = o.mossLine ?? 0.72;
+    const sway = o.sway ?? 0;
+    const minY = center[1] - radius[1] * 0.35;
+    const spanY = radius[1] * 1.35;
+    for (let i = 0; i < ico.indices.length; i += 3) {
+      const ia = ico.indices[i] * 3;
+      const ib = ico.indices[i + 1] * 3;
+      const ic = ico.indices[i + 2] * 3;
+      const a = [pts[ia], pts[ia + 1], pts[ia + 2]];
+      const b = [pts[ib], pts[ib + 1], pts[ib + 2]];
+      const c = [pts[ic], pts[ic + 1], pts[ic + 2]];
+      const n = normalize(cross([b[0] - a[0], b[1] - a[1], b[2] - a[2]], [c[0] - a[0], c[1] - a[1], c[2] - a[2]]));
+      const nx = n[0];
+      const ny = n[1];
+      const nz = n[2];
+      const cy = (a[1] + b[1] + c[1]) / 3;
+      const hgt = Math.min(1, Math.max(0, (cy - minY) / spanY));
+      // facets keyed by their direction, so a whole cut face shares one tone
+      const facet = (0.84 + 0.22 * ny) * (0.86 + 0.28 * fract(Math.sin(Math.round(nx * 4) * 12.9898 + Math.round(ny * 4) * 78.233 + Math.round(nz * 4) * 37.719) * 43758.5453));
+      const col = [0, 0, 0];
+      for (let k = 0; k < 3; k++) col[k] = (stoneDark[k] + (stone[k] - stoneDark[k]) * (0.35 + 0.65 * hgt)) * facet;
+      const m = Math.min(1, Math.max(0, (ny - mossLine) * 6));
+      for (let k = 0; k < 3; k++) col[k] += (moss[k] * (0.92 + 0.16 * facet) - col[k]) * m;
+      const start = this.vertexCount;
+      for (const p of [a, b, c]) {
+        this.positions.push(p[0], p[1], p[2]);
+        this.normals.push(nx, ny, nz);
+        this.colors.push(col[0], col[1], col[2], sway);
+      }
+      this.indices.push(start, start + 1, start + 2);
     }
   }
 
@@ -201,10 +336,25 @@ export class MeshBuilder2 {
   }
 }
 
+function fract(x: number) {
+  return x - Math.floor(x);
+}
+
+export function mulberry(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 function cross(a: number[], b: number[]): [number, number, number] {
   return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }
-function normalize(a: number[]): [number, number, number] {
+export function normalize(a: number[]): [number, number, number] {
   const l = Math.hypot(a[0], a[1], a[2]) || 1;
   return [a[0] / l, a[1] / l, a[2] / l];
 }
