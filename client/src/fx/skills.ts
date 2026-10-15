@@ -54,13 +54,13 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
       fx.after(impact, () => {
         // rising diagonal slice (right to left), level cut (left to right), overhead chop
         fx.slash(at().add(fwd.scale(0.2)).addInPlace(new Vector3(0, heavy ? 1.2 : step ? 0.85 : 1.0, 0)), yaw, col.main, {
-          radius: heavy ? 1.75 : 1.55,
+          radius: heavy ? 1.95 : 1.75,
           arc: heavy ? 2.6 : 2.5,
           tilt: heavy ? 1.32 : step ? 0.06 : -0.4,
           reverse: heavy || !step,
-          width: heavy ? 0.95 : 0.8,
+          width: heavy ? 1.15 : 1.0,
           dur: heavy ? 0.32 : 0.26,
-          intensity: heavy ? 1.25 : 1,
+          intensity: heavy ? 1.35 : 1.15,
         });
         if (heavy) {
           const g = at().add(fwd.scale(1.7));
