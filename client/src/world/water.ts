@@ -121,7 +121,9 @@ void main(void) {
   vec3 H = normalize(V + sunDir);
   // stylized glints: hard-edged sparkles plus a soft sheen
   float nh = max(dot(n, H), 0.0);
-  float spec = smoothstep(0.992, 0.996, nh) * 4.0 + pow(nh, 60.0) * 0.25;
+  // (the hard sparkles fade out with distance, where they would only alias into glitter)
+  float glintFade = 1.0 - smoothstep(12.0, 45.0, length(cameraPos - vPos));
+  float spec = smoothstep(0.992, 0.996, nh) * 4.0 * glintFade + pow(nh, 60.0) * 0.25;
   vec3 sun = sunColor * spec * step(0.0, sunDir.y);
 
   float d = max(depth, 0.0);
