@@ -72,6 +72,74 @@ export class MeshBuilder2 {
     this.indices.push(start, start + 1, start + 2, start, start + 2, start + 3);
   }
 
+  /**
+   * A smooth tapered tube through a polyline: curved trunks, limbs and twigs.
+   * Frames are parallel-transported along the curve so the tube never twists,
+   * and the bark UVs mirror-repeat so there is no seam around or along it.
+   * Per point: radius and sway weight; `colorAt` can tint each ring.
+   */
+  tube(
+    pts: number[][],
+    radii: number[],
+    sways: number[],
+    segs: number,
+    color: number[],
+    o: { shade?: [number, number]; bark?: number; colorAt?: (i: number) => number[] } = {},
+  ) {
+    const n = pts.length;
+    if (n < 2) return;
+    this.pad();
+    const start = this.vertexCount;
+    const [s0, s1] = o.shade ?? [0.72, 1];
+    const barkK = o.bark ?? 0.35;
+    const tan = (i: number) => {
+      const a = pts[Math.max(0, i - 1)];
+      const b = pts[Math.min(n - 1, i + 1)];
+      return normalize([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+    };
+    let T = tan(0);
+    let u = normalize(cross(Math.abs(T[1]) < 0.95 ? [0, 1, 0] : [1, 0, 0], T));
+    let len = 0;
+    for (let i = 0; i < n; i++) {
+      if (i > 0) {
+        T = tan(i);
+        const d = u[0] * T[0] + u[1] * T[1] + u[2] * T[2];
+        u = normalize([u[0] - T[0] * d, u[1] - T[1] * d, u[2] - T[2] * d]);
+        len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]);
+      }
+      const v = cross(T, u);
+      const t = i / (n - 1);
+      const shade = s0 + (s1 - s0) * t;
+      const col = o.colorAt ? o.colorAt(i) : color;
+      const f = (len * barkK) % 2;
+      const bv = f < 1 ? f : 2 - f;
+      for (let k = 0; k < segs; k++) {
+        const a = (k / segs) * Math.PI * 2;
+        const ca = Math.cos(a);
+        const sa = Math.sin(a);
+        const nx = u[0] * ca + v[0] * sa;
+        const ny = u[1] * ca + v[1] * sa;
+        const nz = u[2] * ca + v[2] * sa;
+        const r = radii[i];
+        this.positions.push(pts[i][0] + nx * r, pts[i][1] + ny * r, pts[i][2] + nz * r);
+        this.normals.push(nx, ny, nz);
+        this.colors.push(col[0] * shade, col[1] * shade, col[2] * shade, sways[i]);
+        const [bu, bvv] = cellUV('bark', 1 - Math.abs(1 - (2 * k) / segs), bv);
+        this.uvs.push(bu, bvv);
+        this.corners.push(0, 0);
+      }
+    }
+    for (let r = 0; r < n - 1; r++) {
+      for (let k = 0; k < segs; k++) {
+        const a = start + r * segs + k;
+        const b = start + r * segs + ((k + 1) % segs);
+        const c = a + segs;
+        const d = b + segs;
+        this.indices.push(a, c, b, b, c, d);
+      }
+    }
+  }
+
   /** Tapered, slightly bent cylinder from `base` along `dir`. a = sway weight. */
   branch(
     base: [number, number, number],

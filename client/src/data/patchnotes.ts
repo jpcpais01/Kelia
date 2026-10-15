@@ -10,6 +10,14 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T17:57:00Z',
+    title: 'Lush meadows and real branches',
+    lines: [
+      'The grass is back in full: close to you, meadows were showing only scattered patches, and now every field is a thick carpet of arching blades in little tufts that rise into taller clumps and dip into short patches. Each blade fades from deep shade at the root to a warm sunny tip, shows a lit and a shaded half, catches glossy streaks of sun and glows when the light is behind it.',
+      'Trees grow real branches: oaks fork into spreading limbs that split into branches and twigs, cherry blossoms throw long, low, twisting limbs under their pink clouds, birches climb in slender white branches, and pines show limbs under their skirts. Leaves gather in separate masses at the branch tips, so you see the wood between and beneath them, with roots spreading into the ground.',
+    ],
+  },
+  {
     at: '2026-10-15T17:40:00Z',
     title: 'Crystal water and towering peaks',
     lines: [
