@@ -10,6 +10,14 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T17:40:00Z',
+    title: 'Crystal water and towering peaks',
+    lines: [
+      'Water has real depth now: the shallows are glass-clear over sand and pebbles with sunlight caustics dancing on the bed, fading through turquoise into deep blue. Mirror Lake reflects the clouds, the shore and the mountains, sunlight glows through the wave crests, foam washes up the beaches and Silverfall pours down in streaming white ribbons.',
+      'The mountains rise far higher, with sharp snow-capped summits, chiselled rock that breaks into crisp sunlit and shaded faces, ledges, cracks and moss, and a ring of distant ranges fading blue into the haze behind the valley. The trail up to Eagle\'s Perch is a gentler climb.',
+    ],
+  },
+  {
     at: '2026-10-15T15:55:00Z',
     title: 'Attacks with weight',
     lines: [

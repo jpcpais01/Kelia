@@ -138,14 +138,35 @@ export function hillsMask(x: number, z: number): number {
   return smoothstep(HILLS.radius, HILLS.radius * 0.35, d);
 }
 
+/** Warped ridged noise that shapes the Greyspine crags. */
+function greyspine(x: number, z: number): number {
+  const wx = x + N3.noise(x * 0.006, z * 0.006) * 28;
+  const wz = z + N3.noise(x * 0.006 + 31.7, z * 0.006 - 4.2) * 28;
+  return N2.ridged(wx * 0.0065, wz * 0.0065, 5);
+}
+
 function baseHeight(x: number, z: number): number {
   // Rolling meadows
   let h = 6 + N.fbm(x * 0.0032, z * 0.0032, 4) * 9 + N2.fbm(x * 0.011, z * 0.011, 3) * 2.2;
   // Forest floor is a bit lumpier
   h += forestMask(x, z) * N3.fbm(x * 0.02, z * 0.02, 3) * 2.5;
-  // Greyspine Hills: ridged rock
+  // Greyspine Hills: warped ridged rock with stepped crags, kept smooth along
+  // the trail up to Eagle's Perch so it stays walkable
   const hm = hillsMask(x, z);
-  if (hm > 0) h += hm * (N2.ridged(x * 0.0065, z * 0.0065, 5) * 52 + 6);
+  if (hm > 0) {
+    let r = greyspine(x, z);
+    const pd = pathDistance(x, z);
+    // the trail climbs a gentler, smoothed saddle between the crags
+    const near = 1 - smoothstep(5, 45, pd);
+    if (near > 0) {
+      const b = (greyspine(x + 12, z) + greyspine(x - 12, z) + greyspine(x, z + 12) + greyspine(x, z - 12) + r) / 5;
+      r = lerp(r, b, near);
+    }
+    let hh = Math.pow(r, 1.3) * 62 * lerp(0.45, 1, 1 - near) + 6;
+    const crag = smoothstep(9, 26, pd) * smoothstep(0.35, 0.8, hm);
+    if (crag > 0) hh = terrace(hh, 6.5, crag * (0.25 + 0.2 * N.noise(x * 0.02, z * 0.02)));
+    h += hm * hh;
+  }
   // Eagle's Perch summit
   const dv = dist(x, z, VIEWPOINT.center);
   h += 26 * Math.exp(-(dv * dv) / (2 * 42 * 42));
@@ -158,8 +179,26 @@ function baseHeight(x: number, z: number): number {
   // Mountain wall around the playable area
   const e = Math.max(Math.abs(x), Math.abs(z)) + N.noise(x * 0.01, z * 0.01) * 26;
   const m = smoothstep(415, 505, e);
-  if (m > 0) h += m * (30 + N.ridged(x * 0.0045, z * 0.0045, 3) * 38 + N2.fbm(x * 0.012, z * 0.012, 3) * 14);
+  if (m > 0) {
+    // tall, sharp, domain-warped ridges with stylised stepped cliffs
+    const wx = x + N3.noise(x * 0.0035, z * 0.0035) * 70;
+    const wz = z + N3.noise(x * 0.0035 - 17.3, z * 0.0035 + 5.9) * 70;
+    const r = N.ridged(wx * 0.0038, wz * 0.0038, 4);
+    let mh = 36 + Math.pow(r, 1.3) * 125 + N2.fbm(x * 0.014, z * 0.014, 3) * 10;
+    mh = terrace(mh, 14, 0.14 + 0.14 * N2.noise(x * 0.006, z * 0.006));
+    h += m * mh;
+  }
   return h;
+}
+
+/** Stylised rock terraces: flat-ish ledges with steep risers, mixed in by `k`. */
+function terrace(h: number, step: number, k: number): number {
+  if (k <= 0) return h;
+  const t = h / step;
+  const i = Math.floor(t);
+  const f = t - i;
+  const shaped = (i + smoothstep(0.45, 1, f)) * step;
+  return h + (shaped - h) * Math.min(1, k);
 }
 
 function blendTo(h: number, target: number, w: number) {

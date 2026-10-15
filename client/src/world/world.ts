@@ -13,6 +13,7 @@ import { Foliage } from './foliage';
 import { Grass } from './grass';
 import { Terrain } from './terrain';
 import { Water } from './water';
+import { Mountains } from './mountains';
 import type { TerrainData } from './terrainData';
 import { registerToon } from './toon';
 import { setOutlines } from '../char/style';
@@ -24,6 +25,7 @@ export class World {
   readonly terrain: Terrain;
   readonly postfx: PostFX;
   readonly water: Water;
+  readonly mountains: Mountains;
   readonly grass: Grass;
   readonly foliage: Foliage;
   readonly props: Props;
@@ -59,7 +61,8 @@ export class World {
     this.atmosphere = perf.scope('sky', () => new Atmosphere(scene));
     this.terrain = perf.scope('terrain', () => new Terrain(scene, data));
     this.postfx = new PostFX(scene, this.camera);
-    this.water = perf.scope('water', () => new Water(scene, this.terrain.heightTexture, this.atmosphere));
+    this.mountains = perf.scope('terrain', () => new Mountains(scene, this.terrain.detailTexture));
+    this.water = perf.scope('water', () => new Water(scene, this.terrain, this.mountains.skyline, this.atmosphere));
     this.grass = perf.scope('grass', () => new Grass(scene, this.terrain.heightTexture, this.terrain.splatTexture, this.terrain.detailTexture, this.atmosphere));
     this.foliage = perf.scope('foliage', () => new Foliage(scene, data.heightmap, this.atmosphere));
     this.props = perf.scope('props', () => new Props(scene, data.heightmap, this.atmosphere, this.foliage));
@@ -71,6 +74,7 @@ export class World {
     this.quality = q;
     this.applyResolution();
     perf.scope('sky', () => this.atmosphere.applyQuality(q));
+    this.water?.applyQuality(q);
     this.postfx.apply(q);
     setOutlines(q.outlines);
     // MSAA sample counts changed: WebGPU's cached render bundles must be rebuilt
@@ -79,7 +83,8 @@ export class World {
     refreshStatics(this.scene);
     perf.scope('grass', () => this.grass?.applyQuality(q));
     perf.scope('foliage', () => this.foliage?.applyQuality(q));
-    this.camera.maxZ = q.viewDistance + 1000;
+    // the far ranges stand up to ~2.2 km away
+    this.camera.maxZ = Math.max(q.viewDistance + 1000, 2400);
   }
 
   /** Player-chosen rendering resolution (fraction of native pixels); 0 = from the quality preset. */

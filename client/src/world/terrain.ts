@@ -18,6 +18,8 @@ import { createDetailTexture } from './textures';
 import { freezeStatic } from './frozen';
 import { GROUND } from './palette';
 import { setToon } from './toon';
+import { ROCK_DEFAULTS, ROCK_GLSL, ROCK_GLSL_DEFS, ROCK_UNIFORMS, ROCK_WGSL, ROCK_WGSL_DEFS } from './rock';
+import { ROCK_COLOURS } from './mountains';
 
 // 8×8 chunks of 128 m: a quarter of the draw calls of 64 m chunks, with LOD
 // distances matched so the same detail reaches the same range.
@@ -26,14 +28,16 @@ const CHUNKS = (WORLD_HALF * 2) / CHUNK;
 const LOD_STEPS = [1, 2, 4, 8];
 
 const GLSL_FRAGMENT = /* glsl */ `
-  vec2 kWuv = (vPositionW.xz + vec2(512.5)) / 1025.0;
+  vec3 kP = vPositionW;
+  vec2 kWuv = (kP.xz + vec2(512.5)) / 1025.0;
   vec4 kSp = texture2D(splatMap, kWuv);
-  vec4 kD = texture2D(detailTex, vPositionW.xz * 0.21);
-  vec4 kD2 = texture2D(detailTex, vPositionW.xz * 0.027);
-  vec4 kD3 = texture2D(detailTex, vPositionW.xz * 0.0041);
+  vec4 kD = texture2D(detailTex, kP.xz * 0.21);
+  vec4 kD2 = texture2D(detailTex, kP.xz * 0.027);
+  vec4 kD3 = texture2D(detailTex, kP.xz * 0.0041);
+  vec3 kNr = normalize(normalW);
+${ROCK_GLSL}
   // Height-aware blending: textures with more "height" win at borders.
   float kGrassW = clamp(1.0 - kSp.g - kSp.b - kSp.a, 0.0, 1.0);
-  float kRock = kSp.g * (0.6 + kD.b * 0.8);
   float kSand = kSp.b * (0.7 + kD.r * 0.6);
   float kDirt = kSp.a * (0.5 + kD.g * 1.0);
   float kGrass = kGrassW * (0.7 + kD2.g * 0.6);
@@ -41,35 +45,31 @@ const GLSL_FRAGMENT = /* glsl */ `
   kGrassCol = mix(kGrassCol, grassDry, smoothstep(0.55, 0.85, kD2.a) * 0.6);
   kGrassCol *= 0.9 + 0.2 * kD.r;
   kGrassCol = mix(kGrassCol, forestCol * (0.8 + 0.45 * kD.g), kSp.r);
-  // cliffs: stylized horizontal strata with dark seams, sampled from the side
-  // (not projected from above, which smears steep faces into streaks)
-  vec3 kNr = normalize(normalW);
-  float kSide = abs(kNr.x) > abs(kNr.z) ? vPositionW.z : vPositionW.x;
-  vec4 kR = texture2D(detailTex, vec2(kSide * 0.045, vPositionW.y * 0.09));
-  float kSy = vPositionW.y * 0.55 + kR.a * 0.6 + kR.r * 0.25;
-  float kStr = fract(kSy);
-  float kSeam = mix(1.0, smoothstep(0.0, 0.06, kStr) * (1.0 - smoothstep(0.93, 1.0, kStr)), smoothstep(0.25, 0.55, 1.0 - kNr.y) * (1.0 - smoothstep(90.0, 260.0, distance(vPositionW, vEyePosition.xyz))));
-  float kTone = fract(floor(kSy) * 0.618);
-  vec3 kRockCol = rockCol * (0.8 + 0.3 * kTone + 0.12 * kR.g) * mix(0.66, 1.0, kSeam);
-  // ledges that face the sky carry moss
-  kRockCol = mix(kRockCol, grassA * (0.9 + 0.2 * kD.r), smoothstep(0.78, 0.9, kNr.y) * 0.8);
   vec3 kSandCol = sandCol * (0.88 + 0.2 * kD.r);
   vec3 kDirtCol = dirtCol * (0.75 + 0.4 * kD.g) * (0.9 + 0.2 * kD2.r);
-  float kSum = max(kGrass + kRock + kSand + kDirt, 0.0001);
-  vec3 kCol = (kGrassCol * kGrass + kRockCol * kRock + kSandCol * kSand + kDirtCol * kDirt) / kSum;
+  float kSum = max(kGrass + kSand + kDirt, 0.0001);
+  vec3 kSoft = (kGrassCol * kGrass + kSandCol * kSand + kDirtCol * kDirt) / kSum;
+  // rock meets soil along a crisp, height-blended edge: grass caps the ledges
+  float kRockA = smoothstep(0.42, 0.56, kSp.g + (kRockH - 0.5) * 0.45 + (kD.b - 0.5) * 0.12);
+  vec3 kCol = mix(kSoft, kRockCol, kRockA);
+  normalW = normalize(mix(kNr, kRockN, kRockA));
+  // snow settles on whatever lies above the snow line
+  kCol = mix(kCol, snowCol * (0.94 + 0.08 * kD.r), kSnow * max(kRockA, smoothstep(0.6, 0.8, kNr.y)));
   // Damp ground near water
   kCol *= mix(1.0, 0.78, smoothstep(0.35, 0.9, kSp.b) * 0.5);
   surfaceAlbedo = kCol;
 `;
 
 const WGSL_FRAGMENT = /* wgsl */ `
-  let kWuv = (fragmentInputs.vPositionW.xz + vec2f(512.5)) / 1025.0;
+  let kP = fragmentInputs.vPositionW;
+  let kWuv = (kP.xz + vec2f(512.5)) / 1025.0;
   let kSp = textureSample(splatMap, splatMapSampler, kWuv);
-  let kD = textureSample(detailTex, detailTexSampler, fragmentInputs.vPositionW.xz * 0.21);
-  let kD2 = textureSample(detailTex, detailTexSampler, fragmentInputs.vPositionW.xz * 0.027);
-  let kD3 = textureSample(detailTex, detailTexSampler, fragmentInputs.vPositionW.xz * 0.0041);
+  let kD = textureSample(detailTex, detailTexSampler, kP.xz * 0.21);
+  let kD2 = textureSample(detailTex, detailTexSampler, kP.xz * 0.027);
+  let kD3 = textureSample(detailTex, detailTexSampler, kP.xz * 0.0041);
+  let kNr = normalize(normalW);
+${ROCK_WGSL}
   let kGrassW = clamp(1.0 - kSp.g - kSp.b - kSp.a, 0.0, 1.0);
-  let kRock = kSp.g * (0.6 + kD.b * 0.8);
   let kSand = kSp.b * (0.7 + kD.r * 0.6);
   let kDirt = kSp.a * (0.5 + kD.g * 1.0);
   let kGrass = kGrassW * (0.7 + kD2.g * 0.6);
@@ -77,20 +77,14 @@ const WGSL_FRAGMENT = /* wgsl */ `
   kGrassCol = mix(kGrassCol, uniforms.grassDry, smoothstep(0.55, 0.85, kD2.a) * 0.6);
   kGrassCol = kGrassCol * (0.9 + 0.2 * kD.r);
   kGrassCol = mix(kGrassCol, uniforms.forestCol * (0.8 + 0.45 * kD.g), kSp.r);
-  let kNr = normalize(normalW);
-  var kSide = fragmentInputs.vPositionW.x;
-  if (abs(kNr.x) > abs(kNr.z)) { kSide = fragmentInputs.vPositionW.z; }
-  let kR = textureSample(detailTex, detailTexSampler, vec2f(kSide * 0.045, fragmentInputs.vPositionW.y * 0.09));
-  let kSy = fragmentInputs.vPositionW.y * 0.55 + kR.a * 0.6 + kR.r * 0.25;
-  let kStr = fract(kSy);
-  let kSeam = mix(1.0, smoothstep(0.0, 0.06, kStr) * (1.0 - smoothstep(0.93, 1.0, kStr)), smoothstep(0.25, 0.55, 1.0 - kNr.y) * (1.0 - smoothstep(90.0, 260.0, distance(fragmentInputs.vPositionW, scene.vEyePosition.xyz))));
-  let kTone = fract(floor(kSy) * 0.618);
-  var kRockCol = uniforms.rockCol * (0.8 + 0.3 * kTone + 0.12 * kR.g) * mix(0.66, 1.0, kSeam);
-  kRockCol = mix(kRockCol, uniforms.grassA * (0.9 + 0.2 * kD.r), smoothstep(0.78, 0.9, kNr.y) * 0.8);
   let kSandCol = uniforms.sandCol * (0.88 + 0.2 * kD.r);
   let kDirtCol = uniforms.dirtCol * (0.75 + 0.4 * kD.g) * (0.9 + 0.2 * kD2.r);
-  let kSum = max(kGrass + kRock + kSand + kDirt, 0.0001);
-  var kCol = (kGrassCol * kGrass + kRockCol * kRock + kSandCol * kSand + kDirtCol * kDirt) / kSum;
+  let kSum = max(kGrass + kSand + kDirt, 0.0001);
+  let kSoft = (kGrassCol * kGrass + kSandCol * kSand + kDirtCol * kDirt) / kSum;
+  let kRockA = smoothstep(0.42, 0.56, kSp.g + (kRockH - 0.5) * 0.45 + (kD.b - 0.5) * 0.12);
+  var kCol = mix(kSoft, kRockCol, kRockA);
+  normalW = normalize(mix(kNr, kRockN, kRockA));
+  kCol = mix(kCol, uniforms.snowCol * (0.94 + 0.08 * kD.r), kSnow * max(kRockA, smoothstep(0.6, 0.8, kNr.y)));
   kCol = kCol * mix(1.0, 0.78, smoothstep(0.35, 0.9, kSp.b) * 0.5);
   surfaceAlbedo = kCol;
 `;
@@ -101,6 +95,8 @@ interface Chunk {
   cx: number;
   cz: number;
   lod: number;
+  /** LOD distance multiplier: craggy mountain chunks keep their detail further out. */
+  detail: number;
   meshes: (Mesh | null)[];
   pending: number;
 }
@@ -133,12 +129,13 @@ export class Terrain {
     setToon(mat, { rim: 0 });
     const plugin = createShaderPlugin(mat, {
       name: 'TerrainSplat',
-      uniforms: { grassA: 'vec3', grassB: 'vec3', grassDry: 'vec3', forestCol: 'vec3', rockCol: 'vec3', sandCol: 'vec3', dirtCol: 'vec3' },
+      uniforms: { grassA: 'vec3', grassB: 'vec3', grassDry: 'vec3', forestCol: 'vec3', sandCol: 'vec3', dirtCol: 'vec3', ...ROCK_UNIFORMS },
       samplers: ['splatMap', 'detailTex'],
-      glsl: { fragment: { CUSTOM_FRAGMENT_BEFORE_LIGHTS: GLSL_FRAGMENT } },
-      wgsl: { fragment: { CUSTOM_FRAGMENT_BEFORE_LIGHTS: WGSL_FRAGMENT } },
+      glsl: { fragment: { CUSTOM_FRAGMENT_DEFINITIONS: ROCK_GLSL_DEFS, CUSTOM_FRAGMENT_BEFORE_LIGHTS: GLSL_FRAGMENT } },
+      wgsl: { fragment: { CUSTOM_FRAGMENT_DEFINITIONS: ROCK_WGSL_DEFS, CUSTOM_FRAGMENT_BEFORE_LIGHTS: WGSL_FRAGMENT } },
     });
-    Object.assign(plugin.values, GROUND);
+    Object.assign(plugin.values, GROUND, ROCK_DEFAULTS, ROCK_COLOURS);
+    delete plugin.values.rockCol; // the rock palette lives in ROCK_COLOURS now
     plugin.textures.splatMap = this.splatTexture;
     plugin.textures.detailTex = this.detailTexture;
 
@@ -150,6 +147,7 @@ export class Terrain {
           cx: -WORLD_HALF + (ci + 0.5) * CHUNK,
           cz: -WORLD_HALF + (cj + 0.5) * CHUNK,
           lod: -1,
+          detail: this.reliefDetail(ci, cj),
           meshes: [null, null, null, null],
           pending: -1,
         });
@@ -157,8 +155,23 @@ export class Terrain {
     }
   }
 
+  /** 1 for gentle ground, up to 1.8 for chunks with a lot of relief (cliffs, peaks). */
+  private reliefDetail(ci: number, cj: number) {
+    const hm = this.data.heightmap;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let j = 0; j <= CHUNK; j += 8) {
+      for (let i = 0; i <= CHUNK; i += 8) {
+        const h = hm.at(Math.round((ci * CHUNK + i) / hm.step), Math.round((cj * CHUNK + j) / hm.step));
+        if (h < lo) lo = h;
+        if (h > hi) hi = h;
+      }
+    }
+    return 1 + 0.8 * Math.min(1, Math.max(0, (hi - lo - 25) / 60));
+  }
+
   private desiredLod(c: Chunk, cam: Vector3) {
-    const d = Math.hypot(c.cx - cam.x, c.cz - cam.z) / this.lodScale;
+    const d = Math.hypot(c.cx - cam.x, c.cz - cam.z) / (this.lodScale * c.detail);
     return d < 140 ? 0 : d < 260 ? 1 : d < 460 ? 2 : 3;
   }
 

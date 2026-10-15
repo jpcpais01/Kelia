@@ -40,7 +40,8 @@ export class Atmosphere {
   /** Visual time of day in [0,1). */
   dayTime = 0.4;
   cloudCover = 0.42;
-  private time = 0;
+  /** Seconds the sky has animated (cloud drift), shared with the water's reflections. */
+  time = 0;
   fogScale = 1;
   /** Extra exposure multiplier (UI fades, creator lighting). */
   exposureBias = 1;
