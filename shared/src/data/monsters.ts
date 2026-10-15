@@ -1,6 +1,7 @@
 // Enemies of the valley: risen skeletons in four kinds and the Bonelord who
 // rules the ruins. Shared by the server (AI, damage, rewards) and the client
 // (models, animation, telegraphs).
+import type { Rarity } from './items';
 
 export type MonsterId = 'minion' | 'rogue' | 'mage' | 'warrior' | 'king';
 
@@ -37,6 +38,14 @@ export interface LootEntry {
   qty?: [number, number];
 }
 
+/** Chance to drop a piece of gear for the killer's class, and of which rarity. */
+export interface GearDrop {
+  chance: number;
+  rarity: Rarity[];
+  /** Chance to drop an outfit as well. */
+  outfit: number;
+}
+
 export interface MonsterDef {
   id: MonsterId;
   name: string;
@@ -64,6 +73,7 @@ export interface MonsterDef {
   /** Seconds before it rises again. */
   respawn: number;
   loot: LootEntry[];
+  gear: GearDrop;
   boss?: boolean;
 }
 
@@ -90,6 +100,7 @@ export const MONSTERS: Record<MonsterId, MonsterDef> = {
     xp: 24,
     respawn: 25,
     loot: [{ id: 'potion_small', chance: 0.22 }],
+    gear: { chance: 0.07, rarity: ['uncommon'], outfit: 0.03 },
   },
   rogue: {
     id: 'rogue',
@@ -113,6 +124,7 @@ export const MONSTERS: Record<MonsterId, MonsterDef> = {
     xp: 40,
     respawn: 30,
     loot: [{ id: 'potion_small', chance: 0.3 }],
+    gear: { chance: 0.11, rarity: ['uncommon', 'uncommon', 'rare'], outfit: 0.05 },
   },
   mage: {
     id: 'mage',
@@ -137,6 +149,7 @@ export const MONSTERS: Record<MonsterId, MonsterDef> = {
     xp: 48,
     respawn: 30,
     loot: [{ id: 'potion_small', chance: 0.35 }],
+    gear: { chance: 0.13, rarity: ['uncommon', 'rare'], outfit: 0.06 },
   },
   warrior: {
     id: 'warrior',
@@ -161,6 +174,7 @@ export const MONSTERS: Record<MonsterId, MonsterDef> = {
     xp: 85,
     respawn: 45,
     loot: [{ id: 'potion_small', chance: 0.5 }, { id: 'potion_large', chance: 0.15 }],
+    gear: { chance: 0.2, rarity: ['rare'], outfit: 0.08 },
   },
   king: {
     id: 'king',
@@ -186,6 +200,7 @@ export const MONSTERS: Record<MonsterId, MonsterDef> = {
     xp: 600,
     respawn: 180,
     loot: [{ id: 'potion_large', chance: 1, qty: [2, 3] }],
+    gear: { chance: 1, rarity: ['epic'], outfit: 0.5 },
     boss: true,
   },
 };

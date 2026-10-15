@@ -9,8 +9,13 @@ import {
   HIT_DOT,
   HIT_HEAL,
   HIT_PLAYER,
+  INVENTORY_SIZE,
   ITEMS,
   MAX_LEVEL,
+  OUTFIT_ITEM_IDS,
+  canEquip,
+  gearPool,
+  outfitIndex,
   MONSTERS,
   MONSTER_IDS,
   MONSTER_ID_BASE,
@@ -45,7 +50,7 @@ export interface Fighter {
   z: number;
   yaw: number;
   stats: Stats;
-  character: { name: string; cls: keyof typeof CLASSES; level: number; xp: number; hp: number; inventory: { id: string; qty: number }[]; equipment: { weapon: string | null; offhand: string | null; outfit: string | null } };
+  character: { name: string; cls: keyof typeof CLASSES; level: number; xp: number; hp: number; appearance: { outfit: number }; inventory: { id: string; qty: number }[]; equipment: { weapon: string | null; offhand: string | null; outfit: string | null } };
   combat: PlayerCombat;
   send(msg: object): void;
 }
@@ -64,6 +69,7 @@ export class PlayerCombat {
   dirty = false;
   gain = 0;
   invDirty = false;
+  equipDirty = false;
   regenAcc = 0;
 }
 
@@ -320,8 +326,11 @@ export class Combat {
       for (const l of m.def.loot) {
         if (Math.random() > l.chance) continue;
         const qty = l.qty ? Math.round(rand(l.qty[0], l.qty[1])) : 1;
-        this.addItem(top, l.id, qty);
-        top.send({ t: 'loot', id: l.id, qty });
+        if (this.addItem(top, l.id, qty)) top.send({ t: 'loot', id: l.id, qty });
+      }
+      for (const id of this.rollGear(top, m.def.gear)) {
+        if (this.addItem(top, id, 1)) top.send({ t: 'loot', id, qty: 1 });
+        else top.send({ t: 'chat', id: 0, name: '', text: `Your bags are full: ${ITEMS[id].name} was left behind.`, sys: true });
       }
       if (m.def.boss) this.host.broadcast({ t: 'chat', id: 0, name: '', text: `${top.character.name} has defeated ${m.def.name}!`, sys: true });
     }
@@ -348,9 +357,26 @@ export class Combat {
     }
   }
 
-  addItem(p: Fighter, id: string, qty: number) {
+  /** Gear for the killer's class that they don't already own, if the dice allow. */
+  private rollGear(p: Fighter, gear: MonsterDef['gear']): string[] {
+    const owned = new Set([...p.character.inventory.map((s) => s.id), p.character.equipment.weapon, p.character.equipment.offhand, p.character.equipment.outfit]);
+    const out: string[] = [];
+    if (Math.random() < gear.chance) {
+      const rarity = gear.rarity[Math.floor(Math.random() * gear.rarity.length)];
+      const pool = gearPool(p.character.cls, rarity).filter((i) => !owned.has(i.id));
+      if (pool.length) out.push(pool[Math.floor(Math.random() * pool.length)].id);
+    }
+    if (Math.random() < gear.outfit) {
+      const pool = OUTFIT_ITEM_IDS.filter((id) => !owned.has(id));
+      if (pool.length) out.push(pool[Math.floor(Math.random() * pool.length)]);
+    }
+    return out;
+  }
+
+  /** Returns false when nothing fit in the bags. */
+  addItem(p: Fighter, id: string, qty: number): boolean {
     const def = ITEMS[id];
-    if (!def) return;
+    if (!def) return false;
     const inv = p.character.inventory;
     const stack = def.stack ?? 1;
     let left = qty;
@@ -361,13 +387,59 @@ export class Combat {
       s.qty += add;
       left -= add;
     }
-    while (left > 0 && inv.length < 24) {
+    while (left > 0 && inv.length < INVENTORY_SIZE) {
       const add = Math.min(left, stack);
       inv.push({ id, qty: add });
       left -= add;
     }
     p.combat.invDirty = true;
     p.combat.dirty = true;
+    return left < qty;
+  }
+
+  /** Equip the item in inventory slot i (potions are drunk instead). */
+  equip(p: Fighter, i: number) {
+    const c = p.character;
+    const slot = c.inventory[i];
+    const def = slot ? ITEMS[slot.id] : undefined;
+    if (!slot || !def || p.combat.dead) return;
+    if (def.kind === 'consumable') return this.usePotion(p, slot.id);
+    if (!canEquip(c.cls, def)) return;
+    const key = def.kind === 'weapon' ? 'weapon' : def.kind === 'offhand' ? 'offhand' : 'outfit';
+    const prev = c.equipment[key];
+    c.equipment[key] = def.id;
+    if (prev) c.inventory[i] = { id: prev, qty: 1 };
+    else c.inventory.splice(i, 1);
+    this.gearChanged(p);
+  }
+
+  unequip(p: Fighter, key: 'offhand' | 'outfit') {
+    const c = p.character;
+    const cur = c.equipment[key];
+    if (!cur || p.combat.dead || c.inventory.length >= INVENTORY_SIZE) return;
+    c.equipment[key] = null;
+    c.inventory.push({ id: cur, qty: 1 });
+    this.gearChanged(p);
+  }
+
+  discard(p: Fighter, i: number) {
+    const c = p.character;
+    if (!c.inventory[i]) return;
+    c.inventory.splice(i, 1);
+    p.combat.invDirty = true;
+    p.combat.dirty = true;
+  }
+
+  private gearChanged(p: Fighter) {
+    const c = p.character;
+    const before = p.stats.maxHp;
+    p.stats = statsFor(c.cls, c.level, c.equipment);
+    // keep the same fraction of health when max health changes
+    if (p.stats.maxHp !== before) c.hp = Math.max(1, Math.round((c.hp / before) * p.stats.maxHp));
+    p.combat.invDirty = true;
+    p.combat.dirty = true;
+    p.combat.equipDirty = true;
+    this.host.broadcast({ t: 'look', id: p.id, weapon: c.equipment.weapon, offhand: c.equipment.offhand, outfit: outfitIndex(c.equipment, c.appearance.outfit) });
   }
 
   usePotion(p: Fighter, id: string) {
@@ -487,10 +559,12 @@ export class Combat {
             level: c.level,
             xp: c.xp,
             ...(pc.invDirty ? { inventory: c.inventory } : {}),
+            ...(pc.equipDirty ? { equipment: c.equipment } : {}),
             ...(pc.gain ? { gain: pc.gain } : {}),
           },
         });
         pc.invDirty = false;
+        pc.equipDirty = false;
         pc.gain = 0;
       }
     }

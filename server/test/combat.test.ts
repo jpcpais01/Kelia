@@ -142,3 +142,35 @@ test('ranger arrows travel and hit at range', () => {
   run(1);
   assert.ok(minion.hp < minion.def.hp);
 });
+
+test('equipping swaps gear, changes stats and tells everyone', () => {
+  const { combat, p, run, broadcasts } = setup();
+  const power = p.stats.power;
+  combat.addItem(p, 'sword_ember', 1);
+  combat.addItem(p, 'bow_hunter', 1);
+  const i = p.character.inventory.findIndex((s) => s.id === 'sword_ember');
+  combat.equip(p, i);
+  assert.equal(p.character.equipment.weapon, 'sword_ember');
+  assert.ok(p.character.inventory.some((s) => s.id === 'sword_iron'), 'old sword back in the bag');
+  assert.ok(p.stats.power > power);
+  assert.ok(broadcasts.some((b) => b.t === 'look'));
+  // a vanguard can't use a bow
+  combat.equip(p, p.character.inventory.findIndex((s) => s.id === 'bow_hunter'));
+  assert.equal(p.character.equipment.weapon, 'sword_ember');
+  combat.unequip(p, 'offhand');
+  assert.equal(p.character.equipment.offhand, null);
+  run(0.1);
+});
+
+test('the Bonelord always drops gear for the killer', () => {
+  const { combat, p, run } = setup('ranger');
+  const king = combat.monsters.find((m) => m.def.boss)!;
+  king.x = king.homeX = 0;
+  king.z = king.homeZ = 10;
+  king.state = MonsterState.Idle;
+  king.hp = 1;
+  combat.act(p, 'c', 0, 0, 0, 10);
+  run(1);
+  assert.equal(king.state, MonsterState.Dead);
+  assert.ok(p.character.inventory.some((s) => s.id === 'bow_starfall'));
+});

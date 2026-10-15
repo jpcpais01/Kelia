@@ -3,7 +3,7 @@
 import type { Appearance } from './data/appearance';
 import type { ClassId } from './data/classes';
 import type { CharacterData, PublicCharacter } from './character';
-import type { InventorySlot } from './data/items';
+import type { Equipment, InventorySlot } from './data/items';
 
 /** Locomotion state a client reports for itself (drives remote animation). */
 export enum MoveState {
@@ -33,7 +33,11 @@ export type ClientMessage =
    */
   | { t: 'act'; k: ActKind; i: number; yaw: number; tx: number; tz: number }
   | { t: 'use'; id: string }
-  | { t: 'respawn' };
+  | { t: 'respawn' }
+  /** Equip (or drink) the item in inventory slot i. */
+  | { t: 'equip'; i: number }
+  | { t: 'unequip'; slot: 'offhand' | 'outfit' }
+  | { t: 'discard'; i: number };
 
 export type ActKind = 'c' | 's' | 'd';
 
@@ -71,6 +75,7 @@ export interface SelfState {
   level: number;
   xp: number;
   inventory?: InventorySlot[];
+  equipment?: Equipment;
   /** XP just earned (for the "+24 XP" toast). */
   gain?: number;
 }
@@ -92,6 +97,8 @@ export type ServerMessage =
   | { t: 'lvl'; id: number; level: number; maxHp: number }
   | { t: 'loot'; id: string; qty: number }
   | { t: 'kill'; id: number; xp: number }
+  /** A player's visible gear changed. */
+  | { t: 'look'; id: number; weapon: string | null; offhand: string | null; outfit: number }
   | { t: 'join'; p: PublicCharacter }
   | { t: 'leave'; id: number }
   | { t: 'chat'; id: number; name: string; text: string; sys?: boolean }

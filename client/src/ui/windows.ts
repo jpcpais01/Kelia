@@ -4,17 +4,26 @@ import { groupedNotes } from '../data/patchnotes';
 import { h, icon, mount, unmount } from './dom';
 
 let open: HTMLElement | null = null;
+let closeHooks: (() => void)[] = [];
 
 export function closeWindow() {
   if (open) unmount(open, 200);
   open = null;
+  const hooks = closeHooks;
+  closeHooks = [];
+  for (const f of hooks) f();
+}
+
+/** Run `fn` once when the current window closes. */
+export function onWindowClose(fn: () => void) {
+  closeHooks.push(fn);
 }
 
 export function isWindowOpen() {
   return !!open;
 }
 
-function windowFrame(title: string, ...body: HTMLElement[]) {
+export function windowFrame(title: string, ...body: HTMLElement[]) {
   closeWindow();
   const wrap = h(
     'div',
@@ -46,6 +55,7 @@ export function openHelp() {
       ...row(['1', '2', '3'], 'Class skills (unlock at levels 1, 3 and 5)'),
       ...row(['Q'], 'Dodge (roll, vault or blink)'),
       ...row(['R'], 'Drink a healing potion'),
+      ...row(['I'], 'Inventory and equipment'),
       ...row(['Esc'], 'Free the mouse / close windows'),
       ...row(['Drag'], 'Turn the camera while the mouse is free'),
       ...row(['Wheel'], 'Zoom'),

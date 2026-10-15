@@ -10,14 +10,20 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T04:30:00Z',
+    title: 'Spoils of war',
+    lines: [
+      'Enemies now drop weapons, shields and outfits for your class, from uncommon to epic. The Bonelord always drops an epic weapon.',
+      'Press I to open your inventory: equip gear, compare stats, drink potions and check your character’s stats.',
+    ],
+  },
+  {
     at: '2026-10-15T04:00:00Z',
     title: 'The dead walk',
     lines: [
-      'Combat is here: each fighting style has a three-hit combo, three skills that unlock at levels 1, 3 and 5, a dodge (roll, vault or blink) and passives at levels 2, 4, 6 and 8.',
-      'Risen skeletons now roam the valley: Restless Bones in the meadows, Hollow Stalkers at the forest edge, and Bone Hexers and Grave Knights in the Ruins of Old Kelia.',
-      'Bonelord Varrok waits in the ruined hall. Watch the ground for red circles and dodge out of them. Bring friends.',
-      'Earn XP for every kill (everyone who helps gets the full reward) and climb to level 10. Enemies can drop healing potions; press R to drink one.',
-      'If you fall, you can return to Hearthmere at full health.',
+      'Combat is here: every fighting style has a three-hit combo, three skills (unlocking at levels 1, 3 and 5), a dodge and passives.',
+      'Risen skeletons roam the meadows, the forest edge and the ruins, and Bonelord Varrok waits in the ruined hall. Watch for red circles on the ground.',
+      'Earn XP from every kill (everyone who helps gets the full reward), climb to level 10, and return to Hearthmere if you fall.',
     ],
   },
   {
