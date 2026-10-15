@@ -582,6 +582,7 @@ export class Game {
     if (input.pressedKey('Escape') && isWindowOpen()) closeWindow();
     if (input.pressedKey('KeyI') || input.pressedKey('KeyB')) this.toggleInventory();
     if (input.pressedKey('KeyM')) this.toggleMap();
+    if (input.pressedKey('KeyV')) this.follow.toggleFrontView();
     if (input.pressedKey('KeyN')) {
       this.settings = { ...this.settings, showNames: !this.settings.showNames };
       saveSettings(this.settings);
@@ -598,7 +599,8 @@ export class Game {
     perf.end('combat');
     perf.begin('player');
     player.update(dt, input, this.follow);
-    player.model.lookTarget = this.combat?.dead ? null : this.camLookPoint();
+    // In front view the hero looks into the lens instead of where the camera points.
+    player.model.lookTarget = this.combat?.dead ? null : this.follow.frontAmount > 0.5 ? this.world.camera.position : this.camLookPoint();
     perf.end('player');
 
     const now = this.net.serverNow();
