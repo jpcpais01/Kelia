@@ -28,6 +28,11 @@ export class RemotePlayer {
   private initialized = false;
   private lastState = MoveState.Idle;
   dead = false;
+  /** Vertical speed and glider bank, smoothed from the interpolated path. */
+  private vy = 0;
+  private bank = 0;
+  /** Their glider opened or folded (for the puff of air). */
+  onGlide: ((open: boolean) => void) | null = null;
 
   constructor(public info: PublicCharacter, readonly model: CharacterModel) {}
 
@@ -78,6 +83,7 @@ export class RemotePlayer {
       const k = 1 - Math.exp(-dt * 12);
       this.vel.x += ((this.pos.x - this.prevPos.x) / dt - this.vel.x) * k;
       this.vel.z += ((this.pos.z - this.prevPos.z) / dt - this.vel.z) * k;
+      this.vy += ((this.pos.y - this.prevPos.y) / dt - this.vy) * (1 - Math.exp(-dt * 4));
     }
     const turnRate = wrap(this.yaw - this.prevYaw) / Math.max(dt, 1e-4);
     this.model.root.position.copyFrom(this.pos);
@@ -90,11 +96,16 @@ export class RemotePlayer {
       if (this.lastState === MoveState.Dead) an.stopAction();
       if (this.state === MoveState.Dead) this.dead = true;
       else if (this.lastState === MoveState.Dead) this.dead = false;
-      if (this.lastState === MoveState.Air && this.state !== MoveState.Air) an.play('Jump_Land', { speed: 1.4, upper: false, fadeIn: 0.05 });
+      const aloft = (st: MoveState) => st === MoveState.Air || st === MoveState.Glide;
+      if (aloft(this.lastState) && !aloft(this.state)) an.play('Jump_Land', { speed: 1.4, upper: false, fadeIn: 0.05 });
+      if ((this.state === MoveState.Glide) !== (this.lastState === MoveState.Glide)) this.onGlide?.(this.state === MoveState.Glide);
       if (this.lastState === MoveState.Sit) an.stopAction();
       this.lastState = this.state;
     }
-    this.model.update(dt, this.vel, turnRate, this.state === MoveState.Air);
+    const gliding = this.state === MoveState.Glide;
+    this.bank += ((gliding ? Math.max(-0.6, Math.min(0.6, turnRate * 0.32)) : 0) - this.bank) * (1 - Math.exp(-dt * 3));
+    this.model.glide(gliding, this.bank, gliding && this.vy < -5);
+    this.model.update(dt, this.vel, turnRate, this.state === MoveState.Air || gliding);
   }
 
   emote(e: string) {

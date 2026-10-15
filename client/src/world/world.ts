@@ -14,6 +14,7 @@ import { Foliage } from './foliage';
 import { Grass } from './grass';
 import { Terrain } from './terrain';
 import { Water } from './water';
+import { Updrafts } from './updrafts';
 import { Mountains } from './mountains';
 import type { TerrainData } from './terrainData';
 import { registerToon } from './toon';
@@ -30,6 +31,7 @@ export class World {
   readonly grass: Grass;
   readonly foliage: Foliage;
   readonly props: Props;
+  readonly updrafts: Updrafts;
   ambient: Ambient | null = null;
   secrets: Secrets | null = null;
   quality!: QualitySettings;
@@ -68,6 +70,7 @@ export class World {
     this.grass = perf.scope('grass', () => new Grass(scene, this.terrain.heightTexture, this.terrain.splatTexture, this.terrain.detailTexture, this.atmosphere));
     this.foliage = perf.scope('foliage', () => new Foliage(scene, data.heightmap, this.atmosphere));
     this.props = perf.scope('props', () => new Props(scene, data.heightmap, this.atmosphere, this.foliage));
+    this.updrafts = perf.scope('ambient', () => new Updrafts(scene, data.heightmap));
     this.applyQuality(quality);
     perf.scope('terrain', () => this.terrain.buildInitial(this.camera.position));
   }
@@ -164,6 +167,7 @@ export class World {
     perf.end('props');
     perf.begin('ambient');
     this.ambient?.update(dt, cam);
+    this.updrafts.update(this.time, cam);
     perf.end('ambient');
     perf.begin('secrets');
     this.secrets?.update(this.time);

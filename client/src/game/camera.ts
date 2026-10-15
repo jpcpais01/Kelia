@@ -1,6 +1,7 @@
 // Third-person follow camera: smooth orbit, terrain and obstacle avoidance,
-// gentle look-ahead, sprint FOV kick, trauma-based screen shake and a
-// directional punch (a springy nudge along a blow, with a brief FOV squeeze).
+// gentle look-ahead, sprint FOV kick, trauma-based screen shake, a
+// directional punch (a springy nudge along a blow, with a brief FOV squeeze),
+// and a wider, higher framing while gliding (wider still, and buffeted, in a dive).
 import { Vector3, type UniversalCamera } from '@babylonjs/core';
 import { Simplex2 } from '@kelia/shared';
 
@@ -23,6 +24,9 @@ export class FollowCamera {
   private trauma = 0;
   private t = 0;
   private fovKick = 0;
+  /** Eased 0..1 gliding and diving amounts. */
+  private glideK = 0;
+  private diveK = 0;
   /** Punch: camera offset (metres) and its velocity, and the FOV squeeze (degrees). */
   private kick = new Vector3();
   private kickV = new Vector3();
@@ -90,8 +94,12 @@ export class FollowCamera {
     this.initialized = true;
   }
 
-  update(dt: number, target: Vector3, velocity: Vector3, sprinting: boolean) {
+  update(dt: number, target: Vector3, velocity: Vector3, sprinting: boolean, gliding = false, diving = false) {
     this.t += dt;
+    this.glideK += ((gliding ? 1 : 0) - this.glideK) * (1 - Math.exp(-dt * 1.8));
+    this.diveK += ((diving ? 1 : 0) - this.diveK) * (1 - Math.exp(-dt * 2.5));
+    // the air buffets a dive
+    if (diving) this.trauma = Math.max(this.trauma, 0.22);
     if (!this.initialized) this.snap(target);
     // Follow with a little lag vertically (smooths jumps and steps) and less horizontally.
     const kh = 1 - Math.exp(-dt * 14);
@@ -100,14 +108,16 @@ export class FollowCamera {
     this.focus.z += (target.z - this.focus.z) * kh;
     this.focus.y += (target.y - this.focus.y) * kv;
 
-    this.distance += (this.targetDistance - this.distance) * (1 - Math.exp(-dt * 8));
+    // pull back to show the wings and the drop below
+    const want = this.targetDistance * (1 + 0.25 * this.glideK) + 1.4 * this.glideK + 1.8 * this.diveK;
+    this.distance += (want - this.distance) * (1 - Math.exp(-dt * 8));
     // Front view: a critically damped glide of the orbit half way round, settling
     // a touch closer, lower and centred so the face fills the frame.
     this.front += ((this.frontView ? 1 : 0) - this.front) * (1 - Math.exp(-dt * 6));
     if (Math.abs(this.front - (this.frontView ? 1 : 0)) < 1e-3) this.front = this.frontView ? 1 : 0;
     const f = this.front * this.front * (3 - 2 * this.front);
     const yaw = this.yaw + Math.PI * f;
-    const pitch = this.pitch + (Math.min(this.pitch, 0.18) - this.pitch) * f;
+    const pitch = this.pitch + 0.07 * this.glideK + (Math.min(this.pitch, 0.18) - this.pitch) * f;
     const dist = this.distance + (Math.min(this.distance, 4.2) - this.distance) * f;
     const cp = Math.cos(pitch);
     const dir = new Vector3(-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp);
@@ -159,6 +169,6 @@ export class FollowCamera {
     this.camera.position.copyFrom(pos);
     this.camera.setTarget(look);
     this.fovKick += ((sprinting ? 1 : 0) - this.fovKick) * (1 - Math.exp(-dt * 4));
-    this.camera.fov = ((this.settings.fov + this.fovKick * 6 - this.squeeze) * Math.PI) / 180;
+    this.camera.fov = ((this.settings.fov + this.fovKick * 6 + this.glideK * 4 + this.diveK * 9 - this.squeeze) * Math.PI) / 180;
   }
 }

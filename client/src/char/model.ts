@@ -1,9 +1,12 @@
 // A player (or NPC) character assembled from modular KayKit parts, recoloured
 // to its appearance, animated with blended locomotion, and finished with
-// two-bone foot IK on uneven ground, head look-at and turn lean, and a
+// two-bone foot IK on uneven ground, head look-at and turn lean, a
 // spring-driven body layer that gives attacks their weight (coil, lean into
-// the blow, plant the hips) and makes hits land (flinch away from the blow).
+// the blow, plant the hips) and makes hits land (flinch away from the blow),
+// and a glider: the body hangs from its handles (arms reaching up by IK,
+// legs trailing), swinging under it as it banks.
 import {
+  Matrix,
   Mesh,
   Node,
   PBRMaterial,
@@ -19,6 +22,7 @@ import {
 } from '@babylonjs/core';
 import {
   BODY_TYPES,
+  CLASSES,
   EYE_COLORS,
   FACES,
   HAIR_COLORS,
@@ -32,6 +36,7 @@ import {
 import { perf } from '../core/perf';
 import { Animator, measureStride } from './animator';
 import { createBow } from './bow';
+import { Glider, type GliderFit } from './glider';
 import { mergeSkinnedParts } from './mergeSkin';
 import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
@@ -155,6 +160,23 @@ export class CharacterModel {
   ikEnabled = true;
   visible = true;
   meshes: AbstractMesh[] = [];
+  /** Gliding: the glider (made on first use), where it sits, and the pose. */
+  private glider: Glider | null = null;
+  private gliderMount: TransformNode | null = null;
+  private gripPivot = new Vector3();
+  private glideOn = false;
+  private glideBank = 0;
+  private glideDive = 0;
+  /** How far into the hanging pose the body is (follows the glider's opening). */
+  private glideW = 0;
+  /** The body's own swing under the glider (pendulum lag behind the bank). */
+  private hang = spring();
+  private glidePitch = 0;
+  private shadowAdd: ((m: AbstractMesh) => void) | null = null;
+  /** Seconds of glide, for the legs' slow kick. */
+  private glideT = 0;
+  /** Airspeed for the canvas ripple and contrails. */
+  private airspeed = 0;
 
   constructor(private scene: Scene, private lib: RigLibrary, look: Look, name = 'character') {
     this.root = new TransformNode(name, scene);
@@ -169,6 +191,7 @@ export class CharacterModel {
   setLook(look: Look, keepAction = false) {
     const prevAction = keepAction ? this.animator?.currentAction : null;
     this.disposeModel();
+    this.disposeGlider();
     this.look = look;
     const { meshes: wanted, bow } = partsFor(look);
     const entries = this.lib.container.instantiateModelsToScene((n) => n, true, {
@@ -394,7 +417,23 @@ export class CharacterModel {
   }
 
   setShadowCaster(add: (m: AbstractMesh) => void) {
+    this.shadowAdd = add;
     for (const m of this.meshes) add(m);
+    this.glider?.addShadows(add);
+  }
+
+  /**
+   * Open or fold the glider. `bank` rolls it into turns (radians, right wing
+   * down positive); `dive` tips it nose down.
+   */
+  glide(open: boolean, bank: number, dive: boolean) {
+    this.glideOn = open;
+    this.glideBank = bank;
+    this.glideDive = dive ? 1 : 0;
+  }
+
+  get gliding() {
+    return this.glideOn;
   }
 
   node(name: string) {
@@ -411,7 +450,7 @@ export class CharacterModel {
     const s = Math.sin(yaw);
     const localX = vel.x * c - vel.z * s;
     const localZ = vel.x * s + vel.z * c;
-    this.animator.airborne = airborne;
+    this.animator.airborne = airborne || this.glideOn;
     this.animator.setMotion(localX, localZ, dt);
     this.animator.update(dt);
     const speed = Math.hypot(vel.x, vel.z);
@@ -419,6 +458,8 @@ export class CharacterModel {
     this.lean += (targetLean - this.lean) * (1 - Math.exp(-dt * 6));
     this.body.rotation.z = this.lean;
     this.dt = dt;
+    this.airspeed = speed;
+    this.updateGlide(dt);
     this.updateBodyLayer(dt);
     this.swayCape(dt, Math.max(0, localZ), Math.abs(localX));
   }
@@ -575,10 +616,17 @@ export class CharacterModel {
   private postAnimate() {
     // (bones are only reset by playing animations: layering on a frozen pose would accumulate)
     if (!this.visible || !this.entries || !this.scene.animationsEnabled) return;
+    if (this.glideOn && !this.glider) this.makeGlider();
     this.applyBodyLayer();
     this.applyLookAt();
-    if (this.ikEnabled && this.groundAt) this.applyFootIK();
+    if (this.glideW > 0.001) this.applyGlidePose();
+    if (this.ikEnabled && this.groundAt && this.glideW < 0.5) this.applyFootIK();
     this.updateFace();
+    if (this.glider) {
+      const cam = this.scene.activeCamera;
+      const emit = Math.max(0, Math.min(1, (this.airspeed - 4.5) / 4)) * Math.max(0, Math.min(1, this.glider.open));
+      if (cam) this.glider.updateTrails(this.dt, emit, cam.globalPosition);
+    }
     this.time += this.dt;
     for (const rc of this.glowRecolors) rc.setTime(this.time);
     const cam = this.scene.activeCamera;
@@ -743,6 +791,143 @@ export class CharacterModel {
     aimBone(lower, foot, target);
   }
 
+  // ------------------------------------------------------------------ gliding
+
+  /**
+   * Fit a glider to this body (from the current pose) and make it: the wing
+   * roots clear of the head, the grips where the arms reach comfortably up
+   * and out, the crossbar arcing behind the head.
+   */
+  private makeGlider() {
+    const head = this.nodes.get('head');
+    const arm = ['upperarm.r', 'lowerarm.r', 'wrist.r'].map((n) => this.nodes.get(n));
+    const armL = this.nodes.get('upperarm.l');
+    if (!head || !armL || arm.some((n) => !n)) return;
+    const inv = this.root.computeWorldMatrix(true).clone().invert();
+    const local = (n: TransformNode) => {
+      const chain: TransformNode[] = [];
+      for (let p: Node | null = n; p; p = p.parent) if (p instanceof TransformNode) chain.unshift(p);
+      for (const c of chain) c.computeWorldMatrix(true);
+      return Vector3.TransformCoordinates(n.getAbsolutePosition(), inv);
+    };
+    const [sR, eR, wR] = arm.map((n) => local(n!));
+    const sL = local(armL);
+    const reach = (Vector3.Distance(sR, eR) + Vector3.Distance(eR, wR)) * 0.92;
+    const sx = (Math.abs(sR.x) + Math.abs(sL.x)) / 2;
+    const sy = (sR.y + sL.y) / 2;
+    const sz = (sR.z + sL.z) / 2;
+    // head sphere (centre and radius) in root space
+    local(head);
+    const hw = head.getWorldMatrix();
+    const hc = Vector3.TransformCoordinates(Vector3.TransformCoordinates(this.headLocal, hw), inv);
+    const hr = this.headRadius > 0 ? this.headRadius * Vector3.TransformNormal(Vector3.Right(), hw).length() : 0.4;
+    // grips up and out at the end of a comfortable reach; handles rise from there past the head
+    const gx = sx + reach * 0.74;
+    const gy = sy + reach * 0.67;
+    this.gripPivot.set(0, gy, sz + 0.05);
+    const fit: GliderFit = {
+      halfGap: Math.max(hr * 1.08 + 0.05, gx),
+      handle: Math.max(0.32, hc.y + 0.08 - gy),
+      back: Math.max(0.2, this.gripPivot.z - hc.z + hr + 0.1),
+    };
+    const g = new Glider(this.scene, fit, CLASSES[this.look.cls]?.color ?? '#e0a64a');
+    g.grips[0].x = gx;
+    g.grips[1].x = -gx;
+    const mount = new TransformNode('gliderMount', this.scene);
+    mount.parent = this.root;
+    mount.position.copyFrom(this.gripPivot);
+    g.root.parent = mount;
+    g.root.position.set(0, fit.handle, -0.05);
+    this.glider = g;
+    this.gliderMount = mount;
+    if (this.shadowAdd) g.addShadows(this.shadowAdd);
+    perf.tag(g.root, 'characters');
+  }
+
+  private disposeGlider() {
+    this.glider?.dispose();
+    this.gliderMount?.dispose();
+    this.glider = null;
+    this.gliderMount = null;
+    this.glideW = 0;
+    this.body.position.setAll(0);
+    this.body.rotation.x = 0;
+  }
+
+  /** Glider fold, its attitude, and the body hanging (and swinging) beneath it. */
+  private updateGlide(dt: number) {
+    const g = this.glider;
+    if (!g || !this.gliderMount) return;
+    g.setTarget(this.glideOn);
+    this.glideT += dt;
+    const gust = this.glideDive * 0.8 + Math.max(0, Math.min(1, (this.airspeed - 7) / 4)) * 0.4;
+    g.update(dt, this.airspeed, gust);
+    const w = Math.max(0, Math.min(1, g.open));
+    // the pose leads the canvas a little on the way in and lets go quickly on the way out
+    this.glideW += (w - this.glideW) * (1 - Math.exp(-dt * (this.glideOn ? 10 : 16)));
+    if (this.glideW < 0.001 && !this.glideOn) this.glideW = 0;
+    // attitude: nose down in a dive, a slow porpoise otherwise; banked into turns
+    const pitchT = this.glideDive * 0.28 + 0.04 + 0.025 * Math.sin(this.glideT * 1.3);
+    this.glidePitch += (pitchT - this.glidePitch) * (1 - Math.exp(-dt * 3));
+    const mount = this.gliderMount;
+    mount.rotation.set(this.glidePitch * w, 0, -this.glideBank * w);
+    // the body hangs from the grips, lagging behind the glider's roll like a pendulum
+    stepSpring(this.hang, -this.glideBank * 0.6, dt, 3.2, 0.35);
+    const ww = this.glideW;
+    if (ww <= 0) {
+      this.body.position.setAll(0);
+      this.body.rotation.x = 0;
+      return;
+    }
+    const pitch = ww * (0.3 + 0.22 * this.glideDive + 0.04 * Math.sin(this.glideT * 1.3 + 0.6));
+    const roll = this.lean * (1 - ww) + this.hang.x * ww;
+    this.body.rotation.x = pitch;
+    this.body.rotation.z = roll;
+    // rotate about the grips (they stay in the hands), not the feet
+    const m = Matrix.RotationYawPitchRoll(0, pitch, roll);
+    const pv = Vector3.TransformCoordinates(this.gripPivot, m);
+    this.body.position.copyFrom(this.gripPivot.subtract(pv));
+  }
+
+  /** Hands on the grips, legs trailing with a lazy kick. */
+  private applyGlidePose() {
+    const g = this.glider;
+    if (!g) return;
+    const w = this.glideW;
+    g.root.computeWorldMatrix(true);
+    const ry = this.root.rotation.y;
+    const right = new Vector3(Math.cos(ry), 0, -Math.sin(ry));
+    // arms: reach for the grips (IK on the wrists), blending in with the pose
+    const grip = new Vector3();
+    for (const [i, side] of [[0, 'r'], [1, 'l']] as const) {
+      const wrist = this.nodes.get(`wrist.${side}`);
+      const upper = this.nodes.get(`upperarm.${side}`);
+      if (!wrist || !upper) continue;
+      // which grip is on this arm's side
+      wrist.computeWorldMatrix(true);
+      g.gripWorld(i, grip);
+      const other = g.gripWorld(1 - i);
+      const sh = upper.getAbsolutePosition();
+      if (Vector3.DistanceSquared(sh, other) < Vector3.DistanceSquared(sh, grip)) grip.copyFrom(other);
+      // the wrist sits just short of the grip so the hand closes round it
+      const to = grip.subtract(sh);
+      const target = grip.subtract(to.normalize().scale(0.04));
+      const cur = wrist.getAbsolutePosition().clone();
+      this.solveLeg([`upperarm.${side}`, `lowerarm.${side}`, `wrist.${side}`], Vector3.Lerp(cur, target, w));
+    }
+    // legs: swung back under the forward-leaning body, knees soft, a slow alternate kick
+    const kick = Math.sin(this.glideT * 2.2) * 0.1 * (1 - this.glideDive * 0.7);
+    for (const [i, side] of [[0, 'l'], [1, 'r']] as const) {
+      const thigh = this.nodes.get(`upperleg.${side}`);
+      const shin = this.nodes.get(`lowerleg.${side}`);
+      if (!thigh || !shin) continue;
+      const k = i === 0 ? kick : -kick;
+      // (positive turns about the right axis swing a limb backwards)
+      thigh.rotate(right, (0.12 + 0.15 * this.glideDive + k) * w, Space.WORLD);
+      shin.rotate(right, (0.32 - 0.12 * this.glideDive + k * 0.6) * w, Space.WORLD);
+    }
+  }
+
   disposeModel() {
     this.animator?.dispose();
     for (const rc of this.recolors) rc.plugin.dispose();
@@ -761,6 +946,7 @@ export class CharacterModel {
   dispose() {
     if (this.obs) this.scene.onAfterAnimationsObservable.remove(this.obs);
     this.disposeModel();
+    this.disposeGlider();
     this.root.dispose();
   }
 }

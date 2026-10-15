@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T20:50:00Z',
+    title: 'Gliding',
+    lines: [
+      "You can fly! Fall more than 5 metres (step off a cliff, leap from a ledge) and your glider snaps open above you; Space in the air opens or folds it too. Steer with the mouse, slip sideways with A and D, W to speed up, S to brake and Shift to dive. Each class flies its own colours, the canvas ripples in the wind, wingtips stream contrails and the air roars past as you dive. Three updrafts lift you high: the Hearthmere Windwell behind the market, one at the foot of the Silverfall cliffs, and the Greyspine Thermal below Eagle's Perch, high enough to glide all the way down to the Ruins (they're on the world map). Over deep water the glider skims the surface, and everyone sees you fly.",
+    ],
+  },
+  {
     at: '2026-10-15T20:12:00Z',
     title: 'Sign in with a username',
     lines: ['Accounts now use a username and password instead of an email: pick any name of 3 to 16 letters, numbers or underscores and you are in. Google sign-in is still there too.'],
