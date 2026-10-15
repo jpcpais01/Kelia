@@ -146,10 +146,17 @@ export class Hud {
       } else if (e.key === 'Escape') this.closeChat();
     });
     this.chatInput.addEventListener('blur', () => this.closeChat());
-    setTimeout(() => (this.mapImage = renderMapImage(hm, 512, splat)), 50);
+    setTimeout(() => (this.mapImage ??= renderMapImage(hm, 512, splat)), 50);
     // the big map gets a sharper chart with height lines; paint it once things have settled
     let chart: HTMLCanvasElement | null = null;
-    const paintChart = () => (chart ??= renderMapImage(hm, 1024, splat, 6));
+    const paintChart = () => {
+      if (!chart) {
+        chart = renderMapImage(hm, 1024, splat, 6);
+        // the sharper chart also makes a crisper minimap
+        this.mapImage = chart;
+      }
+      return chart;
+    };
     this.worldMap = new WorldMap(paintChart, { go: (poi) => cb.travel(poi), note: (poi) => cb.travelNote(poi) });
     setTimeout(paintChart, 6000);
   }
@@ -432,9 +439,10 @@ export class Hud {
     ctx.rotate(-camYaw);
     ctx.scale(1, -1);
     if (this.mapImage) {
-      const k = this.mapImage.width / (WORLD_HALF * 2);
-      const half = (S / scale) * 0.75;
-      ctx.drawImage(this.mapImage, (px - half + WORLD_HALF) * k, (pz - half + WORLD_HALF) * k, half * 2 * k, half * 2 * k, -half * scale, -half * scale, half * 2 * scale, half * 2 * scale);
+      // draw the whole cached image under a transform (no cropping), so it glides
+      // by sub-pixel amounts instead of snapping to whole source pixels
+      const span = WORLD_HALF * 2 * scale;
+      ctx.drawImage(this.mapImage, (-WORLD_HALF - px) * scale, (-WORLD_HALF - pz) * scale, span, span);
     }
     // points of interest
     for (const poi of POINTS_OF_INTEREST) {
