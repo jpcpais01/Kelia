@@ -32,6 +32,7 @@ import { Animator, measureStride } from './animator';
 import { createBow } from './bow';
 import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
+import { setToon } from '../world/toon';
 import { INK, InkScaler, inkCharacter, inkFor } from './style';
 
 export interface Look {
@@ -120,6 +121,8 @@ export class CharacterModel {
   private ink: InkScaler | null = null;
   private cape: { mesh: AbstractMesh; base: Quaternion; axis: Vector3; angle: number; vel: number } | null = null;
   private capeT = Math.random() * 10;
+  /** Portrait lighting (character creator): a stronger rim to model the figure. */
+  private showcase = false;
   private time = Math.random() * 100;
   private extra: Mesh[] = [];
   private materials: Material[] = [];
@@ -260,7 +263,7 @@ export class CharacterModel {
     this.thighMean = [null, null];
     this.applyStrides();
     if (prevAction) this.animator.play(prevAction, { loop: true });
-    inkCharacter(this.meshes);
+    inkCharacter(this.meshes, { rim: this.showcase ? 2.1 : 1.3 });
     this.inkColors(a);
     this.ink = new InkScaler(this.meshes);
     this.headChain = [];
@@ -353,6 +356,12 @@ export class CharacterModel {
   setVisible(v: boolean) {
     this.visible = v;
     for (const m of this.meshes) m.setEnabled(v);
+  }
+
+  /** Portrait lighting for the character creator stage (stronger rim light). */
+  setShowcase(on: boolean) {
+    this.showcase = on;
+    for (const m of this.meshes) setToon(m.material, { rim: on ? 2.1 : 1.3 });
   }
 
   /** Recolour without rebuilding (live preview in the creator). */

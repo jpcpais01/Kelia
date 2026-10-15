@@ -177,6 +177,7 @@ export class Game {
     const look = this.lookFor(a, cls);
     if (!this.stageModel) {
       this.stageModel = new CharacterModel(this.world.scene, this.lib, look, 'stage');
+      this.stageModel.setShowcase(true);
       this.stageModel.setShadowCaster((m) => this.world.atmosphere.addShadowCaster(m, false));
       this.stageModel.groundAt = (x, z) => this.world.groundAt(x, z);
       const [x, z] = ARRIVAL_POINT;
@@ -262,6 +263,7 @@ export class Game {
     look.appearance = { ...look.appearance, outfit: outfitIdx };
     let model = this.stageModel;
     if (model) {
+      model.setShowcase(false);
       model.setLook(look);
       model.lookTarget = null;
       this.stageModel = null;
