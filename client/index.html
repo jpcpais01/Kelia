@@ -29,33 +29,84 @@
       <div class="boot-status" id="boot-status">Preparing the world…</div>
     </div>
     <script>
-      // Loading backdrop: start on a random hero shot of the valley, then slowly crossfade
-      // through the others with a gentle pan. Runs before the game bundle so it shows at once.
+      // Loading backdrop: hero shots of the valley brought to life (drifting clouds, rippling
+      // water, swaying grass) by a small shader in a worker, so it stays smooth while the world
+      // loads. Runs before the game bundle so it shows at once. Falls back to still pictures
+      // with a slow pan where that is not available.
       (function () {
-        var shots = ['lake-sunset', 'village', 'lake-dawn', 'falls', 'meadow', 'vista', 'shrine', 'peaks'];
+        var B = '/assets/backdrops/';
+        var scenes = [
+          { base: B + 'lake-sunset', wind: 1 },
+          { base: B + 'village', wind: 1 },
+          { base: B + 'lake-dawn', wind: -1 },
+          { base: B + 'falls', wind: 1, fall: [0.37, 0.38, 0.555, 0.8] },
+          { base: B + 'meadow', wind: 1 },
+          { base: B + 'vista', wind: -1 },
+          { base: B + 'shrine', wind: 1 },
+          { base: B + 'peaks', wind: -1 },
+        ];
         var host = document.getElementById('boot-bg');
         if (!host) return;
-        var start = Math.floor(Math.random() * shots.length);
-        var n = 0;
-        function show() {
-          if (!host.isConnected) return;
-          var name = shots[(start + n) % shots.length];
-          var img = new Image();
-          img.decoding = 'async';
-          img.alt = '';
-          img.className = 'pan-' + (n % 4);
-          if (n === 0) img.fetchPriority = 'high';
-          img.onload = function () {
-            host.appendChild(img);
-            requestAnimationFrame(function () { img.classList.add('on'); });
-            // drop layers that are fully covered by the new one
-            setTimeout(function () { while (host.children.length > 1) host.removeChild(host.firstChild); }, 2600);
-            n++;
-            setTimeout(show, 8000);
-          };
-          img.src = '/assets/backdrops/' + name + '.webp';
+        var start = Math.floor(Math.random() * scenes.length);
+        var still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        function slideshow() {
+          var n = 0;
+          (function show() {
+            if (!host.isConnected) return;
+            var img = new Image();
+            img.decoding = 'async';
+            img.alt = '';
+            img.className = 'pan-' + (n % 4);
+            if (n === 0) img.fetchPriority = 'high';
+            img.onload = function () {
+              host.appendChild(img);
+              requestAnimationFrame(function () { img.classList.add('on'); });
+              // drop layers that are fully covered by the new one
+              setTimeout(function () { while (host.children.length > 1) host.removeChild(host.firstChild); }, 2600);
+              n++;
+              setTimeout(show, 8000);
+            };
+            img.src = scenes[(start + n) % scenes.length].base + '.webp';
+          })();
         }
-        show();
+
+        var cv = document.createElement('canvas');
+        if (still || !cv.transferControlToOffscreen || typeof Worker === 'undefined') return slideshow();
+        var worker;
+        try {
+          worker = new Worker('/boot/backdrop-worker.js');
+          var off = cv.transferControlToOffscreen();
+          host.appendChild(cv);
+          // the pictures are 1080p, so never draw more pixels than that needs
+          var dpr = Math.min(window.devicePixelRatio || 1, 1.5, Math.sqrt(2.2e6 / (innerWidth * innerHeight)));
+          worker.postMessage({ type: 'init', canvas: off, w: innerWidth, h: innerHeight, dpr: dpr, scenes: scenes, start: start }, [off]);
+        } catch (e) {
+          if (cv.parentNode) cv.remove();
+          return slideshow();
+        }
+        var done = false;
+        var fallback = function () {
+          if (done) return;
+          done = true;
+          worker.terminate();
+          cv.remove();
+          slideshow();
+        };
+        worker.onerror = fallback;
+        worker.onmessage = function (e) {
+          if (e.data.type === 'ready') { done = true; cv.classList.add('on'); }
+          else if (e.data.type === 'fail') fallback();
+        };
+        // nothing on screen after a few seconds: show the stills instead
+        setTimeout(function () { if (!done) fallback(); }, 6000);
+        addEventListener('resize', function () { worker.postMessage({ type: 'size', w: innerWidth, h: innerHeight }); });
+        // the boot screen is removed once the world is in: stop drawing and free the GPU
+        new MutationObserver(function (_, obs) {
+          if (host.isConnected) return;
+          obs.disconnect();
+          worker.postMessage({ type: 'stop' });
+        }).observe(document.body, { childList: true });
       })();
     </script>
     <noscript>Kelia needs JavaScript to run.</noscript>

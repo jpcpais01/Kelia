@@ -29,8 +29,8 @@ export const PATCH_NOTES: PatchNote[] = [
   },
   {
     at: '2026-10-15T21:02:00Z',
-    title: 'A view of the valley while you load',
-    lines: ['The loading screen now opens on a view of Kelia itself: Mirror Lake at sunset and at dawn, Hearthmere in the evening light, the wildflower meadows, the Shrine of Arrival, Silverfall, the Greyspine peaks and the vista from the heights. Each visit starts on a different scene, gently dimmed so the title stays clear, and slowly drifts and fades into the next while the world gets ready.'],
+    title: 'A living view of the valley while you load',
+    lines: ['The loading screen now opens on a living view of Kelia: Mirror Lake at sunset and at dawn, Hearthmere in the evening light, the wildflower meadows, the Shrine of Arrival, Silverfall, the Greyspine peaks and the vista from the heights. Clouds drift across the sky, the lakes ripple and glint, Silverfall pours down its cliff, gusts of wind roll through the grass and trees and motes of light float up through the air, gently dimmed so the title stays clear, while the camera slowly glides from one scene to the next.'],
   },
   {
     at: '2026-10-15T21:00:00Z',
