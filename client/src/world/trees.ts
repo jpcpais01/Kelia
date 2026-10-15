@@ -169,6 +169,8 @@ interface TreeSpec {
   gnarl: number;
   /** Main limbs fork from the trunk top, spreading out at `angle` from vertical. */
   limbs: Level;
+  /** Optional limbs sprouting lower down the trunk (`at` along it). */
+  side?: Level;
   /** Deeper levels: secondary branches, then twigs. */
   levels: Level[];
 }
@@ -230,24 +232,25 @@ function growTree(spec: TreeSpec, rnd: () => number): { limbs: Limb[]; clumps: C
   });
   limbs.push({ pts: trunkPts, radii: tr, sways: trunkPts.map((_, i) => (i / (trunkPts.length - 1)) * 0.05), depth: 0 });
 
-  const grow = (parent: Limb, lv: number, outBase: number) => {
-    const L = lv === 0 ? spec.limbs : spec.levels[lv - 1];
+  const grow = (parent: Limb, lv: number, outBase: number, Lside?: Level) => {
+    const L = Lside ?? (lv === 0 ? spec.limbs : spec.levels[lv - 1]);
     if (!L) return;
+    const fork = lv === 0 && !Lside;
     const count = Math.round(lerp(L.n, rnd()));
     const az0 = rnd() * Math.PI * 2;
     const plen = parent.pts.reduce((acc, p, i) => (i ? acc + Math.hypot(p[0] - parent.pts[i - 1][0], p[1] - parent.pts[i - 1][1], p[2] - parent.pts[i - 1][2]) : 0), 0);
     for (let k = 0; k < count; k++) {
       // main limbs all fork from the trunk top; deeper branches spread along their parent
-      const t = lv === 0 ? 1 - rnd() * 0.12 : lerp(L.at, count === 1 ? 0.5 : k / (count - 1)) + (rnd() - 0.5) * 0.08;
+      const t = fork ? 1 - rnd() * 0.12 : lerp(L.at, count === 1 ? 0.5 : k / (count - 1)) + (rnd() - 0.5) * 0.08;
       const fi = Math.min(parent.pts.length - 1.001, Math.max(0, t * (parent.pts.length - 1)));
       const i0 = Math.floor(fi);
       const ft = fi - i0;
       const a = parent.pts[i0];
       const b = parent.pts[i0 + 1];
       const base: C3 = [a[0] + (b[0] - a[0]) * ft, a[1] + (b[1] - a[1]) * ft, a[2] + (b[2] - a[2]) * ft];
-      const pdir: C3 = lv === 0 ? UP : normalize([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
+      const pdir: C3 = fork ? UP : normalize([b[0] - a[0], b[1] - a[1], b[2] - a[2]]);
       // golden-angle spiral so siblings never bunch up on one side
-      const az = az0 + k * (lv === 0 ? (Math.PI * 2) / count : 2.39996) + (rnd() - 0.5) * 0.6;
+      const az = az0 + k * (fork ? (Math.PI * 2) / count : 2.39996) + (rnd() - 0.5) * 0.6;
       let dir = deflect(pdir, lerp(L.angle, rnd()), az);
       // side branches never point back down into the crown
       if (lv > 0 && dir[1] < -0.2) dir = normalize([dir[0], -0.2, dir[2]]) as C3;
@@ -272,6 +275,7 @@ function growTree(spec: TreeSpec, rnd: () => number): { limbs: Limb[]; clumps: C
     }
   };
   grow(limbs[0], 0, 0);
+  if (spec.side) grow(limbs[0], 0, 0, spec.side);
   return { limbs, clumps };
 }
 
@@ -291,7 +295,26 @@ function envelope(clumps: Clump[]): Crown {
 }
 
 /** Mesh the wood: deeper branches drop out at lower detail. */
-function meshWood(b: MeshBuilder2, limbs: Limb[], lod: number, bark: C3, maxDepth: number[], segs: number[][], colorAt?: (l: Limb, i: number) => C3) {
+interface WoodLook {
+  cell: AtlasCell;
+  /** Bark repeats around the trunk up close (finer furrows on thick trunks). */
+  around?: number;
+  /** Moss, lichen or wet bark blended in per vertex (LOD 0 only). */
+  tint?: (x: number, y: number, z: number, nx: number, ny: number, nz: number) => number;
+  tintColor?: C3;
+}
+
+/** Moss creeping up the foot of the trunk and settling on top of the big limbs. */
+function mossy(seed: number, height: number, amount: number) {
+  return (x: number, y: number, z: number, _nx: number, ny: number, _nz: number) => {
+    const n = noise.noise(x * 1.7 + seed, z * 1.7 + y * 1.3) * 0.5 + 0.5;
+    const foot = Math.max(0, 1 - y / height);
+    const top = Math.max(0, ny - 0.45) * (y > 1.5 ? 0.9 : 0);
+    return Math.min(0.85, (foot * foot * 1.6 + top) * (0.35 + 0.9 * n) * amount);
+  };
+}
+
+function meshWood(b: MeshBuilder2, limbs: Limb[], lod: number, bark: C3, maxDepth: number[], segs: number[][], look: WoodLook) {
   for (const l of limbs) {
     if (l.depth > maxDepth[lod] || (horizon && l.depth > 0)) continue;
     const sg = horizon ? 4 : segs[lod][Math.min(l.depth, segs[lod].length - 1)];
@@ -306,12 +329,18 @@ function meshWood(b: MeshBuilder2, limbs: Limb[], lod: number, bark: C3, maxDept
       sways = sways.filter((_, i) => keep[i]);
     }
     const tint = scale3(bark, l.depth === 0 ? 1 : 1.08 + l.depth * 0.04);
-    b.tube(pts, radii, sways, sg, tint, { shade: l.depth === 0 ? [0.62, 1] : [0.86, 1.06], colorAt: colorAt && lod === 0 ? (i) => colorAt(l, i) : undefined });
+    b.tube(pts, radii, sways, sg, tint, {
+      shade: l.depth === 0 ? [0.62, 1] : [0.86, 1.06],
+      cell: look.cell,
+      around: l.depth === 0 && lod === 0 ? (look.around ?? 1) : 1,
+      tint: lod === 0 && l.depth <= 1 ? look.tint : undefined,
+      tintColor: look.tintColor,
+    });
   }
 }
 
 /** Buttress roots spreading from the trunk foot into the ground. */
-function roots(b: MeshBuilder2, rnd: () => number, n: number, r: number, bark: C3, segs: number) {
+function roots(b: MeshBuilder2, rnd: () => number, n: number, r: number, bark: C3, segs: number, look: WoodLook) {
   const a0 = rnd() * Math.PI * 2;
   for (let i = 0; i < n; i++) {
     const a = a0 + (i / n) * Math.PI * 2 + (rnd() - 0.5) * 0.5;
@@ -325,7 +354,7 @@ function roots(b: MeshBuilder2, rnd: () => number, n: number, r: number, bark: C
       pts.push([Math.cos(a) * d, 0.9 * (1 - t) * (1 - t) + 0.05 - 0.3 * t * t, Math.sin(a) * d]);
       radii.push(r * (0.5 - 0.4 * t));
     }
-    b.tube(pts, radii, [0, 0, 0, 0, 0], segs, scale3(bark, 0.92), { shade: [0.7, 0.85] });
+    b.tube(pts, radii, [0, 0, 0, 0, 0], segs, scale3(bark, 0.92), { shade: [0.7, 0.85], cell: look.cell, tint: look.tint, tintColor: look.tintColor });
   }
 }
 
@@ -365,31 +394,42 @@ function farClumps(clumps: Clump[], lod: number): Clump[] {
   return clumps.filter((c) => c.main).map((c) => ({ ...c, r: c.r * 1.3 }));
 }
 
+const BARK_MOSS = hex('#56762c');
+
 export function broadleaf(lod: number, variant: number): Built {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 977 + 13);
   const leafRnd = mulberry(variant * 977 + 14 + lod);
-  const bark = hex('#7a573f');
+  const bark = [hex('#8a6a50'), hex('#7c6656'), hex('#8e6c4c')][variant % 3];
   const pal = OAK_PALETTES[variant % OAK_PALETTES.length];
-  // A sturdy trunk forks into four or five spreading limbs; each splits into
-  // branches and twigs that carry the leaf masses, so the wood shows between
-  // and beneath them instead of one ball of leaves on a stick.
+  // Every oak differs: a broad, spreading old giant, a taller upright one and
+  // a leaning, gnarled one. A sturdy, mossy trunk forks into spreading limbs
+  // (and the odd heavy limb lower down), each splitting into branches and
+  // twigs that carry the leaf masses, so the wood shows between them.
+  const shape = [
+    { trunk: 2.8, spread: [0.95, 1.2], len: [3.2, 3.9], side: 2, lean: 0.18, gnarl: 0.18 },
+    { trunk: 3.6, spread: [0.7, 1.0], len: [2.8, 3.4], side: 1, lean: 0.12, gnarl: 0.13 },
+    { trunk: 3.1, spread: [0.85, 1.15], len: [3.0, 3.7], side: 1, lean: 0.42, gnarl: 0.26 },
+  ][variant % 3];
+  const la = rnd() * Math.PI * 2;
   const spec: TreeSpec = {
-    trunkLen: 3.0 + rnd() * 0.9,
-    trunkR: [0.46, 0.27],
-    lean: [(rnd() - 0.5) * 0.24, 1, (rnd() - 0.5) * 0.24],
+    trunkLen: shape.trunk + rnd() * 0.7,
+    trunkR: [0.48, 0.28],
+    lean: [Math.cos(la) * shape.lean, 1, Math.sin(la) * shape.lean],
     trunkSteps: 6,
-    gnarl: 0.16,
-    limbs: { n: [4, 5], at: [1, 1], angle: [0.85, 1.15], len: [3.0, 3.8], r: 0.68, taper: 0.3, steps: 5, bend: 0.55, wobble: 0.22, clump: [1.35, 1.7] },
+    gnarl: shape.gnarl,
+    limbs: { n: [4, 5], at: [1, 1], angle: shape.spread as [number, number], len: shape.len as [number, number], r: 0.68, taper: 0.3, steps: 5, bend: 0.55, wobble: 0.24, clump: [1.35, 1.7] },
+    side: { n: [shape.side, shape.side], at: [0.55, 0.78], angle: [1.05, 1.3], len: [2.6, 3.3], r: 0.62, taper: 0.3, steps: 5, bend: 0.75, wobble: 0.26, clump: [1.25, 1.55] },
     levels: [
       { n: [2, 3], at: [0.5, 0.9], angle: [0.6, 1.0], len: [0.38, 0.52], r: 0.62, taper: 0.35, steps: 4, bend: 0.35, wobble: 0.3, clump: [1.0, 1.3] },
-      { n: [2, 2], at: [0.35, 0.85], angle: [0.6, 1.0], len: [0.4, 0.6], r: 0.6, taper: 0.3, steps: 2, bend: 0.2, wobble: 0.4 },
+      { n: [2, 3], at: [0.3, 0.85], angle: [0.6, 1.05], len: [0.4, 0.6], r: 0.6, taper: 0.3, steps: 2, bend: 0.2, wobble: 0.45 },
     ],
   };
   const { limbs, clumps } = growTree(spec, rnd);
   const crown = envelope(farClumps(clumps, lod));
-  meshWood(b, limbs, lod, bark, [3, 2, 1, 0], WOOD_SEGS);
-  if (lod === 0) roots(b, rnd, 5, spec.trunkR[0], bark, 6);
+  const look: WoodLook = { cell: 'barkOak', around: 1, tint: mossy(variant * 7.3, 1.9, 1), tintColor: BARK_MOSS };
+  meshWood(b, limbs, lod, bark, [3, 2, 1, 0], WOOD_SEGS, look);
+  if (lod === 0) roots(b, rnd, 5 + (variant % 2), spec.trunkR[0], bark, 6, look);
   if (lod === 3) {
     for (const cl of crown.clumps) b.blob(cl.c, [cl.r * 0.8, cl.r * 0.7, cl.r * 0.8], 0, noise, 0.2, pal.core, pal.core, crown.center, 0.5);
     return done(b);
@@ -401,75 +441,103 @@ export function broadleaf(lod: number, variant: number): Built {
 
 // ------------------------------------------------------------------ blossom
 
-const BLOSSOM: Palette = { low: hex('#f096a6'), high: hex('#ffe6ea'), core: hex('#d07a8a') };
+const BLOSSOMS: { pal: Palette; accent: C3 }[] = [
+  // classic deep sakura pink
+  { pal: { low: hex('#f096a6'), high: hex('#ffe6ea'), core: hex('#d07a8a') }, accent: hex('#fff4f8') },
+  // pale, almost white blossom with rosy hearts
+  { pal: { low: hex('#f2b6c4'), high: hex('#fff6f8'), core: hex('#d995a6') }, accent: hex('#ff9fb6') },
+];
 
-/** A flowering tree: a dark, twisting trunk throwing long, low limbs under soft pink clouds. */
+/** A flowering tree: a dark, glossy, twisting trunk throwing long, low limbs under soft pink clouds. */
 export function blossom(lod: number, variant: number): Built {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 3331 + 71);
   const leafRnd = mulberry(variant * 3331 + 72 + lod);
-  const bark = hex('#6a463c');
+  const bark = hex('#5e3c38');
+  const kind = BLOSSOMS[variant % BLOSSOMS.length];
   const spec: TreeSpec = {
-    trunkLen: 2.4 + rnd() * 0.7,
+    trunkLen: 2.2 + rnd() * 0.7,
     trunkR: [0.36, 0.22],
-    lean: [(rnd() - 0.5) * 0.5, 1, (rnd() - 0.5) * 0.5],
+    lean: [(rnd() - 0.5) * 0.55, 1, (rnd() - 0.5) * 0.55],
     trunkSteps: 6,
-    gnarl: 0.3,
-    limbs: { n: [4, 5], at: [1, 1], angle: [0.95, 1.25], len: [2.8, 3.6], r: 0.7, taper: 0.28, steps: 6, bend: 0.3, wobble: 0.32, clump: [1.25, 1.55] },
+    gnarl: 0.34,
+    limbs: { n: [4, 5], at: [1, 1], angle: [1.0, 1.3], len: [2.8, 3.6], r: 0.7, taper: 0.28, steps: 6, bend: 0.3, wobble: 0.34, clump: [1.25, 1.55] },
+    side: variant % 2 === 0 ? { n: [1, 1], at: [0.62, 0.75], angle: [1.2, 1.35], len: [2.5, 2.9], r: 0.6, taper: 0.28, steps: 5, bend: 0.5, wobble: 0.35, clump: [1.15, 1.35] } : undefined,
     levels: [
       { n: [2, 3], at: [0.35, 0.85], angle: [0.6, 1.05], len: [0.4, 0.55], r: 0.6, taper: 0.3, steps: 4, bend: 0.05, wobble: 0.4, clump: [1.0, 1.3] },
-      { n: [2, 2], at: [0.4, 0.9], angle: [0.6, 1.0], len: [0.4, 0.6], r: 0.6, taper: 0.3, steps: 2, bend: -0.1, wobble: 0.45 },
+      { n: [2, 3], at: [0.4, 0.9], angle: [0.6, 1.0], len: [0.4, 0.6], r: 0.6, taper: 0.3, steps: 2, bend: -0.15, wobble: 0.45 },
     ],
   };
   const { limbs, clumps } = growTree(spec, rnd);
   const crown = envelope(farClumps(clumps, lod));
-  meshWood(b, limbs, lod, bark, [3, 2, 1, 0], WOOD_SEGS);
-  if (lod === 0) roots(b, rnd, 4, spec.trunkR[0], bark, 6);
+  const look: WoodLook = { cell: 'barkCherry', around: 1, tint: mossy(variant * 3.1, 1.2, 0.45), tintColor: hex('#5f6e3a') };
+  meshWood(b, limbs, lod, bark, [3, 2, 1, 0], WOOD_SEGS, look);
+  if (lod === 0) roots(b, rnd, 4, spec.trunkR[0], bark, 6, look);
   if (lod === 3) {
-    for (const cl of crown.clumps) b.blob(cl.c, [cl.r * 0.8, cl.r * 0.65, cl.r * 0.8], 0, noise, 0.2, BLOSSOM.core, BLOSSOM.core, crown.center, 0.5);
+    for (const cl of crown.clumps) b.blob(cl.c, [cl.r * 0.8, cl.r * 0.65, cl.r * 0.8], 0, noise, 0.2, kind.pal.core, kind.pal.core, crown.center, 0.5);
     return done(b);
   }
-  clumpCores(b, crown, BLOSSOM, lod, 0.4);
-  leafCards(b, crown, BLOSSOM, [12, 4, 2][lod], [1.25, 1.65, 2.1][lod], 'round', leafRnd, 0.8, { color: hex('#fff4f8'), share: 0.14 }, { shell: [0.1, 0.12, 0.2][lod], local: 0.5 });
+  clumpCores(b, crown, kind.pal, lod, 0.4);
+  leafCards(b, crown, kind.pal, [12, 4, 2][lod], [1.25, 1.65, 2.1][lod], 'round', leafRnd, 0.8, { color: kind.accent, share: 0.14 }, { shell: [0.1, 0.12, 0.2][lod], local: 0.5 });
   return done(b);
 }
 
 // ------------------------------------------------------------------ pine
 
-/** Tiered stylized conifer: drooping skirts of needle sprays around dark cones. */
+/** Tiered stylized conifer: a scaly red-brown trunk under drooping, irregular skirts of needle sprays. */
 export function pine(lod: number, variant: number): Built {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 331 + 7);
-  const h = 7.5 + rnd() * 3;
-  b.branch([0, -0.4, 0], [0, 1, 0], h * 0.92, 0.36, 0.07, [7, 5, 4, 4][lod], [3, 2, 1, 1][lod], hex('#5a3e30'), 0, 0.1);
-  const tiers = [6, 5, 4, 3][lod];
+  const slender = variant % 2 === 1;
+  const h = (slender ? 9 : 7.5) + rnd() * 2.5;
+  const barkCol = hex('#6a4232');
+  const pineLook: WoodLook = { cell: 'barkPine' };
+  // a slightly curving trunk, visible between the skirts
+  const lean: C3 = [(rnd() - 0.5) * 0.08, 1, (rnd() - 0.5) * 0.08];
+  const tpts = curve([0, -0.4, 0], lean, h * 0.94, [7, 5, 3, 3][lod], 0, 0.04, rnd);
+  const tr = tpts.map((_, i) => {
+    const t = i / (tpts.length - 1);
+    return 0.36 * (1 - t * 0.82) + 0.12 * Math.pow(Math.max(0, 1 - t * 5), 2);
+  });
+  const tsw = tpts.map((_, i) => (i / (tpts.length - 1)) * 0.12);
+  meshWood(b, [{ pts: tpts, radii: tr, sways: tsw, depth: 0 }], lod, barkCol, [0, 0, 0, 0], [[9], [6], [4], [4]], pineLook);
+  const trunkAt = (y: number): C3 => {
+    const t = Math.min(1, Math.max(0, (y + 0.4) / (h * 0.94)));
+    const fi = t * (tpts.length - 1);
+    const i0 = Math.min(tpts.length - 2, Math.floor(fi));
+    return mix3(tpts[i0], tpts[i0 + 1], fi - i0);
+  };
+  const tiers = [6, 5, 4, 3][lod] + (slender ? 1 : 0);
   const dark = hex('#123c33');
-  const mid = hex('#2c6e4a');
-  const light = hex('#78b85a');
+  const mid = slender ? hex('#2a6a52') : hex('#2c6e4a');
+  const light = slender ? hex('#86c27a') : hex('#78b85a');
   let topY = 0;
+  const wide = slender ? 0.78 : 1;
   for (let i = 0; i < tiers; i++) {
     const t = i / tiers;
-    const radius = 2.9 * (1 - t * 0.78) + rnd() * 0.25;
+    // irregular tiers: each a little wider or narrower, set a little off-centre
+    const radius = (2.9 * (1 - t * 0.78) + rnd() * 0.25) * wide * (0.88 + rnd() * 0.24);
     const height = (2.5 - t * 0.7) * (0.6 + 2.4 / tiers);
-    const baseY = 1.5 + t * h * 0.8;
+    const baseY = 1.5 + t * h * 0.8 + (rnd() - 0.5) * 0.25;
     const sway = 0.25 + t * 0.6;
+    const c0 = trunkAt(baseY);
     topY = baseY + height * 0.87;
     if (lod === 3) b.cone(baseY, height, radius, 6, dark, dark, sway, 0.14, 0);
     else b.cone(baseY + height * 0.02, height * 0.72, radius * 0.66, [10, 8, 6][lod], mix3(dark, mid, 0.35), mix3(dark, mid, 0.75), sway, 0.12, rnd() * 6);
     if (lod === 3) continue;
     if (lod === 0) {
       // bare limbs reaching out under each skirt, drooping toward their tips
-      const kb = 4;
+      const kb = 5;
       for (let j = 0; j < kb; j++) {
         const a = (j / kb) * Math.PI * 2 + i * 0.9 + rnd() * 0.5;
-        const len = radius * (0.75 + rnd() * 0.15);
-        const y0 = baseY + height * 0.18;
+        const len = radius * (0.5 + rnd() * 0.12);
+        const y0 = baseY + height * 0.22;
         const pts: C3[] = [0, 1, 2].map((k) => {
           const f = k / 2;
-          return [Math.cos(a) * len * f, y0 + f * 0.25 - f * f * 0.55, Math.sin(a) * len * f];
+          return [c0[0] + Math.cos(a) * len * f, y0 + f * 0.25 - f * f * 0.55, c0[2] + Math.sin(a) * len * f];
         });
         const r0 = 0.09 * (1 - t * 0.5);
-        b.tube(pts, [r0, r0 * 0.55, r0 * 0.2], [sway * 0.2, sway * 0.6, sway * 0.9], 4, hex('#5a3e30'), { shade: [0.8, 1] });
+        b.tube(pts, [r0, r0 * 0.55, r0 * 0.2], [sway * 0.2, sway * 0.6, sway * 0.9], 4, barkCol, { shade: [0.8, 1], cell: 'barkPine' });
       }
     }
     // needle sprays around the skirt, hanging slightly outward and down
@@ -479,7 +547,7 @@ export function pine(lod: number, variant: number): Built {
       const rr = radius * (0.72 + rnd() * 0.22);
       const p: C3 = [Math.cos(a) * rr, baseY + height * (0.1 + rnd() * 0.25), Math.sin(a) * rr];
       const n = normalize([Math.cos(a), 0.55 + t * 0.4, Math.sin(a)]);
-      const col = mix3(mid, light, 0.25 + 0.75 * t + (rnd() - 0.5) * 0.2);
+      const col = mix3(mid, light, 0.25 + 0.75 * t + (rnd() - 0.5) * 0.25);
       b.card(p, (1.25 + radius * 0.3) * [1, 1.25, 1.7][lod], n, col, sway, 'needle', Math.PI + (rnd() - 0.5) * 0.8);
     }
     // a few sprays crowning each tier
@@ -498,74 +566,69 @@ export function pine(lod: number, variant: number): Built {
 
 // ------------------------------------------------------------------ birch
 
-const BIRCH: Palette = { low: hex('#3f7a34'), high: hex('#d2e05a'), core: hex('#355f2a') };
+const BIRCHES: Palette[] = [
+  { low: hex('#3f7a34'), high: hex('#d2e05a'), core: hex('#355f2a') },
+  { low: hex('#4a8038'), high: hex('#e4e46a'), core: hex('#3a6430') },
+];
+
+/** One slender white birch stem with steep side branches and small airy clumps. */
+function birchStem(rnd: () => number, base: C3, lean: C3, height: number, r0: number, limbs: Limb[], clumps: Clump[], side = 6) {
+  const spec: TreeSpec = {
+    trunkLen: height,
+    trunkR: [r0, r0 * 0.3],
+    lean,
+    trunkSteps: 8,
+    gnarl: 0.07,
+    limbs: { n: [3, 3], at: [1, 1], angle: [0.25, 0.5], len: [1.2, 1.7], r: 0.8, taper: 0.3, steps: 3, bend: 0.3, wobble: 0.2, clump: [1.0, 1.2] },
+    levels: [{ n: [1, 2], at: [0.5, 0.8], angle: [0.5, 0.8], len: [0.45, 0.6], r: 0.6, taper: 0.3, steps: 2, bend: 0.2, wobble: 0.3, clump: [0.8, 1.0] }],
+  };
+  const g = growTree(spec, rnd);
+  for (const l of g.limbs) l.pts = l.pts.map((p) => add3(p, base));
+  for (const c of g.clumps) c.c = add3(c.c, base);
+  // side branches up the upper trunk, angled steeply skyward
+  const trunk = g.limbs[0];
+  for (let k = 0; k < side; k++) {
+    const t = 0.4 + (k / side) * 0.5;
+    const i = Math.min(trunk.pts.length - 2, Math.floor(t * (trunk.pts.length - 1)));
+    const dir = deflect(UP, 0.8 + rnd() * 0.3, k * 2.39996 + rnd() * 0.5);
+    const len = 1.7 + rnd() * 0.8 - t * 0.8;
+    const pts = curve(trunk.pts[i], dir, len, 3, 0.25, 0.2, rnd);
+    const br = trunk.radii[i] * 0.42;
+    const out = t * height * 0.4;
+    g.limbs.push({ pts, radii: pts.map((_, q) => br * (1 - 0.7 * (q / (pts.length - 1)))), sways: pts.map((_, q) => swayAt(out + (q / (pts.length - 1)) * len)), depth: 1 });
+    g.clumps.push({ c: pts[pts.length - 1], r: 0.85 + rnd() * 0.3, s: Math.min(0.85, swayAt(out + len) + 0.12), main: true });
+  }
+  limbs.push(...g.limbs);
+  clumps.push(...g.clumps);
+}
 
 export function birch(lod: number, variant: number): Built {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 51 + 3);
   const leafRnd = mulberry(variant * 51 + 4 + lod);
   const white = hex('#f4f0e6');
-  // A tall, slender white trunk with dark lenticel bands, and many thin
-  // branches climbing at a steep angle, each holding a small airy clump.
-  const spec: TreeSpec = {
-    trunkLen: 6.0 + rnd() * 1.6,
-    trunkR: [0.24, 0.07],
-    lean: [(rnd() - 0.5) * 0.15, 1, (rnd() - 0.5) * 0.15],
-    trunkSteps: 8,
-    gnarl: 0.07,
-    limbs: { n: [3, 3], at: [1, 1], angle: [0.25, 0.5], len: [1.2, 1.7], r: 0.8, taper: 0.3, steps: 3, bend: 0.3, wobble: 0.2, clump: [1.0, 1.2] },
-    levels: [{ n: [1, 2], at: [0.5, 0.8], angle: [0.5, 0.8], len: [0.45, 0.6], r: 0.6, taper: 0.3, steps: 2, bend: 0.2, wobble: 0.3, clump: [0.8, 1.0] }],
-  };
-  const { limbs, clumps } = growTree(spec, rnd);
-  // side branches up the upper trunk, angled steeply skyward
-  const trunk = limbs[0];
-  const side = 6;
-  for (let k = 0; k < side; k++) {
-    const t = 0.4 + (k / side) * 0.5;
-    const i = Math.min(trunk.pts.length - 2, Math.floor(t * (trunk.pts.length - 1)));
-    const base = trunk.pts[i];
-    const dir = deflect(UP, 0.8 + rnd() * 0.3, k * 2.39996 + rnd() * 0.5);
-    const len = 1.7 + rnd() * 0.8 - t * 0.8;
-    const pts = curve(base, dir, len, 3, 0.25, 0.2, rnd);
-    const r0 = trunk.radii[i] * 0.42;
-    const out = t * spec.trunkLen * 0.4;
-    limbs.push({ pts, radii: pts.map((_, q) => r0 * (1 - 0.7 * (q / (pts.length - 1)))), sways: pts.map((_, q) => swayAt(out + (q / (pts.length - 1)) * len)), depth: 1 });
-    clumps.push({ c: pts[pts.length - 1], r: 0.85 + rnd() * 0.3, s: Math.min(0.85, swayAt(out + len) + 0.12), main: true });
-  }
-  const crown = envelope(clumps);
-  // bark bands: dark rings at seeded heights along the trunk only
-  const bandSeed = rnd() * 10;
-  const band = (l: Limb, i: number): C3 => {
-    if (l.depth > 0) return white;
-    const y = l.pts[i][1];
-    const v = Math.sin(y * 4.3 + bandSeed) * Math.sin(y * 1.7 + bandSeed * 2);
-    return v > 0.55 ? hex('#5a5550') : v > 0.35 ? hex('#cfc8bb') : white;
-  };
-  // the trunk gets enough rings for the bands to show up close
-  if (lod === 0) {
-    const t = limbs[0];
-    const dense: C3[] = [];
-    const dr: number[] = [];
-    const ds: number[] = [];
-    for (let i = 0; i < t.pts.length - 1; i++) {
-      for (let k = 0; k < 3; k++) {
-        const f = k / 3;
-        dense.push(mix3(t.pts[i], t.pts[i + 1], f));
-        dr.push(t.radii[i] + (t.radii[i + 1] - t.radii[i]) * f);
-        ds.push(t.sways[i] + (t.sways[i + 1] - t.sways[i]) * f);
-      }
+  const pal = BIRCHES[variant % BIRCHES.length];
+  const limbs: Limb[] = [];
+  const clumps: Clump[] = [];
+  if (variant % 2 === 0) {
+    // a single tall, slender stem
+    birchStem(rnd, [0, 0, 0], [(rnd() - 0.5) * 0.15, 1, (rnd() - 0.5) * 0.15], 6.0 + rnd() * 1.6, 0.24, limbs, clumps);
+  } else {
+    // a clump of two or three stems springing apart from one root
+    const n = 2 + Math.round(rnd());
+    const a0 = rnd() * Math.PI * 2;
+    for (let k = 0; k < n; k++) {
+      const a = a0 + (k / n) * Math.PI * 2;
+      birchStem(rnd, [Math.cos(a) * 0.18, 0, Math.sin(a) * 0.18], [Math.cos(a) * 0.2, 1, Math.sin(a) * 0.2], 5.2 + rnd() * 1.4 - k * 0.5, 0.17, limbs, clumps, 4);
     }
-    dense.push(t.pts[t.pts.length - 1]);
-    dr.push(t.radii[t.radii.length - 1]);
-    ds.push(t.sways[t.sways.length - 1]);
-    limbs[0] = { pts: dense, radii: dr, sways: ds, depth: 0 };
   }
-  meshWood(b, limbs, lod, white, [2, 1, 0, 0], WOOD_SEGS, band);
+  const crown = envelope(farClumps(clumps, lod));
+  meshWood(b, limbs, lod, white, [2, 1, 0, 0], WOOD_SEGS, { cell: 'barkBirch' });
   if (lod === 3) {
-    b.blob(crown.center, [crown.radius[0] * 0.8, crown.radius[1] * 0.85, crown.radius[2] * 0.8], 1, noise, 0.3, BIRCH.core, BIRCH.core, crown.center, 0.7);
+    b.blob(crown.center, [crown.radius[0] * 0.8, crown.radius[1] * 0.85, crown.radius[2] * 0.8], 1, noise, 0.3, pal.core, pal.core, crown.center, 0.7);
     return done(b);
   }
-  leafCards(b, crown, BIRCH, [9, 4, 2][lod], [1.3, 1.7, 2.3][lod], 'round', leafRnd, 0.9, undefined, { shell: [0.12, 0.15, 0.3][lod], local: 0.5 });
+  leafCards(b, crown, pal, [9, 4, 2][lod], [1.3, 1.7, 2.3][lod], 'round', leafRnd, 0.9, undefined, { shell: [0.12, 0.15, 0.3][lod], local: 0.5 });
   return done(b);
 }
 

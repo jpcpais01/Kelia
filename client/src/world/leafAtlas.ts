@@ -3,12 +3,15 @@
 // greyscale (the trees tint it with vertex colour), lit from the top so every
 // clump already reads as a little ball of leaves before any lighting runs.
 //
-//   ┌──────────────┬──────────────┐
-//   │ broad leaves │ round leaves │   row 0
-//   ├──────────────┼──────────────┤
-//   │ pine needles │ bark (solid) │   row 1
-//   └──────────────┴──────────────┘
+//   ┌──────────────┬──────────────┬──────────────┬──────────────┐
+//   │ broad leaves │ round leaves │  oak bark    │  pine bark   │   row 0
+//   ├──────────────┼──────────────┼──────────────┼──────────────┤
+//   │ pine needles │ solid (flat) │  birch bark  │ cherry bark  │   row 1
+//   └──────────────┴──────────────┴──────────────┴──────────────┘
 //
+// Leaves are greyscale (vertex colour tints them); the bark cells are painted
+// in colour, as multipliers over each species' bark tone. Everything on the
+// right half of the atlas is bark, which the foliage shader relies on.
 // Transparent texels keep the colour of the nearest leaf, so mipmaps never
 // bleed dark fringes into the alpha-tested edges.
 import { RawTexture, Texture, type Scene } from '@babylonjs/core';
@@ -17,8 +20,15 @@ export const ATLAS_CELLS = {
   broad: [0, 0],
   round: [1, 0],
   needle: [0, 1],
-  bark: [1, 1],
+  solid: [1, 1],
+  barkOak: [2, 0],
+  barkPine: [3, 0],
+  barkBirch: [2, 1],
+  barkCherry: [3, 1],
 } as const;
+
+const COLS = 4;
+const ROWS = 2;
 
 export type AtlasCell = keyof typeof ATLAS_CELLS;
 
@@ -28,7 +38,7 @@ export function cellUV(cell: AtlasCell, u: number, v: number): [number, number] 
   const inset = 0.012;
   const uu = inset + u * (1 - 2 * inset);
   const vv = inset + v * (1 - 2 * inset);
-  return [(cx + uu) * 0.5, (cy + vv) * 0.5];
+  return [(cx + uu) / COLS, (cy + vv) / ROWS];
 }
 
 function rng(seed: number) {
@@ -43,8 +53,12 @@ function rng(seed: number) {
 }
 
 interface Canvas {
+  /** Row stride in texels (the atlas is COLS × ROWS square cells). */
   size: number;
+  height: number;
   lum: Float32Array;
+  /** Per-texel colour multiplier (bark only; leaves stay 1). */
+  tint: Float32Array;
   alpha: Float32Array;
 }
 
@@ -138,37 +152,227 @@ function needles(c: Canvas, cx: number, cy: number, cellSize: number, seed: numb
   }
 }
 
-/** Opaque bark: soft vertical streaks and knots (also used for opaque canopy cores). */
-function bark(c: Canvas, cx: number, cy: number, cellSize: number) {
-  const r = rng(99);
-  const ox = cx * cellSize;
-  const oy = cy * cellSize;
-  const streaks = Array.from({ length: 40 }, () => ({ x: r(), w: 0.004 + r() * 0.012, d: 0.12 + r() * 0.2 }));
-  for (let y = 0; y < cellSize; y++) {
-    for (let x = 0; x < cellSize; x++) {
-      const u = x / cellSize;
-      const v = y / cellSize;
-      let l = 0.86 + 0.08 * Math.sin(v * 37 + Math.sin(u * 23) * 2);
-      for (const s of streaks) {
-        const wob = s.x + Math.sin(v * 9 + s.x * 40) * 0.01;
-        const dd = Math.abs(u - wob);
-        if (dd < s.w) l -= s.d * (1 - dd / s.w);
-      }
-      const i = (oy + y) * c.size + ox + x;
-      c.lum[i] = Math.max(0.35, l);
+// ------------------------------------------------------------------ bark
+
+/** Smooth value noise on a seeded lattice. */
+function noise2(seed: number) {
+  const h = (x: number, y: number) => {
+    let n = (x * 374761393 + y * 668265263 + seed * 144269) | 0;
+    n = Math.imul(n ^ (n >>> 13), 1274126177);
+    return ((n ^ (n >>> 16)) >>> 0) / 4294967296;
+  };
+  return (x: number, y: number) => {
+    const xi = Math.floor(x);
+    const yi = Math.floor(y);
+    const fx = x - xi;
+    const fy = y - yi;
+    const ux = fx * fx * (3 - 2 * fx);
+    const uy = fy * fy * (3 - 2 * fy);
+    const a = h(xi, yi);
+    const b = h(xi + 1, yi);
+    const c = h(xi, yi + 1);
+    const d = h(xi + 1, yi + 1);
+    return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+  };
+}
+
+function fbm(n: (x: number, y: number) => number, x: number, y: number, oct: number) {
+  let v = 0;
+  let amp = 0.5;
+  let f = 1;
+  for (let o = 0; o < oct; o++) {
+    v += n(x * f, y * f) * amp;
+    f *= 2.03;
+    amp *= 0.5;
+  }
+  return v / (1 - Math.pow(0.5, oct));
+}
+
+const sstep = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+type Painter = (u: number, v: number) => [number, number, number, number]; // lum, tint r, g, b
+
+/** Fill one cell with a painter: u runs around the trunk, v along it. */
+function paintCell(c: Canvas, cx: number, cy: number, cell: number, paint: Painter) {
+  for (let y = 0; y < cell; y++) {
+    for (let x = 0; x < cell; x++) {
+      const [l, r, g, b] = paint(x / cell, y / cell);
+      const i = (cy * cell + y) * c.size + cx * cell + x;
+      c.lum[i] = Math.min(1, Math.max(0.05, l));
+      c.tint[i * 3] = r;
+      c.tint[i * 3 + 1] = g;
+      c.tint[i * 3 + 2] = b;
       c.alpha[i] = 1;
     }
   }
 }
 
+/** Oak: long, narrow, blocky ridges split by deep furrows and broken across by cracks, with moss and lichen. */
+function oakBark(): Painter {
+  const n = noise2(101);
+  const m = noise2(202);
+  const h = (a: number, b: number) => n(a * 12.9898 + 0.5, b * 78.233 + 0.5);
+  return (u, v) => {
+    // ridges meander a little as they climb
+    const uw = u + (fbm(n, u * 2, v * 1.6, 3) - 0.5) * 0.22;
+    // ridges drift, pinch together and spread apart as they climb
+    const cu = uw * 7 + (fbm(m, u * 1.5 + 4, v * 0.8, 3) - 0.5) * 3.2;
+    const ci = Math.floor(cu);
+    const fu = cu - ci;
+    // each ridge breaks into long plates at its own rhythm
+    const rows = 2.2 + h(ci, 1) * 2.5;
+    const cv = v * rows + h(ci, 2) * 7 + (fu - 0.5) * (h(ci, 5) - 0.5) * 0.8;
+    const cj = Math.floor(cv);
+    const fv = cv - cj;
+    const wob = (fbm(m, u * 22, v * 7, 3) - 0.5) * 0.2;
+    const fw = 0.14 + 0.16 * fbm(n, ci * 3.7, v * 3, 2);
+    const side = Math.min(fu + wob, 1 - fu - wob);
+    const furrow = 1 - sstep(0.0, fw, side);
+    const brk = (1 - sstep(0.0, 0.05, Math.min(fv, 1 - fv) + wob * 0.2)) * (1 - furrow);
+    // lit left flank, shaded right flank: every plate looks raised
+    const bevel = (fu < 0.5 ? 1 : -0.7) * (1 - sstep(fw, fw + 0.14, side));
+    let l = 0.66 + 0.22 * h(ci + 3, cj) - 0.58 * furrow - 0.38 * brk + 0.14 * bevel * (1 - furrow);
+    // fibrous vertical grain and pitted, rough surfaces
+    l *= 0.78 + 0.34 * fbm(m, u * 70, v * 3.5, 3);
+    l *= 0.86 + 0.2 * fbm(n, u * 45 + 2, v * 30, 2);
+    const moss = sstep(0.6, 0.72, fbm(m, u * 3 + 9, v * 2, 4)) * (0.35 + 0.65 * furrow);
+    const lichen = sstep(0.74, 0.8, fbm(n, u * 6 + 3, v * 3 + 5, 4)) * (1 - furrow) * 0.6;
+    let r = 1.02;
+    let g = 1;
+    let b = 0.95;
+    r = r * (1 - moss) + 0.78 * moss;
+    g = g * (1 - moss) + 1.14 * moss;
+    b = b * (1 - moss) + 0.6 * moss;
+    if (lichen > 0) {
+      l = l * (1 - lichen) + 0.95 * lichen;
+      r = r * (1 - lichen) + 1.2 * lichen;
+      g = g * (1 - lichen) + 1.3 * lichen;
+      b = b * (1 - lichen) + 1.2 * lichen;
+    }
+    return [l, r, g, b];
+  };
+}
+
+/** Pine: big reddish scaly plates split by dark cracks, flaking at the edges. */
+function pineBark(): Painter {
+  const rnd = rng(303);
+  const n = noise2(404);
+  // jittered lattice of plate centres, plates taller than wide
+  const gx = 6;
+  const gy = 5;
+  const pts: { x: number; y: number; t: number; w: number }[] = [];
+  for (let j = -1; j <= gy; j++) for (let i = -1; i <= gx; i++) pts.push({ x: (i + 0.15 + rnd() * 0.7) / gx, y: (j + 0.15 + rnd() * 0.7) / gy, t: rnd(), w: rnd() });
+  return (u, v) => {
+    let d1 = 9;
+    let d2 = 9;
+    let best = pts[0];
+    const wu = u + (fbm(n, u * 6, v * 6, 2) - 0.5) * 0.06;
+    for (const p of pts) {
+      const dx = (wu - p.x) * 1.0;
+      const dy = (v - p.y) * 0.5;
+      const d = dx * dx + dy * dy;
+      if (d < d1) {
+        d2 = d1;
+        d1 = d;
+        best = p;
+      } else if (d < d2) d2 = d;
+    }
+    const edge = Math.sqrt(d2) - Math.sqrt(d1);
+    let l = 0.62 + 0.3 * best.t;
+    // papery layers inside each plate
+    const lay = fbm(n, u * 18 + best.t * 9, v * 40, 3);
+    l *= 0.8 + 0.3 * lay;
+    l *= 0.88 + 0.18 * fbm(n, u * 70, v * 70, 2);
+    // flaky, layered edges, then a dark crack of uneven width between plates
+    const cw = 0.004 + 0.012 * fbm(n, u * 9 + 4, v * 9, 2);
+    l *= 0.72 + 0.28 * sstep(cw, cw + 0.03, edge);
+    l *= 0.18 + 0.82 * sstep(cw * 0.4, cw, edge);
+    const warm = 0.5 + 0.5 * best.w;
+    return [l, 1.02 + 0.12 * warm, 0.92 + 0.04 * warm, 0.84 - 0.06 * warm];
+  };
+}
+
+/** Birch: chalk-white bark with dark horizontal lenticels, black scars and peeling warm patches. */
+function birchBark(): Painter {
+  const rnd = rng(505);
+  const n = noise2(606);
+  const dashes = Array.from({ length: 110 }, () => ({ x: rnd(), y: rnd(), w: 0.02 + rnd() * 0.1, h: 0.0015 + rnd() * 0.004, k: 0.3 + rnd() * 0.45 }));
+  const scars = Array.from({ length: 4 }, () => ({ x: 0.15 + rnd() * 0.7, y: 0.1 + rnd() * 0.8, w: 0.06 + rnd() * 0.1, h: 0.012 + rnd() * 0.02 }));
+  return (u, v) => {
+    let l = 0.95 - 0.07 * fbm(n, u * 3, v * 60, 3);
+    let r = 1;
+    let g = 1;
+    let b = 1;
+    for (const d of dashes) {
+      const dx = Math.abs(u - d.x) / d.w;
+      const dy = Math.abs(v - d.y) / d.h;
+      if (dx < 1 && dy < 1) {
+        const k = (1 - dx * dx) * (1 - dy * dy);
+        l -= d.k * sstep(0.1, 0.5, k);
+      }
+    }
+    for (const sc of scars) {
+      // ragged black diamonds where old branches fell
+      const dx = Math.abs(u - sc.x) / sc.w;
+      const dy = Math.abs(v - sc.y) / sc.h;
+      const k = 1 - (dx + dy * 0.6) - (fbm(n, u * 30, v * 30, 2) - 0.5) * 0.5;
+      if (k > 0) l = l * (1 - sstep(0.0, 0.15, k)) + 0.1 * sstep(0.0, 0.15, k);
+    }
+    // peeling bark shows warm, papery patches
+    const peel = sstep(0.62, 0.7, fbm(n, u * 5 + 7, v * 9, 3));
+    r = 1 + 0.08 * peel;
+    g = 1 - 0.02 * peel;
+    b = 1 - 0.12 * peel;
+    return [l, r, g, b];
+  };
+}
+
+/** Cherry: smooth, glossy dark bark banded with rows of pale horizontal lenticels. */
+function cherryBark(): Painter {
+  const rnd = rng(707);
+  const n = noise2(808);
+  const bands = Array.from({ length: 14 }, (_, i) => ({ y: (i + 0.2 + rnd() * 0.6) / 14, s: rnd() }));
+  return (u, v) => {
+    let l = 0.78 + 0.12 * fbm(n, u * 2, v * 4, 3);
+    // faint ring texture around the trunk
+    l *= 0.94 + 0.06 * Math.sin(v * 140 + fbm(n, u * 8, v * 8, 2) * 4);
+    let r = 1.04;
+    let g = 0.93;
+    let b = 0.9;
+    for (const bd of bands) {
+      const dy = Math.abs(v - bd.y - (fbm(n, u * 3, bd.s * 9, 2) - 0.5) * 0.02);
+      if (dy > 0.03) continue;
+      // a broken row of short pale dashes, some missing, all different lengths
+      const cellU = u * (9 + bd.s * 7) + bd.s * 5;
+      const ci = Math.floor(cellU);
+      const fu = cellU - ci;
+      const len = 0.3 + 0.4 * n(ci * 1.7, bd.s * 13);
+      const keep = n(ci * 3.1 + 7, bd.s * 5) > 0.35 ? 1 : 0;
+      const on = keep * sstep(0.05, 0.12, fu) * (1 - sstep(len, len + 0.08, fu));
+      const k = on * (1 - sstep(0.002, 0.006, dy)) * 0.75;
+      l = l * (1 - k) + 0.95 * k;
+      r = r * (1 - k) + 1.12 * k;
+      g = g * (1 - k) + 1.05 * k;
+      b = b * (1 - k) + 0.95 * k;
+    }
+    // soft sheen streaks along the trunk
+    l += 0.06 * sstep(0.6, 0.9, fbm(n, u * 6 + 3, v * 1.5, 2));
+    return [l, r, g, b];
+  };
+}
+
 /** Spread leaf colour into transparent texels (a few passes of a 3×3 max-alpha fill). */
 function dilate(c: Canvas, passes: number) {
   const n = c.size;
-  const filled = new Uint8Array(n * n);
-  for (let i = 0; i < n * n; i++) filled[i] = c.alpha[i] > 0.02 ? 1 : 0;
+  const total = c.size * c.height;
+  const filled = new Uint8Array(total);
+  for (let i = 0; i < total; i++) filled[i] = c.alpha[i] > 0.02 ? 1 : 0;
   for (let p = 0; p < passes; p++) {
     const next = filled.slice();
-    for (let y = 1; y < n - 1; y++) {
+    for (let y = 1; y < c.height - 1; y++) {
       for (let x = 1; x < n - 1; x++) {
         const i = y * n + x;
         if (filled[i]) continue;
@@ -188,7 +392,7 @@ function dilate(c: Canvas, passes: number) {
     }
     filled.set(next);
   }
-  for (let i = 0; i < n * n; i++) if (!filled[i]) c.lum[i] = 0.7;
+  for (let i = 0; i < total; i++) if (!filled[i]) c.lum[i] = 0.7;
 }
 
 /** Alpha-test threshold the foliage materials use (mips are built to keep coverage at it). */
@@ -206,68 +410,88 @@ function uploadCoverageMips(scene: Scene, tex: Texture, c: Canvas) {
   };
   const internal = tex.getInternalTexture();
   if (!engine.updateTextureData || !internal) return;
-  const coverage = (alpha: Float32Array, n: number, qx: number, qy: number, s: number) => {
-    const h = n / 2;
+  // share of one cell's texels passing the alpha test
+  const coverage = (alpha: Float32Array, w: number, cx: number, cy: number, cs: number, s: number) => {
     let k = 0;
-    for (let y = qy * h; y < (qy + 1) * h; y++) for (let x = qx * h; x < (qx + 1) * h; x++) if (alpha[y * n + x] * s > LEAF_CUTOFF) k++;
-    return k / (h * h);
+    for (let y = cy * cs; y < (cy + 1) * cs; y++) for (let x = cx * cs; x < (cx + 1) * cs; x++) if (alpha[y * w + x] * s > LEAF_CUTOFF) k++;
+    return k / (cs * cs);
   };
-  const target = [0, 1, 2, 3].map((q) => coverage(c.alpha, c.size, q % 2, q >> 1, 1));
+  const cells = COLS * ROWS;
+  const cs0 = c.size / COLS;
+  const target = Array.from({ length: cells }, (_, q) => coverage(c.alpha, c.size, q % COLS, Math.floor(q / COLS), cs0, 1));
   let lum = c.lum;
+  let tint = c.tint;
   let alpha = c.alpha;
-  let n = c.size;
-  for (let lod = 1; n > 1; lod++) {
-    const m = n / 2;
-    const nl = new Float32Array(m * m);
-    const na = new Float32Array(m * m);
-    for (let y = 0; y < m; y++) {
-      for (let x = 0; x < m; x++) {
+  let w = c.size;
+  let h = c.height;
+  for (let lod = 1; w > 1 || h > 1; lod++) {
+    const mw = Math.max(1, w >> 1);
+    const mh = Math.max(1, h >> 1);
+    const nl = new Float32Array(mw * mh);
+    const nt = new Float32Array(mw * mh * 3);
+    const na = new Float32Array(mw * mh);
+    for (let y = 0; y < mh; y++) {
+      for (let x = 0; x < mw; x++) {
         let a = 0;
         let l = 0;
         let lw = 0;
+        let tr = 0;
+        let tg = 0;
+        let tb = 0;
         for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]]) {
-          const i = (y * 2 + dy) * n + x * 2 + dx;
+          const sx = Math.min(w - 1, x * 2 + dx);
+          const sy = Math.min(h - 1, y * 2 + dy);
+          const i = sy * w + sx;
           a += alpha[i];
           // colour averaged by coverage, so empty texels don't grey the leaves
-          l += lum[i] * (alpha[i] + 0.02);
-          lw += alpha[i] + 0.02;
+          const wt = alpha[i] + 0.02;
+          l += lum[i] * wt;
+          tr += tint[i * 3] * wt;
+          tg += tint[i * 3 + 1] * wt;
+          tb += tint[i * 3 + 2] * wt;
+          lw += wt;
         }
-        nl[y * m + x] = l / lw;
-        na[y * m + x] = a / 4;
+        const o = y * mw + x;
+        nl[o] = l / lw;
+        nt[o * 3] = tr / lw;
+        nt[o * 3 + 1] = tg / lw;
+        nt[o * 3 + 2] = tb / lw;
+        na[o] = a / 4;
       }
     }
     // rescale each cell's alpha back to its full-size coverage
     const scaled = new Float32Array(na);
-    if (m >= 4) {
-      for (let q = 0; q < 4; q++) {
-        const qx = q % 2;
-        const qy = q >> 1;
+    const cs = mw / COLS;
+    if (cs >= 2 && Number.isInteger(cs)) {
+      for (let q = 0; q < cells; q++) {
+        const qx = q % COLS;
+        const qy = Math.floor(q / COLS);
+        if (target[q] >= 0.999) continue;
         let lo = 0.5;
         let hi = 4;
         for (let it = 0; it < 14; it++) {
           const mid = (lo + hi) / 2;
-          if (coverage(na, m, qx, qy, mid) < target[q]) lo = mid;
+          if (coverage(na, mw, qx, qy, cs, mid) < target[q]) lo = mid;
           else hi = mid;
         }
         const sc = (lo + hi) / 2;
-        const h = m / 2;
-        for (let y = qy * h; y < (qy + 1) * h; y++) for (let x = qx * h; x < (qx + 1) * h; x++) scaled[y * m + x] = Math.min(1, na[y * m + x] * sc);
+        for (let y = qy * cs; y < (qy + 1) * cs; y++) for (let x = qx * cs; x < (qx + 1) * cs; x++) scaled[y * mw + x] = Math.min(1, na[y * mw + x] * sc);
       }
     }
-    engine.updateTextureData(internal, packMip(nl, scaled, m), 0, 0, m, m, 0, lod, false);
+    engine.updateTextureData(internal, packMip(nl, nt, scaled, mw * mh), 0, 0, mw, mh, 0, lod, false);
     lum = nl;
+    tint = nt;
     alpha = na;
-    n = m;
+    w = mw;
+    h = mh;
   }
 }
 
-function packMip(lum: Float32Array, alpha: Float32Array, n: number) {
-  const out = new Uint8Array(n * n * 4);
-  for (let i = 0; i < n * n; i++) {
-    const l = Math.round(Math.min(1, Math.max(0, lum[i])) * 255);
-    out[i * 4] = l;
-    out[i * 4 + 1] = l;
-    out[i * 4 + 2] = l;
+function packMip(lum: Float32Array, tint: Float32Array, alpha: Float32Array, count: number) {
+  const out = new Uint8Array(count * 4);
+  for (let i = 0; i < count; i++) {
+    const l = Math.min(1, Math.max(0, lum[i]));
+    for (let k = 0; k < 3; k++) out[i * 4 + k] = Math.round(Math.min(1, l * tint[i * 3 + k]) * 255);
     out[i * 4 + 3] = Math.round(Math.min(1, alpha[i]) * 255);
   }
   return out;
@@ -278,16 +502,22 @@ let cached: Texture | null = null;
 /** The shared foliage atlas (built once). */
 export function getLeafAtlas(scene: Scene): Texture {
   if (cached && cached.getScene() === scene) return cached;
-  const size = 1024;
-  const cell = size / 2;
-  const c: Canvas = { size, lum: new Float32Array(size * size), alpha: new Float32Array(size * size) };
+  const cell = 512;
+  const width = cell * COLS;
+  const height = cell * ROWS;
+  const c: Canvas = { size: width, height, lum: new Float32Array(width * height), tint: new Float32Array(width * height * 3).fill(1), alpha: new Float32Array(width * height) };
   clump(c, 0, 0, cell, { count: 300, len: [0.05, 0.085], wid: 0.5, seed: 11, radius: 0.38 });
   clump(c, 1, 0, cell, { count: 420, len: [0.035, 0.06], wid: 0.75, seed: 23, radius: 0.4 });
   needles(c, 0, 1, cell, 37);
-  bark(c, 1, 1, cell);
+  // opaque canopy cores, cones and boulders sample this flat cell
+  paintCell(c, 1, 1, cell, () => [0.86, 1, 1, 1]);
+  paintCell(c, 2, 0, cell, oakBark());
+  paintCell(c, 3, 0, cell, pineBark());
+  paintCell(c, 2, 1, cell, birchBark());
+  paintCell(c, 3, 1, cell, cherryBark());
   dilate(c, 24);
   // stored in sRGB space: the albedo sampler converts to linear
-  const tex = RawTexture.CreateRGBATexture(packMip(c.lum, c.alpha, size), size, size, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
+  const tex = RawTexture.CreateRGBATexture(packMip(c.lum, c.tint, c.alpha, width * height), width, height, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
   tex.name = 'leafAtlas';
   tex.wrapU = tex.wrapV = Texture.CLAMP_ADDRESSMODE;
   tex.hasAlpha = true;

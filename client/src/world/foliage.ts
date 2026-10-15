@@ -57,6 +57,7 @@ const TYPES: TreeType[] = [
   { id: 'pine0', build: (l) => pine(l, 0), collider: 0.45, shadow: true, wind: 0.6, cards: true },
   { id: 'pine1', build: (l) => pine(l, 1), collider: 0.45, shadow: true, wind: 0.6, cards: true },
   { id: 'birch', build: (l) => birch(l, 0), collider: 0.35, shadow: true, wind: 1.2, cards: true },
+  { id: 'birch1', build: (l) => birch(l, 1), collider: 0.4, shadow: true, wind: 1.2, cards: true },
   { id: 'blossom0', build: (l) => blossom(l, 0), collider: 0.45, shadow: true, wind: 1.1, cards: true },
   { id: 'blossom1', build: (l) => blossom(l, 1), collider: 0.45, shadow: true, wind: 1.1, cards: true },
   { id: 'bush0', build: (l) => bush(l, 0), collider: 0, shadow: true, wind: 0.6, maxDist: 220, cards: true },
@@ -123,6 +124,36 @@ const WIND_GLSL = /* glsl */ `
   kDisp += vec2(sin(kT * 4.1 + worldPos.y * 1.3 + kPhase), cos(kT * 3.7 + worldPos.x * 1.1)) * 0.05 * kSway;
   worldPos.xz += kDisp * kSway * min(kH * 0.12, 1.2) * windStrength;
   vPositionW = vec3(worldPos);
+`;
+
+// Every tree is a little different: a per-instance hash (from its root
+// position) shifts the bark (right half of the atlas) and the leaves toward
+// warmer or cooler, lighter or darker, so no two neighbours match.
+const TINT_GLSL = /* glsl */ `
+#ifdef KCARDS
+  {
+    vec3 kP = fract(kRoot.xzx * vec3(0.1031, 0.1030, 0.0973));
+    kP += dot(kP, kP.yzx + 33.33);
+    vec3 kH3 = fract((kP.xxy + kP.yzz) * kP.zyx);
+    vec3 kTint;
+    if (uv.x > 0.5) kTint = mix(vec3(1.1, 1.0, 0.88), vec3(0.88, 0.93, 1.04), kH3.x) * (0.8 + 0.34 * kH3.y);
+    else kTint = mix(vec3(1.07, 1.03, 0.84), vec3(0.9, 1.0, 1.07), kH3.x) * (0.88 + 0.22 * kH3.z);
+    vColor.rgb *= kTint;
+  }
+#endif
+`;
+const TINT_WGSL = /* wgsl */ `
+#ifdef KCARDS
+  {
+    var kP = fract(kRoot.xzx * vec3f(0.1031, 0.1030, 0.0973));
+    kP += dot(kP, kP.yzx + 33.33);
+    let kH3 = fract((kP.xxy + kP.yzz) * kP.zyx);
+    var kTint: vec3f;
+    if (vertexInputs.uv.x > 0.5) { kTint = mix(vec3f(1.1, 1.0, 0.88), vec3f(0.88, 0.93, 1.04), kH3.x) * (0.8 + 0.34 * kH3.y); }
+    else { kTint = mix(vec3f(1.07, 1.03, 0.84), vec3f(0.9, 1.0, 1.07), kH3.x) * (0.88 + 0.22 * kH3.z); }
+    vertexOutputs.vColor = vec4f(vertexOutputs.vColor.rgb * kTint, vertexOutputs.vColor.a);
+  }
+#endif
 `;
 
 const WIND_WGSL = /* wgsl */ `
@@ -212,8 +243,8 @@ export class Foliage {
         uniforms: { windParams: 'vec4', windStrength: 'float' },
         attributes: t.cards ? [CARD_CORNER_KIND] : [],
         defines: t.cards ? { KCARDS: true } : {},
-        glsl: { vertex: { CUSTOM_VERTEX_DEFINITIONS: CARD_DEFS_GLSL, CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_GLSL } },
-        wgsl: { vertex: { CUSTOM_VERTEX_DEFINITIONS: CARD_DEFS_WGSL, CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_WGSL } },
+        glsl: { vertex: { CUSTOM_VERTEX_DEFINITIONS: CARD_DEFS_GLSL, CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_GLSL, CUSTOM_VERTEX_MAIN_END: TINT_GLSL } },
+        wgsl: { vertex: { CUSTOM_VERTEX_DEFINITIONS: CARD_DEFS_WGSL, CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_WGSL, CUSTOM_VERTEX_MAIN_END: TINT_WGSL } },
       });
       plugin.values.windStrength = t.wind;
       freezeStatic(mat);
@@ -294,7 +325,7 @@ export class Foliage {
           const r1 = hash2(i, j, 6);
           const r2 = hash2(i, j, 10);
           if (z > 180 || h > 40 || (f > 0.5 && r1 < 0.3)) type = r1 < 0.5 ? T.pine0 : T.pine1;
-          else if (nearWater && r1 < 0.6) type = T.birch;
+          else if (nearWater && r1 < 0.6) type = r2 < 0.45 ? T.birch1 : T.birch;
           else if ((villageRing || f < 0.2) && r2 < (villageRing ? 0.6 : 0.4)) type = r2 < 0.2 ? T.blossom1 : T.blossom0;
           else type = r1 < 0.34 ? T.oak0 : r1 < 0.67 ? T.oak1 : T.oak2;
           out.push({ type, x, y: h, z, rot, scale: sc });
@@ -339,9 +370,17 @@ export class Foliage {
         mats: arr.map((items) => {
           if (!items.length) return null;
           const buf = new Float32Array(items.length * 16);
+          const t = TYPES[items[0].type];
+          // trees also get their own proportions and a slight natural lean
+          const vary = t.cards && t.collider > 0;
           items.forEach((p, k) => {
-            Quaternion.RotationYawPitchRollToRef(p.rot, 0, 0, q);
-            s.set(p.scale, p.scale, p.scale);
+            const h1 = hash2(Math.floor(p.x * 7.3), Math.floor(p.z * 7.3), 21);
+            const h2 = hash2(Math.floor(p.x * 7.3), Math.floor(p.z * 7.3), 22);
+            const h3 = hash2(Math.floor(p.x * 7.3), Math.floor(p.z * 7.3), 23);
+            const tall = vary ? 0.86 + h1 * 0.34 : 1;
+            const wide = vary ? (0.9 + h2 * 0.22) / Math.sqrt(tall) : 1;
+            Quaternion.RotationYawPitchRollToRef(p.rot, vary ? (h3 - 0.5) * 0.08 : 0, vary ? (h2 - 0.5) * 0.08 : 0, q);
+            s.set(p.scale * wide, p.scale * tall, p.scale * wide);
             tr.set(p.x, p.y, p.z);
             Matrix.ComposeToRef(s, q, tr, m);
             m.copyToArray(buf, k * 16);
