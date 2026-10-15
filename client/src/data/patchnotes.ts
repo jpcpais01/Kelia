@@ -15,6 +15,13 @@ export const PATCH_NOTES: PatchNote[] = [
     lines: ['Accounts now use a username and password instead of an email: pick any name of 3 to 16 letters, numbers or underscores and you are in. Google sign-in is still there too.'],
   },
   {
+    at: '2026-10-15T20:10:00Z',
+    title: 'Wildflower meadows',
+    lines: [
+      'The meadows bloom with five kinds of wildflower, each with its own shape: daisies in white, pink and lilac, buttercups and red or orange poppies, nodding bellflowers, tall lupin spikes and little clover pompoms. Every plant is different, with its own height, flower size and tilt, and many carry two or three blooms. Each kind grows in its own drifts, with the odd stray flower in between.',
+    ],
+  },
+  {
     at: '2026-10-15T20:05:00Z',
     title: 'Choose your time of day',
     lines: [
