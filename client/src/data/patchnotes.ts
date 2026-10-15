@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T21:02:00Z',
+    title: 'A view of the valley while you load',
+    lines: ['The loading screen now opens on a view of Kelia itself: Mirror Lake at sunset and at dawn, Hearthmere in the evening light, the wildflower meadows, the Shrine of Arrival, Silverfall, the Greyspine peaks and the vista from the heights. Each visit starts on a different scene, gently dimmed so the title stays clear, and slowly drifts and fades into the next while the world gets ready.'],
+  },
+  {
     at: '2026-10-15T21:00:00Z',
     title: 'Smooth spellcasting and nature magic',
     lines: [
