@@ -54,8 +54,9 @@ to a local file, which Render wipes on every restart.
 
 ### 3. Vercel (client)
 
-Import the repository with the **root directory left as the repo root**;
-[`vercel.json`](vercel.json) builds `client/` into `client/dist`. Set these
+Import the repository. Either root directory works: left as the repo root,
+[`vercel.json`](vercel.json) builds `client/` into `client/dist`; set to
+`client`, [`client/vercel.json`](client/vercel.json) does the same. Set these
 under **Settings → Environment Variables**, then redeploy:
 
 | Variable | Value |
