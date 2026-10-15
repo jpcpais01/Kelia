@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T20:30:00Z',
+    title: 'No more flickering specks',
+    lines: ['The white specks that flickered in the meadows and around the sun are gone: flowers too small to draw cleanly melt into soft dabs of colour, glints and glowing blade tips fade before they shrink to a single pixel, nothing in the grass outshines the sky, and sparkles on the water spread into a steady shimmer instead of blinking.'],
+  },
+  {
     at: '2026-10-15T20:12:00Z',
     title: 'Sign in with a username',
     lines: ['Accounts now use a username and password instead of an email: pick any name of 3 to 16 letters, numbers or underscores and you are in. Google sign-in is still there too.'],

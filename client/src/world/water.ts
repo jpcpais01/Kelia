@@ -284,7 +284,15 @@ void main(void) {
   float nh = max(dot(n, H), 0.0);
   // stylized glints: hard-edged sparkles fading with distance, a sun road and a soft sheen
   float glintFade = 1.0 - smoothstep(12.0, 45.0, camDist);
-  float spec = smoothstep(0.992, 0.996, nh) * 4.0 * glintFade + pow(nh, 350.0) * 2.5 + pow(nh, 60.0) * 0.25;
+  // Specular anti-aliasing: where the ripples turn faster than a pixel can
+  // follow, a razor-thin highlight would blink on single pixels as the water
+  // moves, so it widens and dims instead (same light, spread steadily).
+  float fw = fwidth(nh);
+  float gw = 0.004 + 2.0 * fw;
+  float nv = length(fwidth(n));
+  float e1 = 350.0 / (1.0 + 350.0 * nv * nv);
+  float e2 = 60.0 / (1.0 + 60.0 * nv * nv);
+  float spec = smoothstep(0.996 - gw, 0.996, nh) * 4.0 * (0.004 / gw) * glintFade + pow(nh, e1) * 2.5 * (e1 / 350.0) + pow(nh, e2) * 0.25 * (e2 / 60.0);
   vec3 sun = sunColor * spec * step(0.0, sunDir.y);
 
   vec3 col = (body + causCol + sss) * (1.0 - fresnel) + refl * fresnel + sun;

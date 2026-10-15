@@ -33,6 +33,7 @@ uniform mat4 viewProjection;
 uniform vec4 field;   // x = period, y = fade radius, z = inner cut radius, w = density scale
 uniform vec4 shape;   // x = height, y = width, z = flower species (0 = grass), w = time
 uniform vec3 camPos;
+uniform float pxScale; // pixels per metre at 1 m from the camera
 uniform vec4 wind;    // xy = dir, z = strength, w = gust scale
 uniform vec4 pushers[4];
 uniform sampler2D heightTex;
@@ -53,6 +54,7 @@ varying vec4 vSplat;
 varying float vRand;
 varying float vPatch;
 varying float vFar;
+varying float vDetail;
 varying float vHue;
 varying float vFace;
 varying vec3 vBladeN;
@@ -116,6 +118,13 @@ void main(void) {
   // its detail down so it reads as a soft mass instead of glittering.
   vFar = smoothstep(6.0, 28.0, dist);
   if (shape.z > 0.5) s *= 1.0 - 0.35 * vFar;
+  // How many pixels wide a blade (or a flower head) is on screen. Anything
+  // thinner than a few pixels can't be drawn steadily: as it sways it lands
+  // on a pixel one frame and misses it the next, so its sparkle (white
+  // petals, sun glints, glowing tips) has to fade out before it gets there.
+  // (shape.y is a flower's size, about 7× its head; or a blade's width)
+  float px = shape.y * s * pxScale / max(dist, 0.3);
+  vDetail = shape.z > 0.5 ? smoothstep(40.0, 100.0, px) : smoothstep(2.0, 8.0, px);
   // taller, lusher grass in the forest edge, short near paths
   s *= mix(1.0, 1.35, sp.r) * (1.0 - sp.a * 0.5);
   // kept short in the village and around the shrine
@@ -214,6 +223,7 @@ varying vec4 vSplat;
 varying float vRand;
 varying float vPatch;
 varying float vFar;
+varying float vDetail;
 varying vec3 vRoot;
 varying float vBloom;
 varying float vHue;
@@ -290,9 +300,12 @@ void main(void) {
     flowerColors(shape.z, fract(vBloom * 2.7 + vRand * 0.22), pb, pt, heart);
     vec3 petal = mix(pb, pt, vColor.g) * (0.9 + 0.2 * fract(vRand * 31.7));
     vec3 stem = vRoot * 0.85;
-    // distant flowers become soft dabs of colour, not bright pixel sparkles
-    petal = mix(petal, mix(stem, petal, 0.55), vFar);
-    col = vColor.a > 0.9 ? petal * petal : vColor.a > 0.2 ? heart * heart : stem;
+    // small flowers become soft dabs of colour, not bright pixel sparkles
+    float dab = max(vFar, 1.0 - vDetail);
+    petal = mix(petal, mix(stem, petal, 0.45), dab);
+    heart = mix(heart, mix(stem, petal, 0.45), dab);
+    // pure white petals would sit far above everything else in the meadow
+    col = vColor.a > 0.9 ? petal * petal * 0.82 : vColor.a > 0.2 ? heart * heart : stem;
   } else {
     // Each blade grows out of the ground colour: deep shade at the root, the
     // meadow's own green through the middle and a warm, sunny tip. Blades
@@ -318,7 +331,7 @@ void main(void) {
     // sunlit blades catch a glossy streak
     vec3 Hh = normalize(V + sunDir);
     vec3 N = normalize(vBladeN * (gl_FrontFacing ? 1.0 : -1.0));
-    glint = pow(clamp(dot(N, Hh), 0.0, 1.0), 28.0) * smoothstep(0.35, 0.9, h) * near;
+    glint = pow(clamp(dot(N, Hh), 0.0, 1.0), 28.0) * smoothstep(0.35, 0.9, h) * near * vDetail * vDetail;
     col *= 0.94 + 0.12 * fract(vRand * 13.7) * near;
     // distant blades lean toward the field's average colour (less per-blade contrast)
     col = mix(col, mix(vRoot, tip, 0.5), vFar * 0.6);
@@ -330,7 +343,7 @@ void main(void) {
   float soft = 0.06;
   float litK = smoothstep(-soft, soft, sunDir.y) * (1.0 + 0.12 * smoothstep(0.5, 0.7, sunDir.y));
   float back = clamp(dot(-V, sunDir), 0.0, 1.0);
-  float trans = (pow(back, 3.0) * 0.95 + pow(back, 12.0) * 0.6) * h * (1.0 - 0.7 * vFar);
+  float trans = (pow(back, 3.0) * 0.95 + pow(back, 12.0) * 0.6) * h * (1.0 - 0.7 * vFar) * mix(0.35, 1.0, vDetail);
   float ao = mix(mix(0.72, 1.0, h), 0.95, vFar * 0.6);
   float sh = 1.0;
 #ifdef GSHADOW
@@ -344,7 +357,9 @@ void main(void) {
   // rolling wind gusts catch the light: a silvery sheen sweeping over the field
   float sheen = vGust * vGust * vGust;
   lit3 += (col * 0.5 + vec3(0.05, 0.06, 0.03)) * sheen * 0.55 * sunColor * h * sh * (1.0 - 0.6 * vFar);
-  vec3 lit = lit3;
+  // no blade or petal outshines the sky: single over-bright pixels are what flickers
+  float peak = max(lit3.r, max(lit3.g, lit3.b));
+  vec3 lit = lit3 * min(1.0, 1.5 / max(peak, 1e-4));
   gl_FragColor = vec4(kFog(lit, vPos, camPos), 1.0);
 }
 `;
@@ -685,6 +700,8 @@ export class Grass {
   private fields: Field[] = [];
   private pushers = new Float32Array(16);
   readonly wind = new Vector4(0.8, 0.6, 0.55, 1);
+  /** Pixels per metre at 1 m from the camera (render height / (2·tan(fov/2))), set each frame. */
+  pxScale = 900;
   private sunCol = new Color3();
   private ambCol = new Color3();
   private dirV = new Vector3();
@@ -745,7 +762,7 @@ export class Grass {
     const sg = this.atmosphere.shadows;
     const mat = new ShaderMaterial(name + 'Mat', this.scene, 'keliaGrass', {
       attributes: ['position', 'uv', 'color', 'grassInst'],
-      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo'],
+      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'pxScale', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo'],
       samplers: ['heightTex', 'splatTex', 'detailTex', 'shadowTex'],
       defines: sg ? ['GSHADOW'] : [],
     });
@@ -795,6 +812,7 @@ export class Grass {
       m.setVector4('field', f.fv);
       m.setVector4('shape', f.sv.set(f.shape[0], f.shape[1], f.shape[2], time));
       m.setVector3('camPos', cameraPos);
+      m.setFloat('pxScale', this.pxScale);
       m.setVector4('wind', this.wind);
       m.setArray4('pushers', this.pushArr);
       m.setVector3('sunDir', dir);
