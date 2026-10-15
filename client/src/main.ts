@@ -31,6 +31,7 @@ async function boot() {
   progress(0.6, 'Growing the forests…');
   await new Promise((r) => setTimeout(r, 0));
   const world = new World(engine, data, PRESETS[level] ?? PRESETS.medium);
+  if (settings.renderScale > 0) world.setRenderScale(settings.renderScale);
   progress(0.72, 'Raising the village…');
   const [lib, monsterLib] = await Promise.all([
     RigLibrary.load(world.scene, 'characters/adventurers.glb', ['knight', 'barbarian', 'mage', 'rogue']),
@@ -46,7 +47,7 @@ async function boot() {
   perfOverlay.init(engine, {
     api,
     gpu,
-    quality: () => `${world.quality.level} · ${Math.round(world.quality.renderScale * 100)}% scale`,
+    quality: () => `${world.quality.level} · ${world.scaleLabel()}`,
     ping: () => game?.ping ?? null,
   });
 

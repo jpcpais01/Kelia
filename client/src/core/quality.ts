@@ -53,6 +53,8 @@ export const PRESETS: Record<QualityLevel, QualitySettings> = {
 export interface UserSettings {
   quality: QualityLevel | 'auto';
   renderer: 'auto' | 'webgpu' | 'webgl2';
+  /** Rendering resolution as a fraction of the screen's native pixels (0.5–2); 0 = automatic (from the quality preset). */
+  renderScale: number;
   mouseSensitivity: number;
   invertY: boolean;
   fov: number;
@@ -64,6 +66,7 @@ export interface UserSettings {
 const DEFAULTS: UserSettings = {
   quality: 'auto',
   renderer: 'auto',
+  renderScale: 0,
   mouseSensitivity: 1,
   invertY: false,
   fov: 60,
