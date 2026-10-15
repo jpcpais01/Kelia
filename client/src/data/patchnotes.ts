@@ -10,10 +10,17 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    at: '2026-10-15T19:55:00Z',
-    title: 'Clearer sign-in errors',
+    at: '2026-10-15T19:57:00Z',
+    title: 'Front view and clearer sign-in',
     lines: [
-      'Account sign-in now reads its settings more forgivingly and, when something is still wrong, the title screen says exactly what (a mistyped or rejected key, a missing project) instead of a raw Firebase error. Guest play always keeps working.',
+      'Press V to swing the camera smoothly round to the front and see your hero face on, framed a little closer, with their eyes turned to meet yours. You keep walking and fighting as normal, and V again glides back behind you. Account sign-in also reads its settings more forgivingly and, when something is still wrong, the title screen says exactly what (a mistyped or rejected key, a missing project) instead of a raw Firebase error; guest play always keeps working.',
+    ],
+  },
+  {
+    at: '2026-10-15T19:53:00Z',
+    title: 'Trees with character',
+    lines: [
+      'Every tree in Kelia is now its own: bark is hand-painted per species, with ridged, mossy oak trunks, flaky red pine plates, white birch with dark scars and glossy banded cherry, and no two neighbours share quite the same shape, height, lean or shade of bark and leaves. Oaks grow as broad giants, upright crowns or gnarled leaners with low side limbs, cherries come in classic pink or pale white blossom, pines grow crooked trunks and uneven tiers, and birches by the water often grow as clusters of two or three stems.',
     ],
   },
   {
@@ -34,15 +41,7 @@ export const PATCH_NOTES: PatchNote[] = [
     at: '2026-10-15T19:25:00Z',
     title: 'The valley comes alive with sound',
     lines: [
-      'Kelia now has a soundscape, all of it created by the game itself: thrushes, warblers and tits sing from the trees, skylarks pour out their song high over the meadows, woodpeckers drum and cuckoos call in the Whisperwood, and a hawk cries over the Greyspine crags. Each bird sings from a real spot around you, so you can walk towards it, and a dawn chorus greets the sunrise.',
-      'At night the crickets take over the fields, owls hoot in the wood and frogs croak along the river and Mirror Lake. Leaves rustle and swell with every gust, the wind whistles around the peaks with an echo off the rock, the river babbles beside you, Silverfall roars long before you see it and waves lap at the lake shore. Hearthmere has its own life: the smith\'s hammer rings on the anvil by day, the windmill creaks, chimes stir, torches crackle and the chapel bell rings at dawn, noon and dusk. New music, "Dawn in the Highlands", fades gently in and out between quiet pauses. Sound starts after your first click, goes quiet when you switch tabs, and Settings has a new Sound section with Master, Music and Ambience sliders.',
-    ],
-  },
-  {
-    at: '2026-10-15T19:20:00Z',
-    title: 'Front view',
-    lines: [
-      'Press V to swing the camera smoothly round to the front and see your hero face on, framed a little closer, with their eyes turned to meet yours. You keep walking and fighting as normal, and V again glides back behind you.',
+      'Kelia now has a soundscape, all of it created by the game itself: thrushes, warblers and tits sing from the trees, skylarks pour out their song high over the meadows, woodpeckers drum and cuckoos call in the Whisperwood, and a hawk cries over the Greyspine crags. Each bird sings from a real spot around you, so you can walk towards it, and a dawn chorus greets the sunrise. At night the crickets take over the fields, owls hoot in the wood and frogs croak along the river and Mirror Lake. Leaves rustle and swell with every gust, the wind whistles around the peaks with an echo off the rock, the river babbles beside you, Silverfall roars long before you see it and waves lap at the lake shore. Hearthmere has its own life: the smith\'s hammer rings on the anvil by day, the windmill creaks, chimes stir, torches crackle and the chapel bell rings at dawn, noon and dusk. New music, "Dawn in the Highlands", fades gently in and out between quiet pauses. Sound starts after your first click, goes quiet when you switch tabs, and Settings has a new Sound section with Master, Music and Ambience sliders.',
     ],
   },
   {
