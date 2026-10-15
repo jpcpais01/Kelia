@@ -7,6 +7,8 @@ export * from './data/appearance';
 export * from './data/classes';
 export * from './data/items';
 export * from './data/progression';
+export * from './data/monsters';
 export * from './world/layout';
 export * from './world/terrain';
 export * from './world/heightmap';
+export * from './combat';

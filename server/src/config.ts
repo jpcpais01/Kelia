@@ -24,4 +24,6 @@ export const config = {
   /** Where the file store keeps saves when Firebase isn't configured. */
   dataDir: env.DATA_DIR ?? new URL('../data/', import.meta.url).pathname,
   version: env.RENDER_GIT_COMMIT?.slice(0, 7) ?? 'dev',
+  /** Local testing only: enables /tp x z. Never set this in production. */
+  devCommands: env.DEV_COMMANDS === 'true',
 };

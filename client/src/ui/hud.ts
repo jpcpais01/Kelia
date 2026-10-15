@@ -1,7 +1,7 @@
 // In-game HUD: health and XP, skill bar, minimap, chat, name plates, toasts
 // and the small menu (settings, patch notes, controls).
 import { Vector3, type Camera, type Engine, type AbstractEngine, Matrix } from '@babylonjs/core';
-import { CHAT_MAX_LENGTH, CLASSES, ITEMS, POINTS_OF_INTEREST, WORLD_HALF, type CharacterData, type PointOfInterest } from '@kelia/shared';
+import { CHAT_MAX_LENGTH, CLASSES, ITEMS, POINTS_OF_INTEREST, SKILL_UNLOCK, WORLD_HALF, type CharacterData, type PointOfInterest } from '@kelia/shared';
 import { h, icon, mount } from './dom';
 import type { Heightmap } from '@kelia/shared';
 import { renderMapImage } from './mapImage';
@@ -41,6 +41,12 @@ export class Hud {
   private clockEl: HTMLElement;
   private hint: HTMLElement;
   private crosshair: HTMLElement;
+  private floats: HTMLElement;
+  private bossEl: HTMLElement;
+  private bossFill: HTMLElement;
+  private bossName: HTMLElement;
+  private hurtEl: HTMLElement;
+  private deathEl: HTMLElement | null = null;
   notesDot: HTMLElement;
   slots: HTMLElement[] = [];
   chatOpen = false;
@@ -63,9 +69,14 @@ export class Hud {
     this.mapCtx = this.mapCanvas.getContext('2d')!;
     this.zoneEl = h('div', { class: 'zone-label' });
     this.clockEl = h('div', { class: 'clock' });
-    this.hint = h('div', { class: 'center-hint' }, h('span', { class: 'kbd' }, 'W A S D'), 'move', h('span', { class: 'kbd' }, 'Shift'), 'sprint', h('span', { class: 'kbd' }, 'Space'), 'jump', h('span', { class: 'kbd' }, 'Click'), 'look around', h('span', { class: 'kbd' }, 'Esc'), 'free mouse');
+    this.hint = h('div', { class: 'center-hint' }, h('span', { class: 'kbd' }, 'W A S D'), 'move', h('span', { class: 'kbd' }, 'Shift'), 'sprint', h('span', { class: 'kbd' }, 'Space'), 'jump', h('span', { class: 'kbd' }, 'Click'), 'look & attack', h('span', { class: 'kbd' }, '1 2 3'), 'skills', h('span', { class: 'kbd' }, 'Q'), 'dodge', h('span', { class: 'kbd' }, 'Esc'), 'free mouse');
     this.crosshair = h('div', { class: 'crosshair' });
     this.notesDot = h('span', { class: 'dot' });
+    this.floats = h('div', { class: 'floats' });
+    this.bossFill = h('i');
+    this.bossName = h('div', { class: 'boss-name' });
+    this.bossEl = h('div', { class: 'boss-bar' }, this.bossName, h('div', { class: 'boss-track' }, this.bossFill));
+    this.hurtEl = h('div', { class: 'hurt' });
 
     const bottom = h(
       'div',
@@ -77,7 +88,10 @@ export class Hud {
     this.el = h(
       'div',
       { class: 'hud' },
+      this.hurtEl,
       this.plates,
+      this.floats,
+      this.bossEl,
       this.crosshair,
       h('div', { class: 'top-left' }, h('div', null, this.nameEl, this.subEl)),
       h('div', { class: 'minimap' }, this.mapCanvas, h('div', { class: 'minimap-n' }, 'N')),
@@ -127,12 +141,101 @@ export class Hud {
     const potion = slot('R', 'potion', ITEMS.potion_small.name, ' sep');
     potion.append(h('span', { class: 'qty' }, String(potions?.qty ?? 0)));
     this.slots = [
-      slot('LMB', cls.combo[0].icon, cls.combo[0].name),
-      ...cls.skills.map((s) => slot(s.key, s.icon, `${s.name}: ${s.description}`, ' locked')),
-      slot('Q', 'dodge', `${cls.dodge.name}: ${cls.dodge.description}`, ' locked'),
+      slot('LMB', cls.combo[0].icon, `${cls.combo.map((c) => c.name).filter((n, i, a) => a.indexOf(n) === i).join(' → ')}: hold or click to attack`),
+      ...cls.skills.map((s, i) => slot(s.key, s.icon, `${s.name} (unlocks at level ${SKILL_UNLOCK[i]}): ${s.description}`)),
+      slot('Q', 'dodge', `${cls.dodge.name}: ${cls.dodge.description}`),
       potion,
     ];
     bar.replaceChildren(...this.slots);
+    this.setUnlocks(c.level);
+  }
+
+  /** Grey out skills the character hasn't learned yet. */
+  setUnlocks(level: number) {
+    SKILL_UNLOCK.forEach((lv, i) => this.slots[1 + i]?.classList.toggle('locked', level < lv));
+  }
+
+  /** frac = remaining fraction of the cooldown (0 = ready). */
+  setCooldown(slot: number, frac: number, secondsLeft: number) {
+    const el = this.slots[slot];
+    if (!el) return;
+    const cd = el.querySelector('.cd') as HTMLElement;
+    const t = el.querySelector('.cdt') as HTMLElement;
+    const p = `${Math.round(Math.max(0, frac) * 100)}%`;
+    if (cd.style.getPropertyValue('--p') !== p) cd.style.setProperty('--p', p);
+    const txt = secondsLeft > 0.05 ? (secondsLeft < 1 ? secondsLeft.toFixed(1) : String(Math.ceil(secondsLeft))) : '';
+    if (t.textContent !== txt) t.textContent = txt;
+    if (frac <= 0 && el.dataset.cd === '1') {
+      el.dataset.cd = '0';
+      this.pulse(slot);
+    } else if (frac > 0) el.dataset.cd = '1';
+  }
+
+  pulse(slot: number) {
+    const el = this.slots[slot];
+    if (!el) return;
+    el.classList.remove('flash');
+    void el.offsetWidth;
+    el.classList.add('flash');
+  }
+
+  setPotions(n: number) {
+    const q = this.slots[5]?.querySelector('.qty');
+    if (q) q.textContent = String(n);
+    this.slots[5]?.classList.toggle('empty', n <= 0);
+  }
+
+  // ---------------------------------------------------------------- combat feedback
+  /** Floating text at a world position (damage numbers, XP). */
+  floatText(engine: AbstractEngine | Engine, camera: Camera, pos: Vector3, text: string, kind: string) {
+    void engine;
+    const v = Vector3.TransformCoordinates(pos, camera.getTransformationMatrix());
+    if (v.z <= 0 || v.z >= 1 || Math.abs(v.x) > 1.1 || Math.abs(v.y) > 1.1) return;
+    const x = ((v.x + 1) / 2) * window.innerWidth + (Math.random() - 0.5) * 30;
+    const y = ((1 - v.y) / 2) * window.innerHeight;
+    const el = h('div', { class: 'float ' + kind, style: `left:${x}px;top:${y}px` }, text);
+    this.floats.append(el);
+    while (this.floats.children.length > 40) this.floats.firstChild?.remove();
+    setTimeout(() => el.remove(), 1200);
+  }
+
+  /** Red edge flash when you get hurt (strength 0..1). */
+  hurt(strength: number) {
+    this.hurtEl.style.transition = 'none';
+    this.hurtEl.style.opacity = String(Math.min(1, 0.35 + strength * 2));
+    void this.hurtEl.offsetWidth;
+    this.hurtEl.style.transition = 'opacity 0.7s ease';
+    this.hurtEl.style.opacity = '0';
+  }
+
+  /** Low health keeps a faint pulse on screen. */
+  setLowHealth(on: boolean) {
+    this.el.classList.toggle('low-hp', on);
+  }
+
+  setBoss(name: string | null, frac = 1) {
+    this.bossEl.classList.toggle('on', !!name);
+    if (name && this.bossName.textContent !== name) this.bossName.textContent = name;
+    this.bossFill.style.transform = `scaleX(${Math.max(0, Math.min(1, frac))})`;
+  }
+
+  levelUp(level: number) {
+    const el = h('div', { class: 'levelup' }, h('div', { class: 't1' }, 'Level up'), h('div', { class: 't2' }, String(level)));
+    this.toastArea.prepend(el);
+    setTimeout(() => el.remove(), 3600);
+  }
+
+  showDeath(by: string, onRespawn: () => void) {
+    this.hideDeath();
+    const btn = h('button', { class: 'btn primary', disabled: true, onclick: () => onRespawn() }, 'Return to Hearthmere');
+    this.deathEl = h('div', { class: 'death interactive' }, h('div', { class: 't1' }, 'You have fallen'), h('div', { class: 't2' }, `Struck down by ${by}.`), btn);
+    this.el.append(this.deathEl);
+    setTimeout(() => (btn.disabled = false), 2800);
+  }
+
+  hideDeath() {
+    this.deathEl?.remove();
+    this.deathEl = null;
   }
 
   setHp(hp: number, max: number) {
@@ -187,16 +290,21 @@ export class Hud {
   }
 
   // ---------------------------------------------------------------- name plates
-  plate(id: number, name: string, level: number): Plate {
+  plate(id: number, name: string, level: number, kind = ''): Plate {
     let p = this.plateMap.get(id);
     if (!p) {
       const hp = h('i');
-      const el = h('div', { class: 'nameplate' }, h('div', { class: 'n' }, h('small', null, String(level)), name), h('div', { class: 'hpb' }, hp));
+      const el = h('div', { class: 'nameplate ' + kind }, h('div', { class: 'n' }, h('small', null, String(level)), name), h('div', { class: 'hpb' }, hp));
       this.plates.append(el);
       p = { el, hp, bubble: null, bubbleUntil: 0 };
       this.plateMap.set(id, p);
     }
     return p;
+  }
+
+  setPlateLevel(id: number, level: number) {
+    const s = this.plateMap.get(id)?.el.querySelector('small');
+    if (s) s.textContent = String(level);
   }
 
   removePlate(id: number) {
@@ -251,7 +359,7 @@ export class Hud {
   }
 
   // ---------------------------------------------------------------- minimap
-  updateMinimap(px: number, pz: number, yaw: number, camYaw: number, others: { x: number; z: number }[], discovered: string[]) {
+  updateMinimap(px: number, pz: number, yaw: number, camYaw: number, others: { x: number; z: number }[], discovered: string[], enemies: { x: number; z: number; boss: boolean }[] = []) {
     const ctx = this.mapCtx;
     const S = this.mapCanvas.width;
     const scale = 1.6; // canvas px per metre
@@ -278,6 +386,14 @@ export class Hud {
       ctx.fillStyle = known ? '#f6dfaa' : 'rgba(246,223,170,0.45)';
       ctx.beginPath();
       ctx.arc(x, y, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const e of enemies) {
+      const x = (e.x - px) * scale;
+      const y = (e.z - pz) * scale;
+      ctx.fillStyle = e.boss ? '#ff3b2f' : 'rgba(255,107,94,0.85)';
+      ctx.beginPath();
+      ctx.arc(x, y, e.boss ? 7 : 3.5, 0, Math.PI * 2);
       ctx.fill();
     }
     for (const o of others) {

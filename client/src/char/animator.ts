@@ -137,7 +137,8 @@ export class Animator {
     g.stop();
     g.mask = upper ? new AnimationGroupMask(UPPER_BODY, AnimationGroupMaskMode.Include) : null;
     g.weight = MIN_W;
-    g.start(!!o.loop, speed, g.from, g.to, false);
+    // holds loop internally so the group can't end (and drop its pose) before we freeze it
+    g.start(!!o.loop || !!o.hold, speed, g.from, g.to, false);
     this.action = {
       group: g,
       t: 0,
@@ -189,7 +190,10 @@ export class Animator {
         a.onEnd?.();
       } else {
         a.weight = Math.max(MIN_W, Math.min(1, a.t / a.fadeIn));
-        if (a.hold && a.t >= a.duration) a.group.pause();
+        if (a.hold && a.t >= a.duration && a.group.isPlaying) {
+          a.group.goToFrame(a.group.to - 0.01);
+          a.group.pause();
+        }
         // Upper-body actions out-weigh locomotion on the masked bones (Babylon normalises weights > 1).
         a.group.weight = a.upper ? a.weight * 6 : a.weight;
         if (!a.upper) actionFull = a.weight;

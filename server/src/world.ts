@@ -18,7 +18,7 @@ import {
   dayTimeAt,
   isClassId,
   isValidAppearance,
-  maxHpFor,
+  statsFor,
   newCharacter,
   normalizeName,
   q,
@@ -31,8 +31,11 @@ import {
   type PublicCharacter,
   type ServerMessage,
   type SnapEntity,
+  type Stats,
 } from '@kelia/shared';
 import { verifyToken, type AuthResult } from './auth';
+import { config } from './config';
+import { Combat, PlayerCombat, type Fighter } from './combat';
 import type { CharacterStore } from './store';
 
 export class Session {
@@ -61,12 +64,21 @@ export class Player {
   lastSaveAt = Date.now();
   joinedAt = Date.now();
   corrections = 0;
-  maxHp: number;
+  stats: Stats;
+  combat = new PlayerCombat();
 
   constructor(readonly id: number, readonly session: Session, public character: CharacterData) {
     [this.x, this.y, this.z] = character.pos;
     this.yaw = character.yaw;
-    this.maxHp = maxHpFor(character.cls, character.level);
+    this.stats = statsFor(character.cls, character.level, character.equipment);
+  }
+
+  get maxHp() {
+    return this.stats.maxHp;
+  }
+
+  send(msg: object) {
+    this.session.sendRaw(JSON.stringify(msg));
   }
 
   get publicInfo(): PublicCharacter {
@@ -91,11 +103,21 @@ export class World {
   private nextId = 1;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   readonly heightmap: Heightmap;
+  readonly combat: Combat;
+  private lastTick = Date.now();
 
   constructor(private store: CharacterStore) {
     const t0 = Date.now();
     this.heightmap = new Heightmap(1).fill();
     console.log(`[world] heightmap ${this.heightmap.size}² ready in ${Date.now() - t0} ms`);
+    this.combat = new Combat({
+      players: this.players as unknown as Map<number, Fighter>,
+      groundAt: (x, z) => this.heightmap.sample(x, z),
+      walkable: (x, z) => Math.abs(x) < WORLD_HALF - 40 && Math.abs(z) < WORLD_HALF - 40 && !this.tooDeep(x, z),
+      broadcast: (msg) => this.broadcast(msg as ServerMessage),
+      now: () => Date.now(),
+    });
+    console.log(`[world] ${this.combat.monsters.length} monsters roam the valley`);
   }
 
   start() {
@@ -140,6 +162,14 @@ export class World {
     const p = s.player;
     if (p) {
       this.players.delete(p.id);
+      this.combat.playerLeft(p.id);
+      if (p.combat.dead) {
+        // fallen heroes wake up in the village
+        p.character.hp = p.maxHp;
+        p.x = SPAWN_POINT[0];
+        p.z = SPAWN_POINT[1];
+        p.y = this.heightmap.sample(p.x, p.z);
+      }
       this.syncCharacter(p);
       void this.save(p);
       this.broadcast({ t: 'leave', id: p.id });
@@ -167,6 +197,15 @@ export class World {
         return;
       case 'ping':
         return s.send({ t: 'pong', c: Number(msg.c) || 0, s: Date.now() });
+      case 'act':
+        if (s.player) this.combat.act(s.player, msg.k, Number(msg.i) | 0, Number(msg.yaw), Number(msg.tx), Number(msg.tz));
+        return;
+      case 'use':
+        if (s.player) this.combat.usePotion(s.player, String(msg.id));
+        return;
+      case 'respawn':
+        if (s.player) this.combat.respawn(s.player);
+        return;
     }
   }
 
@@ -257,10 +296,11 @@ export class World {
     if (!p) return;
     const { x, y, z, yaw } = msg;
     if (![x, y, z, yaw].every(Number.isFinite)) return;
+    if (p.combat.dead) return;
     const now = Date.now();
     const dt = Math.min(1.0, Math.max(0.05, (now - p.lastMoveAt) / 1000));
     const horiz = Math.hypot(x - p.x, z - p.z);
-    const allowed = MAX_ACCEPTED_SPEED * dt + 1.2;
+    const allowed = MAX_ACCEPTED_SPEED * dt + 1.2 + (now < p.combat.dashUntil ? p.combat.dashDistance : 0);
     const ground = this.heightmap.sample(x, z);
     const outOfBounds = Math.abs(x) > WORLD_HALF - 6 || Math.abs(z) > WORLD_HALF - 6;
     const underground = y < ground - 1.2;
@@ -324,32 +364,47 @@ export class World {
         p.y = this.heightmap.sample(p.x, p.z);
         p.session.send({ t: 'correct', x: q(p.x), y: q(p.y), z: q(p.z) });
         return reply('Returned you to Hearthmere.');
+      case 'tp': {
+        if (!config.devCommands) break;
+        const [, xs, zs] = text.split(/\s+/);
+        const x = Number(xs);
+        const z = Number(zs);
+        if (!Number.isFinite(x) || !Number.isFinite(z)) return reply('/tp x z');
+        p.x = x;
+        p.z = z;
+        p.y = this.heightmap.sample(x, z);
+        p.session.send({ t: 'correct', x: q(p.x), y: q(p.y), z: q(p.z) });
+        return;
+      }
       case 'wave':
       case 'cheer':
       case 'dance':
       case 'sit':
         return this.broadcast({ t: 'emote', id: p.id, e: cmd.toLowerCase() });
-      default:
-        return reply('Commands: /who, /roll, /stuck, /wave, /cheer, /dance, /sit');
     }
+    return reply('Commands: /who, /roll, /stuck, /wave, /cheer, /dance, /sit');
   }
 
   // ------------------------------------------------------------------ simulation
   private tick() {
     const now = Date.now();
+    const dt = Math.min(0.25, (now - this.lastTick) / 1000);
+    this.lastTick = now;
     if (this.players.size === 0) return;
+    this.combat.tick(dt);
     const e: SnapEntity[] = [];
     for (const p of this.players.values()) {
       const hpFrac = Math.round((p.character.hp / p.maxHp) * 255);
-      e.push([p.id, q(p.x), q(p.y), q(p.z), Math.round(p.yaw * 1000) / 1000, p.state, hpFrac]);
+      e.push([p.id, q(p.x), q(p.y), q(p.z), Math.round(p.yaw * 1000) / 1000, p.combat.dead ? MoveState.Dead : p.state, hpFrac]);
       if (now - p.lastSaveAt > SAVE_INTERVAL_MS) {
         p.lastSaveAt = now;
         this.syncCharacter(p);
         void this.save(p);
       }
     }
-    const data = JSON.stringify({ t: 's', ts: now, e });
-    for (const p of this.players.values()) p.session.sendRaw(data);
+    // players see everyone, but only the monsters around them
+    const head = JSON.stringify({ t: 's', ts: now, e }).slice(0, -1);
+    for (const p of this.players.values()) p.session.sendRaw(`${head},"m":${JSON.stringify(this.combat.snapshot(p.x, p.z, 110))}}`);
   }
 
   private syncCharacter(p: Player) {
