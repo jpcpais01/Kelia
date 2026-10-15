@@ -141,6 +141,13 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
     if (a !== 'Idle' && a !== 'walk' && a !== 'run') c.animator.play(a, { loop: true });
     return { c, a };
   });
+  if (params.get('fx')) {
+    // effects showcase: scripted skills, frozen at ?fxt= for screenshots
+    const { runFxShowcase } = await import('./fx/showcase');
+    await runFxShowcase(world, chars.map(({ c }, i) => ({ c, cls: looks[i].cls })), monsterLib, params, [ox, oz]);
+    (window as unknown as { chars: unknown }).chars = chars;
+    return;
+  }
   world.onUpdate((dt) => {
     for (const { c, a } of chars) {
       const v = a === 'walk' ? new Vector3(0, 0, -2.1) : a === 'run' ? new Vector3(0, 0, -5.4) : Vector3.Zero();
