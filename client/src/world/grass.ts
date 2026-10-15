@@ -41,6 +41,7 @@ uniform vec3 grassA;
 uniform vec3 grassB;
 uniform vec3 grassDry;
 uniform vec3 forestCol;
+uniform vec3 sunDir;
 varying vec3 vRoot;
 varying float vBloom;
 varying vec2 vUv;
@@ -51,6 +52,9 @@ varying vec4 vSplat;
 varying float vRand;
 varying float vPatch;
 varying float vFar;
+varying float vHue;
+varying float vFace;
+varying vec3 vBladeN;
 #ifdef GSHADOW
 uniform mat4 lightMatrix;
 varying vec4 vLightPos;
@@ -91,8 +95,9 @@ void main(void) {
   if (shape.z > 0.5) dens *= (1.0 - sp.r) * smoothstep(0.42, 0.62, drift) * 1.6;
   else dens *= 1.0 - sp.r * 0.45;
   float keep = step(grassInst.z, dens * field.w);
-  float fade = 1.0 - smoothstep(field.y * 0.6, field.y, dist);
-  float inner = smoothstep(field.z - 2.0, field.z + 2.0, dist);
+  float fade = 1.0 - smoothstep(field.y * (field.z > 0.0 ? 0.6 : 0.7), field.y, dist);
+  // the near and far fields cross-fade over a wide band so there is no seam
+  float inner = field.z > 0.0 ? smoothstep(field.z * 0.7, field.z, dist) : 1.0;
   float s = keep * fade * inner * (0.55 + 0.9 * grassInst.w);
   // Past a few metres a blade or a flower is only a pixel or two wide: tone
   // its detail down so it reads as a soft mass instead of glittering.
@@ -107,14 +112,37 @@ void main(void) {
   s *= mix(0.5, 1.0, smoothstep(${SHRINE.radius.toFixed(1)} - 2.0, ${SHRINE.radius.toFixed(1)} + 6.0, length(wp - vec2(${SHRINE.center[0].toFixed(1)}, ${SHRINE.center[1].toFixed(1)}))));
 
   float ang = grassInst.z * 43.7 + grassInst.w * 17.0;
-  float ca = cos(ang); float sa = sin(ang);
-  vec3 lp = vec3(position.x * shape.y, position.y * shape.x, position.z * shape.y);
-  lp = vec3(lp.x * ca - lp.z * sa, lp.y, lp.x * sa + lp.z * ca);
+  vec3 lp;
+  float hgt = uv.y;
+  float bladeH = shape.x;
+  if (shape.z > 0.5) {
+    float ca = cos(ang); float sa = sin(ang);
+    lp = vec3(position.x * shape.y, position.y * shape.x, position.z * shape.y);
+    lp = vec3(lp.x * ca - lp.z * sa, lp.y, lp.x * sa + lp.z * ca);
+    vHue = 0.5;
+    vFace = 0.0;
+    vBladeN = vec3(0.0, 1.0, 0.0);
+  } else {
+    // A tuft: every blade carries its own yaw, outward lean and height in the
+    // vertex colour, so one instance is a little fan of blades. Tufts swell
+    // into taller clumps and dip into short patches across the meadow.
+    float clump = vnoise1(wp * 0.33 + 3.0) * 0.6 + vnoise1(wp * 1.1) * 0.4;
+    ang += color.r * 6.2832;
+    float ca = cos(ang); float sa = sin(ang);
+    bladeH = shape.x * color.b * mix(0.62, 1.38, clump);
+    // curvature scales with height, so long blades arc and short ones stand
+    lp = vec3(position.x * shape.y * mix(0.85, 1.2, grassInst.w), position.y * bladeH, (position.z + color.g * position.y) * bladeH);
+    lp = vec3(lp.x * ca - lp.z * sa, lp.y, lp.x * sa + lp.z * ca);
+    vHue = fract(grassInst.z * 7.31 + color.r * 3.7);
+    // the blade's concave face points along its arc
+    vec2 D = vec2(-sa, ca);
+    vFace = dot(D, normalize(sunDir.xz + vec2(1e-4)));
+    vBladeN = normalize(vec3(D.x, 0.55 + 0.6 * hgt, D.y));
+  }
   lp *= s;
 
   // Wind: steady sway + rolling gust bands that travel across the meadow.
   float t = shape.w;
-  float hgt = uv.y;
   float bend = hgt * hgt;
   float along = dot(wp, wind.xy);
   float gust = sin(along * 0.07 * wind.w - t * 1.6) * 0.5 + 0.5;
@@ -122,7 +150,7 @@ void main(void) {
   vGust = gust;
   float sway = sin(t * 2.3 + wp.x * 0.7 + wp.y * 0.5 + grassInst.z * 6.0) * 0.12;
   vec2 w = wind.xy * (wind.z * (0.25 + gust * 0.9)) + vec2(-wind.y, wind.x) * sway * wind.z;
-  lp.xz += w * bend * s * shape.x;
+  lp.xz += w * bend * s * bladeH * 0.75;
 
   // Characters push the grass aside.
   for (int i = 0; i < 4; i++) {
@@ -160,6 +188,9 @@ varying float vPatch;
 varying float vFar;
 varying vec3 vRoot;
 varying float vBloom;
+varying float vHue;
+varying float vFace;
+varying vec3 vBladeN;
 uniform vec4 shape;
 uniform vec3 camPos;
 ${TOON_FOG_GLSL}
@@ -199,6 +230,10 @@ vec3 flowerPalette(float r) {
 void main(void) {
   float h = vUv.y;
   vec3 col;
+  float sideLit = 1.0;
+  float glint = 0.0;
+  vec3 V = normalize(camPos - vPos);
+  float near = 1.0 - vFar;
   if (shape.z > 0.5) {
     // flowers: vertex colour alpha marks petals (1) and the heart (0.35)
     float kind = fract(vBloom * 3.7 + vRand * 0.18);
@@ -209,30 +244,53 @@ void main(void) {
     petal = mix(petal, mix(stem, petal, 0.55), vFar);
     col = vColor.a > 0.9 ? petal * petal : vColor.a > 0.2 ? heart * heart : stem;
   } else {
-    // each blade starts as the ground it grows from and brightens to a sunny tip
-    float dry = smoothstep(0.6, 0.95, fract(vRand * 3.7));
-    vec3 tip = mix(vRoot * vec3(1.5, 1.55, 1.2) + vec3(0.035, 0.045, 0.0), tipColor, 0.25);
-    tip = mix(tip, dryColor, dry * 0.45);
-    vec3 bse = vRoot * 0.62;
-    col = mix(bse, tip, smoothstep(0.0, 1.0, h));
-    col *= 0.93 + 0.14 * fract(vRand * 13.7) * (1.0 - 0.7 * vFar);
+    // Each blade grows out of the ground colour: deep shade at the root, the
+    // meadow's own green through the middle and a warm, sunny tip. Blades
+    // differ a little in hue (cool blue-greens beside warm yellow-greens) and
+    // some are sun-bleached.
+    float dry = smoothstep(0.62, 0.95, fract(vRand * 3.7));
+    vec3 warmCool = mix(vec3(0.86, 1.0, 1.1), vec3(1.14, 1.05, 0.78), vHue);
+    vec3 tip = mix(vRoot * vec3(1.5, 1.5, 1.1) + vec3(0.045, 0.05, 0.0), tipColor, 0.24) * warmCool;
+    tip = mix(tip, dryColor, dry * 0.5);
+    vec3 mid = vRoot * mix(vec3(1.0), warmCool, 0.5);
+    vec3 bse = vRoot * vec3(0.36, 0.42, 0.4);
+    col = mix(bse, mid, smoothstep(0.0, 0.42, h));
+    col = mix(col, tip, smoothstep(0.38, 1.0, h));
+    // Folded blade: the half that faces the sun is bright, the other half
+    // sits in its own shade, split along a soft mid-rib (anime two-tone).
+    float side = (vUv.x - 0.5) * (gl_FrontFacing ? 1.0 : -1.0);
+    float facing = vFace * (gl_FrontFacing ? 1.0 : -1.0);
+    float hl = smoothstep(-0.06, 0.06, side * sign(facing + 1e-3));
+    sideLit = mix(1.0, mix(0.8, 1.1, hl) * mix(0.9, 1.06, facing * 0.5 + 0.5), near);
+    // a fine dark edge keeps neighbouring blades apart up close
+    float edge = abs(vUv.x - 0.5) * 2.0;
+    col *= 1.0 - 0.16 * smoothstep(0.55, 1.0, edge) * near * (1.0 - h * 0.5);
+    // sunlit blades catch a glossy streak
+    vec3 Hh = normalize(V + sunDir);
+    vec3 N = normalize(vBladeN * (gl_FrontFacing ? 1.0 : -1.0));
+    glint = pow(clamp(dot(N, Hh), 0.0, 1.0), 28.0) * smoothstep(0.35, 0.9, h) * near;
+    col *= 0.94 + 0.12 * fract(vRand * 13.7) * near;
     // distant blades lean toward the field's average colour (less per-blade contrast)
-    col = mix(col, mix(vRoot, tip, 0.45), vFar * 0.55);
+    col = mix(col, mix(vRoot, tip, 0.5), vFar * 0.6);
   }
   // Lit like the ground it grows from (an up-facing surface under the toon
   // model), so roots melt into the terrain; tips glow when the sun is behind
   // them, and soft drifts of lighter and darker green roll over the meadow.
-  col *= mix(0.92, 1.08, vPatch);
+  col *= mix(0.9, 1.1, vPatch);
   float soft = 0.06;
   float litK = smoothstep(-soft, soft, sunDir.y) * (1.0 + 0.12 * smoothstep(0.5, 0.7, sunDir.y));
-  vec3 V = normalize(camPos - vPos);
-  float trans = pow(clamp(dot(-V, sunDir), 0.0, 1.0), 4.0) * h * 0.7 * (1.0 - 0.75 * vFar);
-  float ao = mix(mix(0.8, 1.0, h), 0.95, vFar * 0.6);
+  float back = clamp(dot(-V, sunDir), 0.0, 1.0);
+  float trans = (pow(back, 3.0) * 0.95 + pow(back, 12.0) * 0.6) * h * (1.0 - 0.7 * vFar);
+  float ao = mix(mix(0.72, 1.0, h), 0.95, vFar * 0.6);
   float sh = 1.0;
 #ifdef GSHADOW
   sh = grassShadow();
 #endif
-  vec3 lit3 = col * (sunColor * (litK + trans) * sh * (1.0 - vSplat.r * 0.25) + ambientColor) * ao;
+  float sun = litK * sh * (1.0 - vSplat.r * 0.25);
+  vec3 lit3 = col * (sunColor * litK * sideLit * sh * (1.0 - vSplat.r * 0.25) + ambientColor) * ao;
+  // backlit blades glow a warm, translucent yellow-green
+  lit3 += col * vec3(1.15, 1.2, 0.6) * sunColor * trans * sun;
+  lit3 += sunColor * vec3(1.0, 0.97, 0.8) * glint * 0.32 * sun;
   // rolling wind gusts catch the light: a silvery sheen sweeping over the field
   float sheen = vGust * vGust * vGust;
   lit3 += (col * 0.5 + vec3(0.05, 0.06, 0.03)) * sheen * 0.55 * sunColor * h * sh * (1.0 - 0.6 * vFar);
@@ -241,33 +299,41 @@ void main(void) {
 }
 `;
 
-function bladeGeometry(): VertexData {
-  // A slightly curved, tapered blade: 4 segments, 9 vertices.
+/**
+ * A tuft of tapered, arcing blades: each blade is 4 segments (9 vertices),
+ * and its vertex colour carries the blade's yaw (r, 0..1 of a turn), outward
+ * lean (g) and height (b). One blade alone is the far field's tuft.
+ */
+function tuftGeometry(blades: { yaw: number; lean: number; h: number }[]): VertexData {
   const positions: number[] = [];
   const uvs: number[] = [];
   const colors: number[] = [];
   const indices: number[] = [];
   const segs = 4;
-  for (let i = 0; i <= segs; i++) {
-    const t = i / segs;
-    const w = 0.5 * (1 - Math.pow(t, 1.6));
-    const curve = t * t * 0.25;
-    if (i < segs) {
-      positions.push(-w, t, curve, w, t, curve);
-      uvs.push(0, t, 1, t);
-      colors.push(1, 1, 1, 0, 1, 1, 1, 0);
-    } else {
-      positions.push(0, t, curve);
-      uvs.push(0.5, 1);
-      colors.push(1, 1, 1, 0);
+  for (const bl of blades) {
+    const o = positions.length / 3;
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      // widest a third of the way up, then a long taper to a sharp tip
+      const w = 0.5 * Math.sin(Math.min(1, t * 1.5 + 0.35) * Math.PI * 0.5) * (1 - Math.pow(t, 1.8));
+      const curve = t * t * 0.28;
+      if (i < segs) {
+        positions.push(-w, t, curve, w, t, curve);
+        uvs.push(0, t, 1, t);
+        colors.push(bl.yaw, bl.lean, bl.h, 0, bl.yaw, bl.lean, bl.h, 0);
+      } else {
+        positions.push(0, t, curve);
+        uvs.push(0.5, 1);
+        colors.push(bl.yaw, bl.lean, bl.h, 0);
+      }
     }
+    for (let i = 0; i < segs - 1; i++) {
+      const a = o + i * 2;
+      indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    }
+    const last = o + (segs - 1) * 2;
+    indices.push(last, last + 2, last + 1);
   }
-  for (let i = 0; i < segs - 1; i++) {
-    const a = i * 2;
-    indices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
-  }
-  const last = (segs - 1) * 2;
-  indices.push(last, last + 2, last + 1);
   const vd = new VertexData();
   vd.positions = positions;
   vd.uvs = uvs;
@@ -275,6 +341,13 @@ function bladeGeometry(): VertexData {
   vd.indices = indices;
   return vd;
 }
+
+const NEAR_TUFT = [
+  { yaw: 0.0, lean: 0.1, h: 1.0 },
+  { yaw: 0.36, lean: 0.26, h: 0.8 },
+  { yaw: 0.69, lean: 0.34, h: 0.66 },
+];
+const FAR_TUFT = [{ yaw: 0, lean: 0.08, h: 1 }];
 
 function flowerGeometry(): VertexData {
   // A thin stem, a little leaf, and a cupped head of six rounded petals around
@@ -339,12 +412,13 @@ interface Field {
   mat: ShaderMaterial;
   shape: [number, number, number];
   fv: Vector4;
+  /** Own vector per field: ShaderMaterial keeps a reference, not a copy. */
+  sv: Vector4;
 }
 
 export class Grass {
   private fields: Field[] = [];
   private pushers = new Float32Array(16);
-  private shapeV = new Vector4();
   readonly wind = new Vector4(0.8, 0.6, 0.55, 1);
   private sunCol = new Color3();
   private ambCol = new Color3();
@@ -362,8 +436,9 @@ export class Grass {
     this.fields = [];
     const innerR = q.grassRadius * 0.34;
     // inner dense field, outer sparse field of bigger tufts, and flowers
-    this.addField('grassNear', bladeGeometry(), innerR, 0, q.grassDensity, { h: 0.46, w: 0.078, flower: false });
-    this.addField('grassFar', bladeGeometry(), q.grassRadius, innerR, q.grassDensity * 0.3, { h: 0.55, w: 0.15, flower: false });
+    // near: dense tufts of three blades; far: bigger single blades
+    this.addField('grassNear', tuftGeometry(NEAR_TUFT), innerR, 0, q.grassDensity * 0.45, { h: 0.5, w: 0.11, flower: false });
+    this.addField('grassFar', tuftGeometry(FAR_TUFT), q.grassRadius, innerR, q.grassDensity * 0.3, { h: 0.62, w: 0.17, flower: false });
     this.addField('flowers', flowerGeometry(), Math.min(q.grassRadius, 46), 0, q.grassDensity * 0.09, { h: 0.38, w: 0.3, flower: true });
   }
 
@@ -420,7 +495,7 @@ export class Grass {
     for (const k of ['grassA', 'grassB', 'grassDry', 'forestCol'] as const) mat.setColor3(k, Color3.FromArray(GROUND[k]));
     mesh.material = mat;
     const fv = new Vector4(period, radius, innerCut, 1);
-    this.fields.push({ mesh, mat, shape: [shape.h, shape.w, shape.flower ? 1 : 0], fv });
+    this.fields.push({ mesh, mat, shape: [shape.h, shape.w, shape.flower ? 1 : 0], fv, sv: new Vector4() });
   }
 
   /** Up to four characters that bend the grass (x, z, radius). */
@@ -446,7 +521,7 @@ export class Grass {
     this.fields.forEach((f) => {
       const m = f.mat;
       m.setVector4('field', f.fv);
-      m.setVector4('shape', this.shapeV.set(f.shape[0], f.shape[1], f.shape[2], time));
+      m.setVector4('shape', f.sv.set(f.shape[0], f.shape[1], f.shape[2], time));
       m.setVector3('camPos', cameraPos);
       m.setVector4('wind', this.wind);
       m.setArray4('pushers', this.pushArr);
