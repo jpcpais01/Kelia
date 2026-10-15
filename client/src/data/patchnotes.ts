@@ -15,6 +15,11 @@ export const PATCH_NOTES: PatchNote[] = [
     lines: ['Light now behaves like it really bounces around the valley: tree crowns shade the forest floor and turn the light under them a soft green, even far beyond the real-time shadows, valleys, cliff bases and the foot of every wall gather gentle shade, and the ground tints the light it reflects. Your eyes adjust too, opening up as you walk into a dark wood and settling back down in the bright meadow, and hidden surfaces are now skipped before they are painted, which saves graphics work.'],
   },
   {
+    at: '2026-10-15T21:02:00Z',
+    title: 'A view of the valley while you load',
+    lines: ['The loading screen now opens on a view of Kelia itself: Mirror Lake at sunset and at dawn, Hearthmere in the evening light, the wildflower meadows, the Shrine of Arrival, Silverfall, the Greyspine peaks and the vista from the heights. Each visit starts on a different scene, gently dimmed so the title stays clear, and slowly drifts and fades into the next while the world gets ready.'],
+  },
+  {
     at: '2026-10-15T21:00:00Z',
     title: 'Smooth spellcasting and nature magic',
     lines: [
