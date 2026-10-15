@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T19:20:00Z',
+    title: 'Front view',
+    lines: [
+      'Press V to swing the camera smoothly round to the front and see your hero face on, framed a little closer, with their eyes turned to meet yours. You keep walking and fighting as normal, and V again glides back behind you.',
+    ],
+  },
+  {
     at: '2026-10-15T18:25:00Z',
     title: 'The world map',
     lines: [

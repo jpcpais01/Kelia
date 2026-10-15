@@ -37,6 +37,10 @@ export class FollowCamera {
   private initialized = false;
   /** Set while the free cursor aims: forward() then points at the cursor instead. */
   aimYaw: number | null = null;
+  /** Front view (V): the orbit swings round to face the hero. Movement keeps the normal frame. */
+  frontView = false;
+  /** 0 = behind, 1 = in front; eased so the swing glides rather than cuts. */
+  private front = 0;
 
   constructor(readonly camera: UniversalCamera) {}
 
@@ -66,6 +70,15 @@ export class FollowCamera {
     this.targetDistance = Math.max(2.2, Math.min(14, this.targetDistance * Math.pow(1.12, steps)));
   }
 
+  toggleFrontView() {
+    this.frontView = !this.frontView;
+  }
+
+  /** How far the camera has swung to the front (0..1). */
+  get frontAmount() {
+    return this.front;
+  }
+
   /** Forward direction on the ground plane (where W walks and skills aim). */
   forward() {
     if (this.aimYaw !== null) return new Vector3(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw));
@@ -88,19 +101,28 @@ export class FollowCamera {
     this.focus.y += (target.y - this.focus.y) * kv;
 
     this.distance += (this.targetDistance - this.distance) * (1 - Math.exp(-dt * 8));
-    const cp = Math.cos(this.pitch);
-    const dir = new Vector3(-Math.sin(this.yaw) * cp, Math.sin(this.pitch), -Math.cos(this.yaw) * cp);
-    const right = new Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
-    const pivot = this.focus.add(right.scale(this.shoulder * Math.min(1, this.distance / 5)));
+    // Front view: a critically damped glide of the orbit half way round, settling
+    // a touch closer, lower and centred so the face fills the frame.
+    this.front += ((this.frontView ? 1 : 0) - this.front) * (1 - Math.exp(-dt * 6));
+    if (Math.abs(this.front - (this.frontView ? 1 : 0)) < 1e-3) this.front = this.frontView ? 1 : 0;
+    const f = this.front * this.front * (3 - 2 * this.front);
+    const yaw = this.yaw + Math.PI * f;
+    const pitch = this.pitch + (Math.min(this.pitch, 0.18) - this.pitch) * f;
+    const dist = this.distance + (Math.min(this.distance, 4.2) - this.distance) * f;
+    const cp = Math.cos(pitch);
+    const dir = new Vector3(-Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp);
+    const right = new Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
+    const pivot = this.focus.add(right.scale(this.shoulder * (1 - f) * Math.min(1, dist / 5)));
+    pivot.y += 0.12 * f;
 
     // Pull in when terrain or an obstacle is in the way.
-    let d = this.distance;
+    let d = dist;
     const steps = 14;
     for (let i = 1; i <= steps; i++) {
-      const s = (this.distance * i) / steps;
+      const s = (dist * i) / steps;
       const p = pivot.add(dir.scale(s));
       if (p.y < this.groundAt(p.x, p.z) + 0.35 || this.blocked(p.x, p.y, p.z)) {
-        d = Math.max(1.2, s - this.distance / steps);
+        d = Math.max(1.2, s - dist / steps);
         break;
       }
     }
@@ -115,14 +137,14 @@ export class FollowCamera {
     const sh = this.settings.shake ? this.trauma * this.trauma : 0;
     const look = pivot.clone();
     look.y += 0.15;
-    // slight look-ahead in the direction of travel
-    look.addInPlace(velocity.scale(0.06));
+    // slight look-ahead in the direction of travel (not in front view, where it would pull off the face)
+    look.addInPlace(velocity.scale(0.06 * (1 - f)));
     if (sh > 0) {
-      const f = 22;
-      pos.x += noise.noise(this.t * f, 1) * sh * 0.22;
-      pos.y += noise.noise(this.t * f, 2) * sh * 0.22;
-      look.x += noise.noise(this.t * f, 3) * sh * 0.12;
-      look.y += noise.noise(this.t * f, 4) * sh * 0.12;
+      const freq = 22;
+      pos.x += noise.noise(this.t * freq, 1) * sh * 0.22;
+      pos.y += noise.noise(this.t * freq, 2) * sh * 0.22;
+      look.x += noise.noise(this.t * freq, 3) * sh * 0.12;
+      look.y += noise.noise(this.t * freq, 4) * sh * 0.12;
     }
     // punch: a stiff spring back to centre
     if (this.kickV.lengthSquared() > 1e-8 || this.kick.lengthSquared() > 1e-8) {

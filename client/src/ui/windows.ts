@@ -72,6 +72,7 @@ export function openHelp() {
       ...row(['Esc'], 'Free the mouse / close windows'),
       ...row(['Drag'], 'Turn the camera while the mouse is free'),
       ...row(['Wheel'], 'Zoom'),
+      ...row(['V'], 'Front view: swing the camera round to face your hero (press again to go back)'),
       ...row(['Enter'], 'Chat'),
       ...row(['/wave', '/cheer', '/dance', '/sit'], 'Emotes'),
       ...row(['/who', '/roll', '/stuck'], 'Who is online, roll dice, get unstuck'),
