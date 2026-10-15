@@ -8,6 +8,7 @@ import { renderMapImage } from './mapImage';
 import { drawPin, WorldMap, type WorldMapState } from './worldMap';
 import { Roster } from './roster';
 import { closeWindow } from './windows';
+import type { TimeOfDay } from '../core/quality';
 import { fullscreenSupported, onFullscreenChange, toggleFullscreen } from './fullscreen';
 
 export interface Plate {
@@ -26,6 +27,9 @@ export interface HudCallbacks {
   openMap(): void;
   travel(poi: PointOfInterest): void;
   travelNote(poi: PointOfInterest): string;
+  /** Current time-of-day view, and a switch to the next one (auto → sunrise → day → sunset → night). */
+  timeOfDay(): TimeOfDay;
+  cycleTimeOfDay(): TimeOfDay;
 }
 
 export class Hud {
@@ -120,6 +124,7 @@ export class Hud {
         h('button', { class: 'icon-btn', title: 'Controls', onclick: () => cb.openHelp() }, icon('keys', 18)),
         h('button', { class: 'icon-btn', title: 'Patch notes', onclick: () => cb.openPatchNotes() }, icon('scroll', 18), this.notesDot),
         h('button', { class: 'icon-btn', title: 'Settings', onclick: () => cb.openSettings() }, icon('gear', 18)),
+        timeButton(cb),
         fullscreenButton(),
       ),
       this.toastArea,
@@ -516,6 +521,27 @@ export class Hud {
   dispose() {
     this.el.remove();
   }
+}
+
+const TIME_VIEW: Record<TimeOfDay, { icon: string; title: string }> = {
+  auto: { icon: 'clock', title: 'Time of day: automatic (click for sunrise)' },
+  sunrise: { icon: 'sunrise', title: 'Time of day: always sunrise (click for day)' },
+  day: { icon: 'sun', title: 'Time of day: always day (click for sunset)' },
+  sunset: { icon: 'sunset', title: 'Time of day: always sunset (click for night)' },
+  night: { icon: 'moon', title: 'Time of day: always night (click for automatic)' },
+};
+
+function timeButton(cb: HudCallbacks) {
+  const btn = h('button', { class: 'icon-btn' }) as HTMLButtonElement;
+  const show = (mode: TimeOfDay) => {
+    const v = TIME_VIEW[mode];
+    btn.replaceChildren(icon(v.icon, 18));
+    btn.title = v.title;
+    btn.classList.toggle('active', mode !== 'auto');
+  };
+  btn.onclick = () => show(cb.cycleTimeOfDay());
+  show(cb.timeOfDay());
+  return btn;
 }
 
 function fullscreenButton() {
