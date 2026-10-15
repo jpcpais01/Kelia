@@ -3,7 +3,7 @@
 // locomotion the players use. Styled to read as a menace: ivory bone with
 // cold shadows, a rim light in its eye colour, glowing eyes with a soft halo,
 // an anime hit flash (white body and outline) and, for the boss, molten seams,
-// a turning sigil underfoot, and embers and dark wisps rising off it.
+// a turning ring of briars underfoot, and embers and dark wisps rising off it.
 // A spring layer leans it into its own swings and staggers it back, pushed
 // away from the blow, when it is struck.
 import {
@@ -208,7 +208,7 @@ export class MonsterModel {
     this.meshes.push(halo);
   }
 
-  /** The boss: a slowly turning sigil underfoot, rising embers and dark wisps. */
+  /** The boss: a slowly turning ring of briars underfoot, rising embers and dark wisps. */
   private addBossPresence(scene: Scene) {
     const tex = fxTextures(scene);
     const col = Color3.FromHexString(this.def.eyeColor).toLinearSpace();
