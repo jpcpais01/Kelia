@@ -3,7 +3,7 @@
 // Everything is drawn by a handful of GPU layers (see layers.ts), each one
 // mesh with one shader compiled at start-up:
 //   sprites  billboards, velocity-stretched sparks, oriented rings, flames
-//   decals   terrain-hugging ground patterns: magic circles, telegraphs,
+//   decals   terrain-hugging ground patterns: spell circles, telegraphs,
 //            shockwaves, scorch marks, cracks, frost
 //   shapes   swept ribbons: slash crescents, light pillars, helices, cones
 //   shards   ice crystals and rock debris
@@ -666,13 +666,32 @@ export class Effects {
     this.decal(pos.x, pos.y, pos.z, { r0, r: r1, dur, cell: D.shock, color: C(color, intensity), mode: 0, fadeIn: 0, fadeOut: 0.3, hot: 0.8 });
   }
 
-  /** A rotating magic circle on the ground. */
-  magicCircle(pos: Vector3, color: string, o: { radius?: number; dur?: number; cell?: number; spin?: number; delay?: number; intensity?: number; inner?: boolean } = {}) {
+  /**
+   * A turning spell circle on the ground (a wind blossom unless `cell` says
+   * otherwise), with petals and leaves lifted off it by the breeze. `drift`
+   * picks what rises (0: nothing).
+   */
+  magicCircle(pos: Vector3, color: string, o: { radius?: number; dur?: number; cell?: number; spin?: number; delay?: number; intensity?: number; inner?: boolean; drift?: number } = {}) {
     const r = o.radius ?? 1.6;
     const dur = o.dur ?? 1.1;
     const k = o.intensity ?? 2.4;
     const cell = o.cell ?? D.arcane;
     const spin = o.spin ?? 1.2;
+    if (o.drift !== 0) {
+      // swept round with the circle's turn, outward and up
+      const tint = C(color, 1.3);
+      const pale: RGB = [tint[0] * 0.6 + 0.5, tint[1] * 0.6 + 0.5, tint[2] * 0.6 + 0.5];
+      const n = Math.round(4 + r * 3);
+      for (let i = 0; i < n; i++) {
+        const a = rand(0, TAU);
+        const rr = r * rand(0.45, 0.9);
+        const p = new Vector3(pos.x + Math.cos(a) * rr, pos.y + 0.08, pos.z + Math.sin(a) * rr);
+        const sgn = Math.sign(spin) || 1;
+        const v = new Vector3(-Math.sin(a) * sgn * rand(1.2, 2.4) + Math.cos(a) * 0.5, rand(0.9, 1.7), Math.cos(a) * sgn * rand(1.2, 2.4) + Math.sin(a) * 0.5);
+        const cellD = o.drift ?? (Math.random() < 0.5 ? S.petal : S.leaf);
+        this.sprite(p, { v, drag: 1.6, gravity: -0.15, dur: rand(0.8, 1.3), size: rand(0.07, 0.11), cell: cellD, color: Math.random() < 0.5 ? tint : pale, rot: rand(0, TAU), spin: rand(-5, 5), hot: 0.35, fadeIn: 0.15, fadeOut: 0.6, delay: (o.delay ?? 0) + rand(0, Math.min(0.4, dur * 0.4)) });
+      }
+    }
     this.decal(pos.x, pos.y, pos.z, { r0: r * 0.55, r, dur, cell, color: C(color, k), spin, fadeIn: 0.14, fadeOut: 0.65, hot: 0.85, delay: o.delay });
     if (o.inner !== false) {
       this.decal(pos.x, pos.y, pos.z, { r0: r * 0.2, r: r * 0.62, dur: dur * 0.95, cell: D.dashes, color: C(color, k * 0.8), spin: -spin * 1.8, fadeIn: 0.2, fadeOut: 0.6, hot: 0.6, delay: (o.delay ?? 0) + 0.03 });
@@ -974,13 +993,13 @@ export class Effects {
       case 'hex':
         head({ size: 0.42, cell: S.orb, color: C(color, 3), hot: 0.9 });
         head({ size: 0.9, cell: S.glow, color: C(color, 1.2), alpha: 0.7, hot: 0.3 });
-        head({ size: 0.5, cell: S.runeA, color: C(color, 2.5), spin: 5, hot: 0.7 });
+        head({ size: 0.5, cell: S.swirl, color: C(color, 2.5), spin: 5, hot: 0.7 });
         break;
       default: {
         const big = kind === 'bolt_big';
         head({ size: big ? 0.48 : 0.32, cell: S.orb, color: scale(c, 3.2), hot: 0.9 });
         head({ size: big ? 1.1 : 0.7, cell: S.glow, color: scale(c, 1.4), alpha: 0.8, hot: 0.3 });
-        head({ size: big ? 0.75 : 0.5, cell: S.star4, color: scale(c, 3), spin: 7, hot: 1 });
+        head({ size: big ? 0.75 : 0.5, cell: S.blossom, color: scale(c, 2.6), spin: 5, hot: 0.9 });
         if (big) head({ size: 0.8, cell: S.ring, color: scale(c, 2), spin: -3, hot: 0.6 });
         break;
       }
@@ -1326,7 +1345,7 @@ export class Effects {
     this.decal(x, y, z, { r0: 0.1, r: radius, dur, cell: D.fill, color: C(color, 0.9), mode: 1, fadeIn: 0.2, hot: 0.4 });
   }
 
-  /** Snare: glowing vines wrap the target over a rune ring. */
+  /** Snare: glowing vines wrap the target over a ring of leaves and blossoms. */
   snare(p: Vector3, size = 1, color = '#7dff8a') {
     const g = new Vector3(p.x, this.ground(p.x, p.z), p.z);
     const c = C(color, 1);
@@ -1365,7 +1384,7 @@ export class Effects {
   }
 
   /**
-   * Enemy warning on the ground: a menacing rune ring that appears, and a
+   * Enemy warning on the ground: a menacing ring that appears, and a
    * disc that fills to its edge as the strike lands.
    */
   telegraph(x: number, z: number, radius: number, dur: number, color = '#ff3b2f', cell: number = D.telegraph) {

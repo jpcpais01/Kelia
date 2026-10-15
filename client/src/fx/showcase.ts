@@ -139,6 +139,14 @@ export async function runFxShowcase(world: World, chars: Actor[], monsterLib: Ri
     const tg = targets[0].pos;
     at(0, () => cast(a, skill('arcanist', 'c', 2), Math.atan2(tg.x - (cx + 1.4), tg.z - (cz - 1.0)), tg.x, tg.z));
     at(0.1, () => cast(b, skill('arcanist', 's', 2), faceCam(cx - 2, cz - 1.6), 0, 0));
+  } else if (name === 'bolts') {
+    // the staff's bolt chain: one clip cast three times back to back
+    hide([3]);
+    addTarget('minion', cx - 1.0, cz + 6.0, 0);
+    const a = place(3, cx + 0.4, cz - 0.6, 0);
+    const tg = targets[0].pos;
+    const ya = Math.atan2(tg.x - (cx + 0.4), tg.z - (cz - 0.6));
+    for (let i = 0; i < 3; i++) at(i * 0.55, () => cast(a, skill('arcanist', 'c', i), ya, tg.x, tg.z));
   } else if (name === 'blink') {
     hide([3, 5]);
     const a = place(3, cx - 2.6, cz - 0.4, 0);

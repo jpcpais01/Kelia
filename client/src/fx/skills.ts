@@ -194,7 +194,7 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
     }
     case 'frost': {
       const r = skill.shape.kind === 'aoe-self' ? skill.shape.radius : 6;
-      fx.magicCircle(at(), '#8fe8ff', { radius: 1.6, dur: impact + 0.35, spin: 2.5, intensity: 2.4, cell: D.frost });
+      fx.magicCircle(at(), '#8fe8ff', { radius: 1.6, dur: impact + 0.35, spin: 2.5, intensity: 2.4, cell: D.frost, drift: S.snow });
       fx.after(0.03, () => fx.gather(handPos(model, 'handslot.r', 1.5), '#bff4ff', Math.max(0.1, impact - 0.05), 12, 1.0));
       // the staff comes down and the ice erupts where it strikes
       strikeTrail('#8fe8ff', 0.05, 0.1, { intensity: 1.1, life: 0.2 });

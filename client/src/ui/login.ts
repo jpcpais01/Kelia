@@ -1,5 +1,6 @@
 // Title screen: sign in with Google or a username, or play as a guest, while the
 // realm (the Render server) wakes up in the background.
+import { onInstallChange, promptInstall } from './pwa';
 import { firebaseEnabled, firebaseProblem, guestToken, idToken, restoreUser, signInGoogle, signInUsername, signOut, userLabel } from '../net/auth';
 import { h, icon, mount, unmount } from './dom';
 
@@ -43,6 +44,21 @@ export class LoginScreen {
     this.status.textContent = text;
   }
 
+  private installLine() {
+    const btn = h(
+      'button',
+      { class: 'install-app', type: 'button', onclick: () => void promptInstall() },
+      h('img', { src: '/icons/icon-192.png', alt: '', width: '34', height: '34' }),
+      h('span', null, h('b', null, 'Install Kelia'), h('small', null, 'Play from its own window, one click from your desktop')),
+    );
+    const off = onInstallChange((can) => {
+      if (!btn.isConnected && btn.dataset.shown) return off();
+      btn.dataset.shown = '1';
+      btn.style.display = can ? '' : 'none';
+    });
+    return btn;
+  }
+
   private serverLine() {
     return h('div', { class: 'server-line' }, this.dot, this.status);
   }
@@ -75,7 +91,7 @@ export class LoginScreen {
         children.push(h('div', { class: 'err' }, `Account sign-in is unavailable: ${firebaseProblem} Fix it in Vercel's environment variables and redeploy.`));
       }
     }
-    children.push(err, this.serverLine());
+    children.push(err, this.installLine(), this.serverLine());
     this.card.replaceChildren(...children.filter(Boolean) as HTMLElement[]);
   }
 
