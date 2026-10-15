@@ -709,7 +709,7 @@ class Profiler {
     const other = content.get('other');
     if (other) systems.push({ key: 'other', label: 'Untagged meshes', cpu: null, gpu: probe?.costs.other?.gpu ?? null, gpuLive: false, ...other });
 
-    const drawCalls = w.drawCalls / n;
+    const drawCalls = Math.round(w.drawCalls / n);
     this.snapshot = {
       fps: frameMs > 0 ? 1000 / frameMs : 0,
       frameMs,

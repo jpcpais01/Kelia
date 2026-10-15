@@ -17,6 +17,7 @@ export const PATCH_NOTES: PatchNote[] = [
       'Shadows are crisp and stable (no more flicker as you move), and trees, rocks, heroes and buildings now cast them onto the grass.',
       'Much faster graphics: shadows and post-processing cost a fraction of what they did, trees draw far less, and WebGPU is now quicker than WebGL2 instead of slower.',
       'Fixed distant flowers, grass tips and water glints glittering and flickering as you move.',
+      'The world now takes far less CPU to draw (fewer, cheaper draw calls for terrain, props and wildlife), and turning the camera near forests no longer causes small hitches.',
     ],
   },
   {

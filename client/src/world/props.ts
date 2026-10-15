@@ -18,6 +18,7 @@ import type { Atmosphere } from './atmosphere';
 import type { Foliage } from './foliage';
 import { mergeStatic } from './merge';
 import { MeshBuilder2 } from './meshgen';
+import { freezeStatic } from './frozen';
 import { setToon } from './toon';
 
 export interface Light {
@@ -79,6 +80,7 @@ export class Props {
         mat.roughness = Math.max(mat.roughness ?? 0.8, 0.75);
       }
       setToon(mat, { rim: 0.45 });
+      freezeStatic(mat);
     }
   }
 
@@ -152,6 +154,7 @@ export class Props {
     mat.metallic = 0;
     mat.roughness = 0.92;
     stones.material = mat;
+    freezeStatic(mat);
     stones.useVertexColors = true;
     stones.position.set(cx, cy, cz);
     stones.receiveShadows = true;
@@ -191,6 +194,7 @@ export class Props {
     cm.disableLighting = false;
     setToon(cm, { spec: 1.2, rim: 1.4 });
     crystal.material = cm;
+    freezeStatic(cm);
     crystal.parent = this.root;
     this.shrineCrystal = crystal;
     this.lights.push({ pos: crystal.position.clone(), color: new Color3(0.45, 0.85, 1), radius: 10 });
