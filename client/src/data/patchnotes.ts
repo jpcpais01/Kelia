@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T12:15:00Z',
+    title: 'Follow the cursor',
+    lines: [
+      'With the mouse free, your character now turns to face your cursor: W runs toward it, A and D strafe around it, and attacks and skills fire where you point. Click the world to switch back to the mouse-look camera.',
+    ],
+  },
+  {
     at: '2026-10-15T12:10:00Z',
     title: 'A brand new look',
     lines: [

@@ -1,5 +1,6 @@
 // Keyboard and mouse. Click the world to capture the mouse (action camera);
-// Esc or Alt frees it for the UI. While free, dragging still turns the camera.
+// Esc or Alt frees it for the UI. While free, dragging still turns the camera
+// and the character aims at the cursor.
 
 export class Input {
   private down = new Set<string>();
@@ -9,6 +10,10 @@ export class Input {
   wheel = 0;
   locked = false;
   private dragging = false;
+  /** Cursor position over the canvas in CSS pixels, and whether it is over it. */
+  cursorX = 0;
+  cursorY = 0;
+  cursorIn = false;
   /** Set while a text field has focus so typing doesn't move the character. */
   typing = false;
   enabled = true;
@@ -16,7 +21,7 @@ export class Input {
   private clicked = new Set<number>();
   onLockChange: ((locked: boolean) => void) | null = null;
 
-  constructor(private canvas: HTMLCanvasElement) {
+  constructor(readonly canvas: HTMLCanvasElement) {
     window.addEventListener('keydown', (e) => {
       if (this.isTextTarget(e.target)) return;
       if (e.code === 'Tab' || e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
@@ -43,6 +48,12 @@ export class Input {
       this.mouseButtons.delete(e.button);
       this.dragging = false;
     });
+    canvas.addEventListener('mousemove', (e) => {
+      this.cursorX = e.offsetX;
+      this.cursorY = e.offsetY;
+      this.cursorIn = true;
+    });
+    canvas.addEventListener('mouseleave', () => (this.cursorIn = false));
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     window.addEventListener('mousemove', (e) => {
       if (!this.enabled) return;
@@ -63,6 +74,11 @@ export class Input {
       this.locked = document.pointerLockElement === canvas;
       this.onLockChange?.(this.locked);
     });
+  }
+
+  /** Free cursor resting over the world (not captured, not dragging the camera). */
+  get cursorAiming() {
+    return this.enabled && !this.locked && !this.dragging && this.cursorIn;
   }
 
   requestLock() {
