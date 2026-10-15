@@ -10,6 +10,15 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T15:10:00Z',
+    title: 'Spectacular combat',
+    lines: [
+      'Every attack and skill has new effects: swords leave glowing ribbon trails and sharp crescent arcs, the final combo hit cracks the ground, and hits burst into flashes, starbursts and sparks (crits shake the screen).',
+      'Skills got the full treatment: runic magic circles spin at your feet as you cast, Fireball erupts in cel-shaded flame and leaves a scorched crater, Frost Nova shoots ice crystals out of the ground, Whirlwind becomes a spinning vortex, and Volley, Snare, Heal, Blink and Rallying Cry all have their own spells of light.',
+      'Monster attacks warn you with red or purple circles, the Bonelord\'s slam throws rocks and cracks the earth, defeated foes dissolve into glowing ghosts and release their soul, and level-ups raise a pillar of light.',
+    ],
+  },
+  {
     at: '2026-10-15T15:01:00Z',
     title: 'Heroes with anime flair',
     lines: [
