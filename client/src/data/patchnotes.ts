@@ -10,9 +10,9 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    at: '2026-10-15T20:05:00Z',
-    title: 'Easier account setup',
-    lines: ['Behind the scenes, account sign-in is now simpler to switch on, bringing Google and email login closer for everyone.'],
+    at: '2026-10-15T20:12:00Z',
+    title: 'Sign in with a username',
+    lines: ['Accounts now use a username and password instead of an email: pick any name of 3 to 16 letters, numbers or underscores and you are in. Google sign-in is still there too.'],
   },
   {
     at: '2026-10-15T20:05:00Z',

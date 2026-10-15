@@ -32,13 +32,28 @@ export async function restoreUser(): Promise<User | null> {
   return auth.currentUser;
 }
 
-export async function signInEmail(email: string, password: string, create: boolean): Promise<User> {
+/** Usernames ride on Firebase email/password under a private, never-mailed domain. */
+const USERNAME_DOMAIN = 'players.kelia.game';
+export const USERNAME_RE = /^[A-Za-z0-9_]{3,16}$/;
+
+/** A friendly name for a signed-in user: their username, Google name or email. */
+export function userLabel(user: User): string {
+  if (user.displayName) return user.displayName;
+  const email = user.email ?? '';
+  return email.endsWith('@' + USERNAME_DOMAIN) ? email.slice(0, -USERNAME_DOMAIN.length - 1) : email || 'your account';
+}
+
+export async function signInUsername(username: string, password: string, create: boolean): Promise<User> {
+  if (!USERNAME_RE.test(username)) throw new Error('Usernames are 3 to 16 letters, numbers or _.');
   const { auth, mod } = await getAuthMod();
+  const email = `${username.toLowerCase()}@${USERNAME_DOMAIN}`;
   try {
-    const cred = create
-      ? await mod.createUserWithEmailAndPassword(auth, email, password)
-      : await mod.signInWithEmailAndPassword(auth, email, password);
-    return cred.user;
+    if (create) {
+      const cred = await mod.createUserWithEmailAndPassword(auth, email, password);
+      await mod.updateProfile(cred.user, { displayName: username });
+      return cred.user;
+    }
+    return (await mod.signInWithEmailAndPassword(auth, email, password)).user;
   } catch (err) {
     throw new Error(friendly(err));
   }
@@ -52,11 +67,6 @@ export async function signInGoogle(): Promise<User> {
   } catch (err) {
     throw new Error(friendly(err));
   }
-}
-
-export async function resetPassword(email: string) {
-  const { auth, mod } = await getAuthMod();
-  await mod.sendPasswordResetEmail(auth, email);
 }
 
 export async function signOut() {
@@ -92,13 +102,13 @@ export function guestToken(): string {
 function friendly(err: unknown): string {
   const code = (err as { code?: string }).code ?? '';
   const map: Record<string, string> = {
-    'auth/invalid-email': 'That email address looks wrong.',
+    'auth/invalid-email': 'Usernames are 3 to 16 letters, numbers or _.',
     'auth/missing-password': 'Enter your password.',
     'auth/weak-password': 'Use at least 6 characters for your password.',
-    'auth/email-already-in-use': 'That email already has an account. Sign in instead.',
-    'auth/invalid-credential': 'Wrong email or password.',
-    'auth/wrong-password': 'Wrong email or password.',
-    'auth/user-not-found': 'No account with that email. Create one?',
+    'auth/email-already-in-use': 'That username is taken. Pick another or sign in.',
+    'auth/invalid-credential': 'Wrong username or password.',
+    'auth/wrong-password': 'Wrong username or password.',
+    'auth/user-not-found': 'No account with that username. Create one?',
     'auth/too-many-requests': 'Too many attempts. Wait a moment and try again.',
     'auth/popup-closed-by-user': 'Google sign-in was closed.',
     'auth/popup-blocked': 'Your browser blocked the Google popup. Allow popups for this site.',
@@ -111,6 +121,6 @@ function friendly(err: unknown): string {
   if (code === 'auth/requests-from-referer-blocked') {
     return 'This API key is restricted to other websites. Add this site to the key in Google Cloud → Credentials.';
   }
-  if (code === 'auth/operation-not-allowed') return 'That sign-in method is turned off in Firebase → Authentication → Sign-in method.';
+  if (code === 'auth/operation-not-allowed') return 'Username sign-in needs Email/Password turned on in Firebase → Authentication → Sign-in method.';
   return map[code] ?? (err as Error).message ?? 'Sign-in failed.';
 }

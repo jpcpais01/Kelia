@@ -1,6 +1,6 @@
-// Title screen: sign in with Google or email, or play as a guest, while the
+// Title screen: sign in with Google or a username, or play as a guest, while the
 // realm (the Render server) wakes up in the background.
-import { firebaseEnabled, firebaseProblem, guestToken, idToken, resetPassword, restoreUser, signInEmail, signInGoogle, signOut } from '../net/auth';
+import { firebaseEnabled, firebaseProblem, guestToken, idToken, restoreUser, signInGoogle, signInUsername, signOut, userLabel } from '../net/auth';
 import { h, icon, mount, unmount } from './dom';
 
 export interface LoginResult {
@@ -51,7 +51,7 @@ export class LoginScreen {
     if (!firebaseEnabled) return;
     try {
       const user = await restoreUser();
-      if (user) this.renderSignedIn(user.displayName || user.email || 'your account', async () => idToken(user));
+      if (user) this.renderSignedIn(userLabel(user), async () => idToken(user));
     } catch {
       /* not signed in */
     }
@@ -64,7 +64,7 @@ export class LoginScreen {
     if (firebaseEnabled) {
       children.push(
         h('button', { class: 'btn wide', onclick: () => this.google(err) }, icon('google', 18), 'Continue with Google'),
-        h('button', { class: 'btn wide', onclick: () => this.renderEmail(false) }, icon('user', 18), 'Sign in with email'),
+        h('button', { class: 'btn wide', onclick: () => this.renderAccount(false) }, icon('user', 18), 'Sign in with username'),
         h('div', { class: 'divider' }, 'or'),
         guest,
         h('div', { class: 'muted', style: 'font-size:12px;line-height:1.5' }, 'Guests keep their hero on this browser. Sign in to play anywhere.'),
@@ -105,7 +105,7 @@ export class LoginScreen {
     this.busy = true;
     try {
       const user = await signInGoogle();
-      this.finish({ token: await idToken(user), label: user.displayName || user.email || 'Google' });
+      this.finish({ token: await idToken(user), label: userLabel(user) });
     } catch (e) {
       err.textContent = (e as Error).message;
     } finally {
@@ -113,8 +113,8 @@ export class LoginScreen {
     }
   }
 
-  private renderEmail(create: boolean) {
-    const email = h('input', { class: 'input', type: 'email', placeholder: 'you@example.com', autocomplete: 'email' });
+  private renderAccount(create: boolean) {
+    const name = h('input', { class: 'input', type: 'text', placeholder: create ? '3–16 letters, numbers or _' : 'Username', autocomplete: 'username', maxlength: '16', spellcheck: 'false', autocapitalize: 'off' });
     const pass = h('input', { class: 'input', type: 'password', placeholder: create ? 'At least 6 characters' : 'Password', autocomplete: create ? 'new-password' : 'current-password' });
     const err = h('div', { class: 'err' });
     const submit = h('button', { class: 'btn primary wide', type: 'submit' }, create ? 'Create account' : 'Sign in');
@@ -129,8 +129,8 @@ export class LoginScreen {
           submit.disabled = true;
           err.textContent = '';
           try {
-            const user = await signInEmail(email.value.trim(), pass.value, create);
-            this.finish({ token: await idToken(user), label: user.email || 'you' });
+            const user = await signInUsername(name.value.trim(), pass.value, create);
+            this.finish({ token: await idToken(user), label: userLabel(user) });
           } catch (ex) {
             err.textContent = (ex as Error).message;
           } finally {
@@ -139,7 +139,7 @@ export class LoginScreen {
           }
         },
       },
-      h('div', { class: 'field' }, h('label', null, 'Email'), email),
+      h('div', { class: 'field' }, h('label', null, 'Username'), name),
       h('div', { class: 'field' }, h('label', null, 'Password'), pass),
       submit,
     );
@@ -152,18 +152,12 @@ export class LoginScreen {
         { class: 'login-foot' },
         h('button', { class: 'linklike', onclick: () => this.renderMain() }, '← Back'),
         create
-          ? h('button', { class: 'linklike', onclick: () => this.renderEmail(false) }, 'I have an account')
-          : h('span', null,
-              h('button', { class: 'linklike', onclick: async () => {
-                if (!email.value) { err.textContent = 'Enter your email first.'; return; }
-                try { await resetPassword(email.value.trim()); err.style.color = 'var(--good)'; err.textContent = 'Check your inbox for a reset link.'; } catch (ex) { err.textContent = (ex as Error).message; }
-              } }, 'Forgot?'),
-              ' · ',
-              h('button', { class: 'linklike', onclick: () => this.renderEmail(true) }, 'Create account')),
+          ? h('button', { class: 'linklike', onclick: () => this.renderAccount(false) }, 'I have an account')
+          : h('button', { class: 'linklike', onclick: () => this.renderAccount(true) }, 'Create account'),
       ),
       this.serverLine(),
     );
-    setTimeout(() => email.focus(), 50);
+    setTimeout(() => name.focus(), 50);
   }
 
   showError(msg: string) {
