@@ -1,7 +1,8 @@
 // Paints a stylised, hill-shaded map of the world for the minimap.
 import { WORLD_HALF, waterAt, type Heightmap } from '@kelia/shared';
 
-export function renderMapImage(hm: Heightmap, size: number, splat?: Uint8Array): HTMLCanvasElement {
+/** `contours` adds faint cartographic height lines every `contours` metres (the big map uses them). */
+export function renderMapImage(hm: Heightmap, size: number, splat?: Uint8Array, contours = 0): HTMLCanvasElement {
   const cv = document.createElement('canvas');
   cv.width = cv.height = size;
   const ctx = cv.getContext('2d')!;
@@ -30,6 +31,14 @@ export function renderMapImage(hm: Heightmap, size: number, splat?: Uint8Array):
         r = lerp(r, 176, dirt); g = lerp(g, 146, dirt); b = lerp(b, 104, dirt);
       }
       r *= shade; g *= shade; b *= shade;
+      if (contours) {
+        const c = Math.floor(h / contours);
+        const major = c % 5 === 0;
+        if (c !== Math.floor(hm.sample(x + m, z) / contours) || c !== Math.floor(hm.sample(x, z + m) / contours)) {
+          const k = major ? 0.68 : 0.84;
+          r *= k; g *= k; b *= k;
+        }
+      }
       const w = waterAt(x, z);
       if (w > h) {
         const depth = Math.min(1, (w - h) / 3);
