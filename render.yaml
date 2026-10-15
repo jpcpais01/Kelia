@@ -4,6 +4,9 @@ services:
     name: kelia-server
     runtime: node
     plan: free
+    # Closest Render region to Portugal and most of Europe. Render cannot move an
+    # existing service, so a region change means a new service (see README).
+    region: frankfurt
     buildCommand: npm ci && npm run build:server
     startCommand: npm start
     healthCheckPath: /health
