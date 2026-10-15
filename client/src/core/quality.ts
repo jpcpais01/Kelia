@@ -61,6 +61,8 @@ export interface UserSettings {
   showNames: boolean;
   cameraShake: boolean;
   masterVolume: number;
+  musicVolume: number;
+  ambienceVolume: number;
 }
 
 const DEFAULTS: UserSettings = {
@@ -73,6 +75,8 @@ const DEFAULTS: UserSettings = {
   showNames: true,
   cameraShake: true,
   masterVolume: 0.8,
+  musicVolume: 0.5,
+  ambienceVolume: 0.8,
 };
 
 const KEY = 'kelia.settings.v1';
