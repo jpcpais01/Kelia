@@ -9,6 +9,10 @@
 // the stylised clips take much shorter steps than the speeds we move at.
 // One-shot actions (attacks, casts, dodges, hits) fade in on top: full-body
 // when standing still, upper-body only while moving (weighted over the legs' clips).
+// An action can follow a timeline of beats instead of playing at one speed:
+// each frame the clip's playback rate is steered so its pose lands on the
+// beat curve, which is how attacks get their anticipation, snap and
+// follow-through (see attacks.ts), and how hit-stop freezes them on contact.
 import { AnimationGroupMask, AnimationGroupMaskMode, type AnimationGroup, type TransformNode } from '@babylonjs/core';
 
 const MIN_W = 1e-4;
@@ -32,6 +36,28 @@ export interface LocoClips {
   air?: string;
 }
 
+export type Ease = 'linear' | 'in' | 'out' | 'inout';
+/** [game seconds since the action started, clip seconds, easing of the segment that ends here] */
+export type Beat = [number, number, Ease];
+
+/** Where a timed action is, for procedural layers that follow it. */
+export interface ActionPhase {
+  /** Seconds into the timeline (hit-stop doesn't advance it). */
+  t: number;
+  strikeAt: number;
+  contactAt: number;
+  settleAt: number;
+  duration: number;
+  /** Blend weight of the action (fades in and out). */
+  weight: number;
+  /** 0..1 how hard it hits (set by the caller). */
+  power: number;
+  /** strike (melee), release (bow), cast (spells): how the body sells it. */
+  style: 'strike' | 'release' | 'cast';
+  /** Frozen on contact. */
+  stopped: boolean;
+}
+
 interface Action {
   group: AnimationGroup;
   t: number;
@@ -43,6 +69,14 @@ interface Action {
   hold: boolean;
   weight: number;
   onEnd?: () => void;
+  beats?: Beat[];
+  fps: number;
+  /** Hit-stop seconds left. */
+  stop: number;
+  /** First frame of a timed action, until the clip has been sampled once. */
+  startFrame: number | null;
+  cancelAfter?: number;
+  phase?: Omit<ActionPhase, 't' | 'weight' | 'stopped' | 'duration'>;
 }
 
 export interface PlayOptions {
@@ -55,6 +89,12 @@ export interface PlayOptions {
   /** Freeze on the last frame instead of fading out (deaths, sitting). */
   hold?: boolean;
   onEnd?: () => void;
+  /** Follow this timeline instead of a fixed speed (ignores `speed`). */
+  beats?: Beat[];
+  /** Key moments of the timeline, exposed through `phase()`. */
+  phase?: Omit<ActionPhase, 't' | 'weight' | 'stopped' | 'duration'>;
+  /** After this many seconds, moving cuts the action short (its recovery). */
+  cancelAfter?: number;
 }
 
 export class Animator {
@@ -142,15 +182,19 @@ export class Animator {
     const g = this.groups.get(name);
     if (!g) return 0;
     if (this.action) this.retire(this.action);
-    const speed = o.speed ?? 1;
+    const beats = o.beats && o.beats.length > 1 ? o.beats : undefined;
+    const speed = beats ? 1 : o.speed ?? 1;
     const fps = g.targetedAnimations[0]?.animation.framePerSecond || 30;
-    const duration = (g.to - g.from) / fps / speed;
+    const duration = beats ? beats[beats.length - 1][0] : (g.to - g.from) / fps / speed;
     const upper = o.upper ?? this.speed > 0.6;
     g.stop();
     g.mask = upper ? new AnimationGroupMask(UPPER_BODY, AnimationGroupMaskMode.Include) : null;
     g.weight = MIN_W;
-    // holds loop internally so the group can't end (and drop its pose) before we freeze it
-    g.start(!!o.loop || !!o.hold, speed, g.from, g.to, false);
+    // Holds loop internally so the group can't end (and drop its pose) before
+    // we freeze it; timed actions too, since they steer their own clock and
+    // must stay on their last pose while they fade out.
+    const from = beats ? Math.min(g.to - 1, g.from + beats[0][1] * fps) : g.from;
+    g.start(!!o.loop || !!o.hold || !!beats, speed, from, g.to, false);
     this.action = {
       group: g,
       t: 0,
@@ -162,8 +206,32 @@ export class Animator {
       hold: !!o.hold,
       weight: 0,
       onEnd: o.onEnd,
+      beats,
+      fps,
+      stop: 0,
+      startFrame: from,
+      cancelAfter: o.cancelAfter,
+      phase: beats && o.phase ? { ...o.phase } : undefined,
     };
     return duration;
+  }
+
+  /** Freeze the current timed action for `seconds` (hit-stop on contact). */
+  hitstop(seconds: number) {
+    const a = this.action;
+    if (a?.beats) a.stop = Math.max(a.stop, seconds);
+  }
+
+  /** The current timed action's progress, for procedural layers. */
+  phase(): ActionPhase | null {
+    const a = this.action ?? null;
+    if (a?.phase) return { ...a.phase, t: a.t, duration: a.duration, weight: a.weight, stopped: a.stop > 0 };
+    // keep reporting a fading action so its overlay eases out with it
+    for (let i = this.fading.length - 1; i >= 0; i--) {
+      const f = this.fading[i];
+      if (f.phase) return { ...f.phase, t: f.t, duration: f.duration, weight: Math.max(0, f.weight), stopped: false };
+    }
+    return null;
   }
 
   /** Stop the current action (e.g. interrupted by a dodge). */
@@ -183,6 +251,9 @@ export class Animator {
   private retire(a: Action) {
     a.hold = false;
     a.loop = false;
+    a.stop = 0;
+    // timed actions hold their pose while they fade
+    if (a.beats) a.group.speedRatio = 0;
     a.t = Math.max(a.t, a.duration); // fade from now
     a.duration = a.t;
     this.fading.push(a);
@@ -193,11 +264,21 @@ export class Animator {
     let actionFull = 0; // how much a full-body action overrides locomotion
     // moving cancels looping emotes (sitting, dancing)
     if (this.action && (this.action.loop || this.action.hold) && this.speed > 1.2) this.stopAction();
+    // a recovery can be cut short by moving away
+    if (this.action?.cancelAfter !== undefined && this.action.t > this.action.cancelAfter && this.speed > 0.9 && !this.action.upper) {
+      this.action.fadeOut = Math.min(this.action.fadeOut, 0.16);
+      this.stopAction();
+    }
     const a = this.action;
     if (a) {
-      a.t += dt;
+      // hit-stop: the timeline barely creeps
+      const adv = a.stop > 0 ? dt * 0.03 : dt;
+      a.stop = Math.max(0, a.stop - dt);
+      a.t += adv;
+      if (a.beats) this.steer(a, dt);
       if (!a.loop && !a.hold && a.t >= a.duration) {
         this.action = null;
+        if (a.beats) a.group.speedRatio = 0;
         this.fading.push(a);
         a.onEnd?.();
       } else {
@@ -289,6 +370,51 @@ export class Animator {
   dispose() {
     for (const g of this.groups.values()) g.dispose();
   }
+
+  /**
+   * Steer a timed action's playback rate so the frame shown at the next
+   * render is where the beat curve says it should be by then.
+   */
+  private steer(a: Action, dt: number) {
+    const g = a.group;
+    const want = g.from + evalBeats(a.beats!, a.t) * a.fps;
+    const target = Math.min(g.to - 0.5, want);
+    // until its first render the clip sits on its start frame
+    const shown = a.startFrame ?? g.animatables[0]?.masterFrame ?? target;
+    a.startFrame = null;
+    if (dt <= 0) return;
+    const rate = (target - shown) / a.fps / dt;
+    g.speedRatio = Math.max(0, Math.min(12, rate));
+  }
+}
+
+function applyEase(e: Ease, x: number) {
+  switch (e) {
+    case 'in':
+      return x * x * x;
+    case 'out': {
+      const y = 1 - x;
+      return 1 - y * y * y;
+    }
+    case 'inout':
+      return x * x * (3 - 2 * x);
+    default:
+      return x;
+  }
+}
+
+/** Clip seconds at game time `t` along a beat curve. */
+export function evalBeats(beats: Beat[], t: number) {
+  if (t <= beats[0][0]) return beats[0][1];
+  for (let i = 1; i < beats.length; i++) {
+    const [t1, c1, e] = beats[i];
+    if (t <= t1) {
+      const [t0, c0] = beats[i - 1];
+      const x = t1 > t0 ? (t - t0) / (t1 - t0) : 1;
+      return c0 + (c1 - c0) * applyEase(e, x);
+    }
+  }
+  return beats[beats.length - 1][1];
 }
 
 export function stripName(n: string) {

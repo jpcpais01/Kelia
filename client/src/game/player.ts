@@ -55,6 +55,10 @@ export class LocalPlayer {
   private faceT = 0;
   private faceYaw = 0;
   private tmpCol: Collider[] = [];
+  /** A short burst of extra motion (attack lunges), easing out over its time. */
+  private shoveV = new Vector3();
+  private shoveT = 0;
+  private shoveDur = 0;
   /** Extra multiplier from passives/items. */
   speedMul = 1;
   onLand: ((fallSpeed: number) => void) | null = null;
@@ -87,6 +91,13 @@ export class LocalPlayer {
     this.dash = dash ?? null;
     this.moveScale = moveScale;
     this.faceDash = faceDash;
+  }
+
+  /** Carry the body (dx, dz) metres over `seconds`, fast at first (a lunge into a swing). */
+  shove(dx: number, dz: number, seconds: number) {
+    this.shoveDur = this.shoveT = Math.max(0.02, seconds);
+    // linear ease-out: covers v0 · T / 2
+    this.shoveV.set((dx * 2) / this.shoveDur, 0, (dz * 2) / this.shoveDur);
   }
 
   /** Turn to face `yaw` now and hold it for `seconds` (aiming). */
@@ -218,8 +229,16 @@ export class LocalPlayer {
     this.vy -= GRAVITY * dt;
 
     // ---- integrate with collision
-    const nx = this.pos.x + this.vel.x * dt;
-    const nz = this.pos.z + this.vel.z * dt;
+    let sx = 0;
+    let sz = 0;
+    if (this.shoveT > 0 && this.grounded) {
+      const f = this.shoveT / this.shoveDur;
+      sx = this.shoveV.x * f * dt;
+      sz = this.shoveV.z * f * dt;
+    }
+    this.shoveT = Math.max(0, this.shoveT - dt);
+    const nx = this.pos.x + this.vel.x * dt + sx;
+    const nz = this.pos.z + this.vel.z * dt + sz;
     const next = new Vector3(nx, this.pos.y + this.vy * dt, nz);
     // obstacles: push out of circles
     for (const c of env.colliders(next.x, next.z, this.tmpCol)) {
@@ -266,10 +285,11 @@ export class LocalPlayer {
     } else {
       this.grounded = false;
     }
-    // recompute actual velocity (after collisions) for animation
+    // recompute actual velocity (after collisions) for animation; a lunge is
+    // the attack's own motion, not walking, so it stays out of it
     if (dt > 0) {
-      this.vel.x = (next.x - this.pos.x) / dt;
-      this.vel.z = (next.z - this.pos.z) / dt;
+      this.vel.x = (next.x - this.pos.x - sx) / dt;
+      this.vel.z = (next.z - this.pos.z - sz) / dt;
     }
     this.pos.copyFrom(next);
 

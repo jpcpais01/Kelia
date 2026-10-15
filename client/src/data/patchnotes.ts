@@ -10,20 +10,26 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T15:55:00Z',
+    title: 'Attacks with weight',
+    lines: [
+      'Every attack now has a real swing: you coil into the wind-up, the blade snaps through, the hit freezes for a heartbeat on impact with a punch of the camera, and the follow-through carries your whole body. Swords step into the blow, bows draw and recoil, Frost Nova is now a staff slam and Mending Light raises the staff to the sky.',
+      'Hits land: monsters reel back and stagger away from your blows, heroes flinch when struck, dodges push off hard and land low, and skeletons rear back before they swing so you can read their attacks. Moving cuts an attack\'s recovery short.',
+    ],
+  },
+  {
     at: '2026-10-15T15:10:00Z',
     title: 'Spectacular combat',
     lines: [
-      'Every attack and skill has new effects: swords leave glowing ribbon trails and sharp crescent arcs, the final combo hit cracks the ground, and hits burst into flashes, starbursts and sparks (crits shake the screen).',
-      'Skills got the full treatment: runic magic circles spin at your feet as you cast, Fireball erupts in cel-shaded flame and leaves a scorched crater, Frost Nova shoots ice crystals out of the ground, Whirlwind becomes a spinning vortex, and Volley, Snare, Heal, Blink and Rallying Cry all have their own spells of light.',
-      'Monster attacks warn you with red or purple circles, the Bonelord\'s slam throws rocks and cracks the earth, defeated foes dissolve into glowing ghosts and release their soul, and level-ups raise a pillar of light.',
+      'Every attack and skill has new effects: glowing ribbon trails and crescent arcs on swords, ground-cracking finishers, bursts of sparks on hit, and runic magic circles, cel-shaded fire, ice crystals and vortexes for every skill.',
+      'Monster attacks warn you with red or purple circles, the Bonelord\'s slam cracks the earth, defeated foes dissolve and release their soul, and level-ups raise a pillar of light.',
     ],
   },
   {
     at: '2026-10-15T15:01:00Z',
     title: 'Heroes with anime flair',
     lines: [
-      'Heroes look like they stepped out of an anime: bigger sparkling eyes with catch-lights, soft rosy skin with a light blush, glossy hair with a shining highlight band, polished metal that gleams, crisp sunlit rims and cleaner outlines. Capes swing as you run, glowing weapons pulse with energy along the blade, and bows are freshly carved with gilded tips.',
-      'Skeletons have ivory bone, glowing eyes and a faint soul light in their ribs, and flash white when struck. Bonelord Varrok now wears blackened armour with burning red seams, with a turning blood sigil, embers and dark wisps around him.',
+      'Heroes and monsters look like they stepped out of an anime: sparkling eyes, soft skin, glossy hair, gleaming metal, swinging capes and pulsing weapons, while skeletons get ivory bone and glowing eyes, and Bonelord Varrok burns with red seams and embers.',
     ],
   },
   {

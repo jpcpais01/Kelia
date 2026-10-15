@@ -1,6 +1,8 @@
 // A player (or NPC) character assembled from modular KayKit parts, recoloured
 // to its appearance, animated with blended locomotion, and finished with
-// two-bone foot IK on uneven ground, head look-at and turn lean.
+// two-bone foot IK on uneven ground, head look-at and turn lean, and a
+// spring-driven body layer that gives attacks their weight (coil, lean into
+// the blow, plant the hips) and makes hits land (flinch away from the blow).
 import {
   Mesh,
   Node,
@@ -34,6 +36,7 @@ import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
 import { setToon } from '../world/toon';
 import { INK, InkScaler, inkCharacter, inkFor } from './style';
+import { spring, stepSpring } from './spring';
 
 export interface Look {
   appearance: Appearance;
@@ -134,6 +137,14 @@ export class CharacterModel {
   private lookPitch = 0;
   private lean = 0;
   private hipDrop = 0;
+  /** Rest rotations of the spine and chest (the base their motion is exaggerated from). */
+  private torsoRest: [Quaternion | null, Quaternion | null] = [null, null];
+  /** Body layer springs: forward lean and twist (radians), crouch (metres). */
+  private pitch = spring();
+  private twist = spring();
+  private crouch = spring();
+  /** How much the clip's own torso motion is exaggerated right now (0 = as authored). */
+  private torsoGain = 0;
   /** Running average of each thigh's animated rotation: the centre the stride swings around. */
   private thighMean: [Quaternion | null, Quaternion | null] = [null, null];
   /** World-space point to look at (null = straight ahead). */
@@ -255,6 +266,12 @@ export class CharacterModel {
       head.scaling.set(bt.head / bt.width, bt.head / bt.height, bt.head / bt.width);
       this.headRest = (head.rotationQuaternion ?? Quaternion.FromEulerVector(head.rotation)).clone();
     }
+
+    const rq = (n: string) => {
+      const t = this.nodes.get(n);
+      return t?.rotationQuaternion ? t.rotationQuaternion.clone() : null;
+    };
+    this.torsoRest = [rq('spine'), rq('chest')];
 
     const groups = entries.animationGroups;
     this.animator = new Animator(groups, LOCO);
@@ -397,6 +414,7 @@ export class CharacterModel {
     this.lean += (targetLean - this.lean) * (1 - Math.exp(-dt * 6));
     this.body.rotation.z = this.lean;
     this.dt = dt;
+    this.updateBodyLayer(dt);
     this.swayCape(dt, Math.max(0, localZ), Math.abs(localX));
   }
 
@@ -449,8 +467,110 @@ export class CharacterModel {
 
   private dt = 0.016;
 
+  /**
+   * Knock the body layer: `pitch` leans forward (negative: back), `twist`
+   * turns the torso, `crouch` drops the hips (metres per second of impulse).
+   */
+  impulse(pitch: number, twist = 0, crouch = 0) {
+    this.pitch.v += pitch;
+    this.twist.v += twist;
+    this.crouch.v += crouch;
+  }
+
+  /** React to a blow from world direction `from` (pointing at us) of strength 0..1. */
+  flinch(from: Vector3 | null, amount: number) {
+    const a = Math.min(1.2, amount);
+    let side = Math.random() - 0.5;
+    if (from) {
+      const ry = this.root.rotation.y;
+      // hit on the right side turns us left, and the other way round
+      side = from.x * Math.cos(ry) - from.z * Math.sin(ry);
+    }
+    this.impulse(-(5 + 6 * a), Math.sign(side || 1) * (2.5 + 3.5 * a), 0.8 + 1.2 * a);
+  }
+
+  /**
+   * Targets for the body layer from the current attack's timeline: settle
+   * into the wind-up, drive through the strike, and let the springs carry
+   * the momentum (and overshoot) into the follow-through.
+   */
+  private updateBodyLayer(dt: number) {
+    const ph = this.animator.phase();
+    let gain = 0;
+    let pitch = 0;
+    let crouch = 0;
+    if (ph) {
+      const p = ph.power;
+      const w = Math.min(1, ph.weight);
+      const t = ph.t;
+      const lerp = (a: number, b: number, k: number) => a + (b - a) * Math.max(0, Math.min(1, k));
+      // [wind-up lean, strike lean, plant] per style
+      const [back, through, plant] = ph.style === 'strike' ? [-0.09, 0.22, 0.1] : ph.style === 'release' ? [0.05, -0.1, 0.035] : [-0.05, 0.12, 0.05];
+      const coil = ph.style === 'strike' ? 0.28 : 0.15;
+      const drive = ph.style === 'strike' ? 0.42 : 0.2;
+      if (t < ph.strikeAt) {
+        const k = smoothstep(t / Math.max(1e-3, ph.strikeAt));
+        gain = coil * k;
+        pitch = back * k;
+        crouch = plant * 0.4 * k;
+      } else if (t < ph.contactAt) {
+        const k = (t - ph.strikeAt) / Math.max(1e-3, ph.contactAt - ph.strikeAt);
+        gain = lerp(coil, drive, k);
+        pitch = lerp(back, through, k * k);
+        crouch = lerp(plant * 0.4, plant, k);
+      } else if (t < ph.settleAt) {
+        const k = (t - ph.contactAt) / Math.max(1e-3, ph.settleAt - ph.contactAt);
+        gain = lerp(drive, drive * 0.6, k);
+        pitch = lerp(through, through * 0.7, k);
+        crouch = plant;
+      } else {
+        const k = 1 - smoothstep((t - ph.settleAt) / Math.max(1e-3, ph.duration - ph.settleAt));
+        gain = drive * 0.6 * k;
+        pitch = through * 0.7 * k;
+        crouch = plant * k;
+      }
+      gain *= w * (0.6 + 0.4 * p);
+      pitch *= w * (0.5 + 0.5 * p);
+      crouch *= w * (0.4 + 0.6 * p);
+    }
+    this.torsoGain += (gain - this.torsoGain) * (1 - Math.exp(-dt * 30));
+    // frozen with the clip during hit-stop
+    if (ph?.stopped) return;
+    stepSpring(this.pitch, pitch, dt, 8, 0.42);
+    stepSpring(this.twist, 0, dt, 6, 0.38);
+    stepSpring(this.crouch, crouch, dt, 7, 0.5);
+  }
+
+  /** Exaggerate the attack clip's own torso motion, then lean and twist the body layer. */
+  private applyBodyLayer() {
+    const spine = this.nodes.get('spine');
+    const chest = this.nodes.get('chest');
+    if (!spine || !chest) return;
+    const gain = this.torsoGain;
+    if (gain > 0.005) {
+      for (const [i, n] of [spine, chest].entries()) {
+        const rest = this.torsoRest[i];
+        if (rest && n.rotationQuaternion) scaleFromRest(rest, n.rotationQuaternion, 1 + gain);
+      }
+    }
+    const pitch = this.pitch.x;
+    const twist = this.twist.x;
+    if (Math.abs(pitch) < 1e-3 && Math.abs(twist) < 1e-3) return;
+    const ry = this.root.rotation.y;
+    const right = new Vector3(Math.cos(ry), 0, -Math.sin(ry));
+    const up = Vector3.Up();
+    spine.rotate(right, pitch * 0.45, Space.WORLD);
+    chest.rotate(right, pitch * 0.55, Space.WORLD);
+    if (Math.abs(twist) > 1e-3) {
+      spine.rotate(up, twist * 0.4, Space.WORLD);
+      chest.rotate(up, twist * 0.6, Space.WORLD);
+    }
+  }
+
   private postAnimate() {
-    if (!this.visible || !this.entries) return;
+    // (bones are only reset by playing animations: layering on a frozen pose would accumulate)
+    if (!this.visible || !this.entries || !this.scene.animationsEnabled) return;
+    this.applyBodyLayer();
     this.applyLookAt();
     if (this.ikEnabled && this.groundAt) this.applyFootIK();
     this.updateFace();
@@ -463,7 +583,13 @@ export class CharacterModel {
   private applyLookAt() {
     const head = this.nodes.get('head');
     if (!head || !this.headRest) return;
+    // the head keeps its eyes on the fight while the body layer leans (look-at turns on top)
+    const tilt = this.pitch.x;
     head.rotationQuaternion = this.headRest.clone();
+    if (Math.abs(tilt) > 1e-3) {
+      const ry = this.root.rotation.y;
+      head.rotate(new Vector3(Math.cos(ry), 0, -Math.sin(ry)), -tilt * 0.5, Space.WORLD);
+    }
     let yaw = 0;
     let pitch = 0;
     if (this.lookTarget) {
@@ -517,7 +643,7 @@ export class CharacterModel {
     }
     // Lower the hips so the lower foot can reach its ground.
     // (and to take back the height a longer stride lifts the planted foot by)
-    const drop = Math.min(0, offsets[0], offsets[1]) - rise;
+    const drop = Math.min(0, offsets[0], offsets[1]) - rise - Math.max(-0.03, Math.min(0.16, this.crouch.x));
     this.hipDrop += (drop - this.hipDrop) * (1 - Math.exp(-this.dt * 12));
     const hips = this.nodes.get('hips');
     if (hips && Math.abs(this.hipDrop) > 0.002) {
@@ -632,6 +758,23 @@ export class CharacterModel {
     this.disposeModel();
     this.root.dispose();
   }
+}
+
+function smoothstep(x: number) {
+  const t = Math.max(0, Math.min(1, x));
+  return t * t * (3 - 2 * t);
+}
+
+/** Scale the rotation `q` makes away from `rest` by `gain` (in place). */
+function scaleFromRest(rest: Quaternion, q: Quaternion, gain: number) {
+  const delta = Quaternion.Inverse(rest).multiply(q);
+  if (delta.w < 0) delta.scaleInPlace(-1);
+  const half = Math.acos(Math.min(1, delta.w));
+  const sinHalf = Math.sin(half);
+  if (sinHalf < 1e-5) return;
+  const nh = Math.min(half * gain, 1.3);
+  const f = Math.sin(nh) / sinHalf;
+  rest.multiplyToRef(new Quaternion(delta.x * f, delta.y * f, delta.z * f, Math.cos(nh)), q);
 }
 
 /** Rotate `bone` in world space so the direction bone→child points at `target`. */

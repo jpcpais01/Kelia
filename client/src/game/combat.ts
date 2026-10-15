@@ -2,6 +2,9 @@
 // aims with a soft lock on the enemy nearest the crosshair, plays animations
 // and effects immediately (the server decides what actually hits), and shows
 // the results: damage numbers, hit reactions, telegraphs, deaths and level ups.
+// Melee contact is predicted locally on the swing's contact frame, so the
+// hit-stop, the enemy's stagger and the camera punch land with the blade
+// instead of a round trip later; the server's verdict then adds the numbers.
 import { Vector3 } from '@babylonjs/core';
 import {
   CLASSES,
@@ -16,6 +19,7 @@ import {
   POTION_COOLDOWN,
   SKILL_UNLOCK,
   clampAim,
+  inCone,
   skillFor,
   skillUnlocked,
   statsFor,
@@ -28,6 +32,7 @@ import {
   type SkillDef,
   type Stats,
 } from '@kelia/shared';
+import { dodgeBeats, playSkillAnim, skillWeight } from '../char/attacks';
 import type { CharacterModel } from '../char/model';
 import { C, D, type Effects } from '../fx/fx';
 import { CLASS_COLORS, playDodgeFx, playSkillFx, type FxWorld } from '../fx/skills';
@@ -53,6 +58,11 @@ export interface CombatContext {
   remotes: Map<number, RemotePlayer>;
   monsters: Map<number, MonsterEntity>;
   canAct(): boolean;
+}
+
+/** Melee blows, and the spinning ones that strike all around. */
+function isMelee(skill: SkillDef) {
+  return skill.shape.kind === 'melee' || (skill.shape.kind === 'aoe-self' && skill.power > 0);
 }
 
 interface Timer {
@@ -280,10 +290,22 @@ export class CombatController {
       return;
     }
     const a = this.aim(skill);
-    const melee = skill.shape.kind === 'melee' || (skill.shape.kind === 'aoe-self' && skill.power > 0);
+    const melee = isMelee(skill);
     player.face(a.yaw, Math.min(skill.lockout, skill.impactAt + 0.15));
     player.commit(skill.lockout * (melee ? 0.9 : 0.75), undefined, melee ? 0.12 : 0.45);
-    model.animator.play(skill.anim, { speed: skill.animSpeed ?? 1, upper: melee ? false : undefined, fadeIn: 0.06, fadeOut: 0.2 });
+    const tl = playSkillAnim(model.animator, skill, melee ? false : undefined);
+    const power = skillWeight(skill);
+    const fwd = new Vector3(Math.sin(a.yaw), 0, Math.cos(a.yaw));
+    if (tl && melee) {
+      // step into the swing, stopping short of the enemy it's aimed at
+      let dist = skill.vfx === 'bash' ? 0.8 : skill.shape.kind === 'aoe-self' ? 0.3 : 0.25 + 0.35 * power;
+      if (a.target) dist = Math.max(0, Math.min(dist + 0.3, Vector3.Distance(a.target.pos, player.pos) - a.target.def.radius - 0.95));
+      if (dist > 0.05) this.later(Math.max(0, tl.strikeAt - 0.05), () => player.shove(fwd.x * dist, fwd.z * dist, tl.contactAt - tl.strikeAt + 0.14));
+      this.later(tl.contactAt, () => this.contact(model, player.pos, skill, a.yaw, power, true));
+    } else if (tl && power >= 0.45 && skill.power > 0) {
+      // heavy shots and spells kick back on release
+      this.later(tl.contactAt, () => this.c.follow.punch(fwd.scale(-1), power * 0.4));
+    }
     if (k === 's') this.c.hud.pulse(1 + i);
     this.c.net.send({ t: 'act', k, i, yaw: Math.round(a.yaw * 1000) / 1000, tx: Math.round(a.tx * 100) / 100, tz: Math.round(a.tz * 100) / 100 });
     this.skillFx(model, ch.cls, skill, a.yaw, a.tx, a.tz, true);
@@ -313,15 +335,20 @@ export class CombatController {
       yaw = Math.atan2(fwd.x, fwd.z);
       player.face(yaw, skill.lockout);
       player.commit(skill.lockout, dir.scale(dist / skill.lockout), 0, false);
-      model.animator.play('Dodge_Backward', { upper: false, speed: skill.animSpeed ?? 1.3, fadeIn: 0.04 });
+      model.animator.play('Dodge_Backward', { upper: false, beats: dodgeBeats(skill.lockout), fadeIn: 0.04, cancelAfter: skill.lockout });
       playDodgeFx(fx, cls, player.pos.clone(), null, yaw);
+      this.later(skill.lockout * 0.8, () => model.impulse(0.8, 0, 2.2));
     } else {
       const dir = wish ?? fwd;
       yaw = Math.atan2(dir.x, dir.z);
       player.commit(skill.lockout, dir.scale(dist / skill.lockout), 0, true);
-      model.animator.play('Dodge_Forward', { upper: false, speed: skill.animSpeed ?? 1.25, fadeIn: 0.04 });
+      model.animator.play('Dodge_Forward', { upper: false, beats: dodgeBeats(skill.lockout), fadeIn: 0.04, cancelAfter: skill.lockout });
       playDodgeFx(fx, cls, player.pos.clone(), null, yaw);
-      this.later(skill.lockout * 0.8, () => fx.dust(player.pos, 6));
+      this.later(skill.lockout * 0.8, () => {
+        fx.dust(player.pos, 6);
+        // land low and come up out of it
+        model.impulse(-0.6, 0, 2.6);
+      });
     }
     this.c.hud.pulse(4);
     this.c.net.send({ t: 'act', k: 'd', i: 0, yaw: Math.round(yaw * 1000) / 1000, tx: 0, tz: 0 });
@@ -341,16 +368,52 @@ export class CombatController {
         this.c.fx.afterimage(r.model.meshes, '#b49bff', { dur: 0.55, intensity: 2.6 });
         this.later(0.12, () => playDodgeFx(this.c.fx, 'arcanist', from, r.pos.clone(), m.yaw));
       } else {
-        an.play(r.info.cls === 'ranger' ? 'Dodge_Backward' : 'Dodge_Forward', { upper: false, speed: skill.animSpeed ?? 1.25, fadeIn: 0.04 });
+        an.play(r.info.cls === 'ranger' ? 'Dodge_Backward' : 'Dodge_Forward', { upper: false, beats: dodgeBeats(skill.lockout), fadeIn: 0.04, cancelAfter: skill.lockout });
         playDodgeFx(this.c.fx, r.info.cls, from, null, m.yaw);
+        this.later(skill.lockout * 0.8, () => r.model.impulse(r.info.cls === 'ranger' ? 0.8 : -0.6, 0, 2.4));
       }
       return;
     }
-    const melee = skill.shape.kind === 'melee' || (skill.shape.kind === 'aoe-self' && skill.power > 0);
+    const melee = isMelee(skill);
     r.model.root.rotation.y = m.yaw;
-    an.play(skill.anim, { speed: skill.animSpeed ?? 1, upper: melee ? false : undefined, fadeIn: 0.06 });
+    const tl = playSkillAnim(an, skill, melee ? false : undefined);
+    if (tl && melee) this.later(tl.contactAt, () => this.contact(r.model, r.pos, skill, m.yaw, skillWeight(skill), false));
     // effects of far-away players are not worth their cost
     if (Vector3.DistanceSquared(r.pos, this.c.player.pos) < 80 * 80) this.skillFx(r.model, r.info.cls, skill, m.yaw, m.tx, m.tz, false);
+  }
+
+  /**
+   * A melee swing reaches its contact frame: whatever it would strike reels
+   * now (the server confirms with damage a moment later), and the swing
+   * freezes for a beat on the impact.
+   */
+  private contact(caster: CharacterModel, at: Vector3, skill: SkillDef, yaw: number, power: number, local: boolean) {
+    const sh = skill.shape;
+    const pos = at.clone();
+    let struck = 0;
+    const stop = 0.045 + 0.075 * power;
+    for (const m of this.c.monsters.values()) {
+      if (!m.targetable) continue;
+      const hit =
+        sh.kind === 'melee'
+          ? inCone(pos.x, pos.z, yaw, m.pos.x, m.pos.z, sh.range, sh.arc, m.def.radius)
+          : sh.kind === 'aoe-self'
+            ? Vector3.Distance(m.pos, pos) < sh.radius + m.def.radius
+            : false;
+      if (!hit) continue;
+      const dir = m.pos.subtract(pos);
+      dir.y = 0;
+      if (dir.lengthSquared() < 1e-6) dir.set(Math.sin(yaw), 0, Math.cos(yaw));
+      m.react(dir.normalize(), power);
+      struck++;
+    }
+    if (!struck) return;
+    caster.animator.hitstop(stop);
+    if (local) {
+      const f = this.c.follow;
+      f.shake(0.07 + 0.14 * power + Math.min(0.08, (struck - 1) * 0.03));
+      f.punch(new Vector3(Math.sin(yaw), 0, Math.cos(yaw)), 0.35 + 0.55 * power);
+    }
   }
 
   /** First live monster near point p (for missile visuals). */
@@ -442,20 +505,47 @@ export class CombatController {
           hud.hurt(k);
           this.c.follow.shake(Math.min(0.5, 0.12 + k * 1.2));
           fx.impact(player.pos.add(new Vector3(0, 1.1, 0)), '#ff4a3a', { scale: 0.7 + Math.min(0.6, k * 3) });
+          const by = this.c.monsters.get(src);
+          const dir = by ? player.pos.subtract(by.pos) : null;
+          if (dir) {
+            dir.y = 0;
+            dir.normalize();
+            this.c.follow.punch(dir, Math.min(0.6, 0.2 + k * 2));
+          }
+          // the body reels even mid-swing; the hit clip plays when it is free
+          if (!this.dead) player.model.flinch(dir, Math.min(1, 0.35 + k * 3));
           const an = player.model.animator;
           if (!an.busy && !this.dead) an.play(Math.random() < 0.5 ? 'Hit_A' : 'Hit_B', { upper: true, speed: 1.3, fadeIn: 0.04 });
         } else {
           const r = this.c.remotes.get(target);
-          if (r && !r.model.animator.busy) r.model.animator.play('Hit_A', { upper: true, speed: 1.3 });
+          if (r) {
+            const by = this.c.monsters.get(src);
+            const dir = by ? r.pos.subtract(by.pos) : null;
+            if (dir) {
+              dir.y = 0;
+              dir.normalize();
+            }
+            if (!r.dead) r.model.flinch(dir, 0.6);
+            if (!r.model.animator.busy) r.model.animator.play('Hit_A', { upper: true, speed: 1.3 });
+          }
         }
         continue;
       }
       const m = this.c.monsters.get(target);
       if (!m) continue;
-      m.hit();
       m.lastHurt = performance.now();
       const top = m.pos.add(new Vector3(0, 2.0 * m.def.scale + 0.2, 0));
       const body = m.pos.add(new Vector3(0, 1.0 * m.def.scale, 0));
+      const from = src === myId ? player.pos : this.c.remotes.get(src)?.pos;
+      if (flags & HIT_DOT) m.model?.flash();
+      else {
+        const away = from ? m.pos.subtract(from) : null;
+        if (away) {
+          away.y = 0;
+          away.normalize();
+        }
+        m.hit(away, flags & HIT_CRIT ? 0.85 : 0.5);
+      }
       if (flags & HIT_DOT) {
         // burning: a lick of flame and a few embers
         fx.sprite(body.add(new Vector3((Math.random() - 0.5) * 0.4, -0.2, (Math.random() - 0.5) * 0.4)), { v: new Vector3(0, 1.6, 0), dur: 0.5, size: 0.35 * m.def.scale, size1: 0.1, cell: 9, color: C('#ff8a2a', 2.8), mode: 3, hot: 1 });
@@ -475,6 +565,9 @@ export class CombatController {
   onKill(id: number) {
     const m = this.c.monsters.get(id);
     if (!m) return;
+    const away = m.pos.subtract(this.c.player.pos);
+    away.y = 0;
+    m.killed(away.lengthSquared() > 1e-4 && away.lengthSquared() < 400 ? away.normalize() : null);
     this.later(0.25, () => {
       this.c.fx.soulRelease(m.pos.clone(), m.def.scale, m.def.eyeColor, m.model?.meshes);
     });

@@ -4,6 +4,8 @@
 // cold shadows, a rim light in its eye colour, glowing eyes with a soft halo,
 // an anime hit flash (white body and outline) and, for the boss, molten seams,
 // a turning sigil underfoot, and embers and dark wisps rising off it.
+// A spring layer leans it into its own swings and staggers it back, pushed
+// away from the blow, when it is struck.
 import {
   Color3,
   Color4,
@@ -25,6 +27,7 @@ import { ATLAS_SURFACES, RecolorPlugin } from './recolor';
 import { InkScaler, inkCharacter } from './style';
 import { Animator, measureStride } from './animator';
 import type { RigLibrary } from './library';
+import { spring, stepSpring } from './spring';
 import { CHARACTER_HEIGHT } from './model';
 
 const LOCO = { idle: 'Idle', walk: 'Walking_D_Skeletons', run: 'Running_A' };
@@ -71,6 +74,10 @@ export class MonsterModel {
   private emitAt = new Vector3();
   private sigil: Mesh | null = null;
   private time = Math.random() * 100;
+  /** Forward lean (radians) and knock-back offset (metres, root space). */
+  private tilt = spring();
+  private knockX = spring();
+  private knockZ = spring();
 
   constructor(scene: Scene, lib: RigLibrary, readonly def: MonsterDef, name: string) {
     this.root = new TransformNode(name, scene);
@@ -289,12 +296,48 @@ export class MonsterModel {
     this.flashT = FLASH;
   }
 
+  /** Stagger from a blow travelling along world direction `from`, strength 0..1. */
+  flinch(from: Vector3 | null, amount: number) {
+    const a = Math.min(1.3, amount) * (this.def.boss ? 0.35 : 1);
+    this.tilt.v -= 2.5 + 3.5 * a;
+    if (from) {
+      const ry = this.root.rotation.y;
+      const c = Math.cos(ry);
+      const s = Math.sin(ry);
+      const k = 2 + 3 * a;
+      this.knockX.v += (from.x * c - from.z * s) * k;
+      this.knockZ.v += (from.x * s + from.z * c) * k;
+    }
+  }
+
+  /** Lean into its own attacks: rear back in the wind-up, drive through the blow. */
+  private updateBodyLayer(dt: number) {
+    const ph = this.animator.phase();
+    let lean = 0;
+    if (ph) {
+      const p = ph.power;
+      const t = ph.t;
+      if (t < ph.strikeAt) lean = -0.07 * p * Math.min(1, t / Math.max(1e-3, ph.strikeAt));
+      else if (t < ph.contactAt) lean = -0.07 * p + 0.22 * p * ((t - ph.strikeAt) / Math.max(1e-3, ph.contactAt - ph.strikeAt));
+      else if (t < ph.settleAt) lean = 0.15 * p;
+      else lean = 0.15 * p * Math.max(0, 1 - (t - ph.settleAt) / Math.max(1e-3, ph.duration - ph.settleAt));
+      lean *= Math.min(1, ph.weight);
+    }
+    if (!ph?.stopped) stepSpring(this.tilt, lean, dt, 6, 0.42);
+    stepSpring(this.knockX, 0, dt, 3.2, 0.8);
+    stepSpring(this.knockZ, 0, dt, 3.2, 0.8);
+    this.body.rotation.x = Math.max(-0.45, Math.min(0.4, this.tilt.x));
+    this.body.position.x = this.knockX.x;
+    this.body.position.z = this.knockZ.x;
+  }
+
   update(dt: number, vel: Vector3) {
     const yaw = this.root.rotation.y;
     const c = Math.cos(yaw);
     const s = Math.sin(yaw);
     this.animator.setMotion(vel.x * c - vel.z * s, vel.x * s + vel.z * c, dt);
     this.animator.update(dt);
+    this.updateBodyLayer(dt);
     if (this.flashT > 0 || this.flashing) {
       this.flashT = Math.max(0, this.flashT - dt);
       // snap to white, then ease out

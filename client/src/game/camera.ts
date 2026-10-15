@@ -1,5 +1,6 @@
 // Third-person follow camera: smooth orbit, terrain and obstacle avoidance,
-// gentle look-ahead, sprint FOV kick and trauma-based screen shake.
+// gentle look-ahead, sprint FOV kick, trauma-based screen shake and a
+// directional punch (a springy nudge along a blow, with a brief FOV squeeze).
 import { Vector3, type UniversalCamera } from '@babylonjs/core';
 import { Simplex2 } from '@kelia/shared';
 
@@ -22,6 +23,10 @@ export class FollowCamera {
   private trauma = 0;
   private t = 0;
   private fovKick = 0;
+  /** Punch: camera offset (metres) and its velocity, and the FOV squeeze (degrees). */
+  private kick = new Vector3();
+  private kickV = new Vector3();
+  private squeeze = 0;
   /** Extra framing offset (shoulder). */
   shoulder = 0.45;
   settings: CameraSettings = { sensitivity: 1, invertY: false, fov: 60, shake: true };
@@ -38,6 +43,16 @@ export class FollowCamera {
   /** Add screen shake (0..1, decays quickly). */
   shake(amount: number) {
     this.trauma = Math.min(1, this.trauma + amount);
+  }
+
+  /** Nudge the view along `dir` (world, e.g. the swing's direction) by `amount` 0..1. */
+  punch(dir: Vector3, amount: number) {
+    if (!this.settings.shake) return;
+    const a = Math.min(1, amount);
+    const d = dir.lengthSquared() > 1e-6 ? dir.normalizeToNew() : Vector3.Zero();
+    this.kickV.addInPlace(d.scale(5 * a));
+    this.kickV.y -= 1.8 * a;
+    this.squeeze = Math.max(this.squeeze, 2.6 * a);
   }
 
   look(dx: number, dy: number) {
@@ -109,9 +124,19 @@ export class FollowCamera {
       look.x += noise.noise(this.t * f, 3) * sh * 0.12;
       look.y += noise.noise(this.t * f, 4) * sh * 0.12;
     }
+    // punch: a stiff spring back to centre
+    if (this.kickV.lengthSquared() > 1e-8 || this.kick.lengthSquared() > 1e-8) {
+      const w = Math.PI * 2 * 5.5;
+      const h = Math.min(dt, 0.05);
+      this.kickV.addInPlace(this.kick.scale(-w * w * h)).scaleInPlace(Math.max(0, 1 - 2 * 0.5 * w * h));
+      this.kick.addInPlace(this.kickV.scale(h));
+      pos.addInPlace(this.kick);
+      look.addInPlace(this.kick.scale(0.55));
+    }
+    this.squeeze = Math.max(0, this.squeeze - dt * 14);
     this.camera.position.copyFrom(pos);
     this.camera.setTarget(look);
     this.fovKick += ((sprinting ? 1 : 0) - this.fovKick) * (1 - Math.exp(-dt * 4));
-    this.camera.fov = ((this.settings.fov + this.fovKick * 6) * Math.PI) / 180;
+    this.camera.fov = ((this.settings.fov + this.fovKick * 6 - this.squeeze) * Math.PI) / 180;
   }
 }
