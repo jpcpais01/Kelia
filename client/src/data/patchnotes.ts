@@ -28,9 +28,9 @@ export const PATCH_NOTES: PatchNote[] = [
   },
   {
     at: '2026-10-15T20:10:00Z',
-    title: 'Wildflower meadows',
+    title: 'Wildflower meadows and shaggier trees',
     lines: [
-      'The meadows bloom with five kinds of wildflower, each with its own shape: daisies in white, pink and lilac, buttercups and red or orange poppies, nodding bellflowers, tall lupin spikes and little clover pompoms. Every plant is different, with its own height, flower size and tilt, and many carry two or three blooms. Each kind grows in its own drifts, with the odd stray flower in between.',
+      'The meadows bloom with five kinds of wildflower, each with its own shape: daisies in white, pink and lilac, buttercups and red or orange poppies, nodding bellflowers, tall lupin spikes and little clover pompoms. Every plant is different, with its own height, flower size and tilt, and many carry two or three blooms. Each kind grows in its own drifts, with the odd stray flower in between. Tree crowns lose their round, ball-like look too: every leaf mass now has its own shape, lumpy or tufted, squashed or drooping at the edges, some with a gap where the light shines through, from up close all the way across the valley.',
     ],
   },
   {

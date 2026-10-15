@@ -64,6 +64,74 @@ interface Crown {
   clumps: { c: C3; r: number; s?: number; main?: boolean }[];
 }
 
+/**
+ * Every leaf mass has its own shape, so no crown reads as a pile of balls:
+ * squashed or stretched, built from two to four overlapping lobes, some
+ * drooping at the edges, some with a bite taken out of one side. Seeded by
+ * the clump's position, so every LOD of a tree agrees on it.
+ */
+interface ClumpShape {
+  sx: number;
+  sy: number;
+  sz: number;
+  droop: number;
+  leaf: number;
+  /** Lobe offsets and radii, in clump radii (the first is the main lobe). */
+  lobes: { o: C3; r: number }[];
+  wsum: number;
+  bite: C3 | null;
+  /** Scalloped rim: amount, lobe count, two phases. */
+  edge: [number, number, number, number];
+}
+
+function clumpShape(c: C3): ClumpShape {
+  const rnd = mulberry((Math.round(c[0] * 97) * 73856093) ^ (Math.round(c[1] * 97) * 19349663) ^ (Math.round(c[2] * 97) * 83492791));
+  const kind = rnd();
+  const droop = kind < 0.28 ? 0.3 + rnd() * 0.35 : rnd() * 0.12;
+  // tufted clumps break into more, smaller lobes
+  const tufted = kind > 0.72;
+  const lobes: { o: C3; r: number }[] = [{ o: [(rnd() - 0.5) * 0.2, (rnd() - 0.5) * 0.15, (rnd() - 0.5) * 0.2], r: tufted ? 0.62 : 0.78 }];
+  const extra = tufted ? 3 : 1 + Math.floor(rnd() * 2);
+  for (let i = 0; i < extra; i++) {
+    const a = rnd() * Math.PI * 2;
+    const up = rnd() * 1.1 - 0.3;
+    const d = (tufted ? 0.55 : 0.45) + rnd() * 0.22;
+    const l = Math.hypot(1, up);
+    lobes.push({ o: [(Math.cos(a) / l) * d, (up / l) * d, (Math.sin(a) / l) * d], r: (tufted ? 0.42 : 0.48) + rnd() * 0.2 });
+  }
+  let bite: C3 | null = null;
+  if (rnd() < 0.4) {
+    const a = rnd() * Math.PI * 2;
+    bite = normalize([Math.cos(a), rnd() * 0.8 - 0.4, Math.sin(a)]) as C3;
+  }
+  return {
+    sx: 0.76 + rnd() * 0.52,
+    sy: (0.56 + rnd() * 0.44) * (droop > 0.25 ? 0.9 : 1),
+    sz: 0.76 + rnd() * 0.52,
+    edge: [0.12 + rnd() * 0.2, 2 + Math.floor(rnd() * 3), rnd() * 6.28, rnd() * 6.28],
+    droop,
+    leaf: 0.88 + rnd() * 0.26,
+    lobes,
+    wsum: lobes.reduce((w, l) => w + l.r * l.r, 0),
+    bite,
+  };
+}
+
+/** A point in a clump's shape: `u`, `th` pick the direction, `dd` the depth (0..1 of the lobe). */
+function clumpPoint(cl: { c: C3; r: number }, sh: ClumpShape, lobe: { o: C3; r: number }, u: number, th: number, dd: number): C3 {
+  const sq = Math.sqrt(1 - u * u);
+  // an uneven, scalloped rim instead of a smooth sphere
+  const [ea, ek, p1, p2] = sh.edge;
+  const lr = lobe.r * cl.r * (1 + ea * Math.sin(th * ek + p1) * Math.cos(u * 2.6 + p2));
+  let ox = (sq * Math.cos(th) * dd * lr + lobe.o[0] * cl.r) * sh.sx;
+  let oy = (u * dd * lr * 0.85 + lobe.o[1] * cl.r) * sh.sy;
+  const oz = (sq * Math.sin(th) * dd * lr + lobe.o[2] * cl.r) * sh.sz;
+  // drooping clumps hang lower underneath and sag at the rim
+  if (oy < 0) oy *= 1 + sh.droop;
+  oy -= (sh.droop * (ox * ox + oz * oz)) / Math.max(cl.r, 0.1) * 0.6;
+  return [cl.c[0] + ox, cl.c[1] + oy, cl.c[2] + oz];
+}
+
 /** Fill a crown with leaf cards. `per` = cards per clump, `grow` = card size × clump radius. */
 function leafCards(
   b: MeshBuilder2,
@@ -82,25 +150,43 @@ function leafCards(
   for (const cl of crown.clumps) {
     const cs = cl.s ?? sway;
     const tint = 0.9 + rnd() * 0.2;
+    const sh = clumpShape(cl.c);
     // bigger clumps get more cards, so every mass is equally dense
-    const cnt = o.local !== undefined ? Math.max(2, Math.round(per * Math.pow(cl.r / 1.3, 2))) : per;
+    let cnt = o.local !== undefined ? Math.max(2, Math.round(per * Math.pow(cl.r / 1.3, 2))) : per;
+    if (sh.bite) cnt = Math.round(cnt * 1.12);
     for (let i = 0; i < cnt; i++) {
-      // biased toward the clump surface, so the cards build the silhouette
+      // pick a lobe (bigger lobes get more leaves)
+      let pick = rnd() * sh.wsum;
+      let lobe = sh.lobes[0];
+      for (const l of sh.lobes) {
+        pick -= l.r * l.r;
+        if (pick <= 0) {
+          lobe = l;
+          break;
+        }
+      }
+      // biased toward the lobe surface, so the cards build the silhouette
       const u = rnd() * 2 - 1;
       const th = rnd() * Math.PI * 2;
-      const sq = Math.sqrt(1 - u * u);
-      const d = (0.35 + 0.5 * Math.cbrt(rnd())) * cl.r;
-      const p: C3 = [cl.c[0] + sq * Math.cos(th) * d, cl.c[1] + u * d * 0.85, cl.c[2] + sq * Math.sin(th) * d];
-      // shading normal: mostly the whole crown, a little the clump
+      const dd = 0.35 + 0.5 * Math.cbrt(rnd());
+      const p = clumpPoint(cl, sh, lobe, u, th, dd);
+      const d = dd * cl.r;
+      // a bite out of one side leaves a gap the light shows through
+      if (sh.bite) {
+        const ox = p[0] - cl.c[0], oy = p[1] - cl.c[1], oz = p[2] - cl.c[2];
+        if ((ox * sh.bite[0] + oy * sh.bite[1] + oz * sh.bite[2]) / (Math.hypot(ox, oy, oz) || 1) > 0.7 && rnd() < 0.85) continue;
+      }
+      const lc: C3 = [cl.c[0] + lobe.o[0] * cl.r * sh.sx, cl.c[1] + lobe.o[1] * cl.r * sh.sy, cl.c[2] + lobe.o[2] * cl.r * sh.sz];
+      // shading normal: mostly the whole crown, a little the lobe
       const nc = [(p[0] - center[0]) / radius[0], (p[1] - center[1]) / radius[1], (p[2] - center[2]) / radius[2]];
-      const nl = [(p[0] - cl.c[0]) / cl.r, (p[1] - cl.c[1]) / cl.r, (p[2] - cl.c[2]) / cl.r];
+      const nl = [(p[0] - lc[0]) / cl.r, (p[1] - lc[1]) / cl.r, (p[2] - lc[2]) / cl.r];
       const n = normalize([nc[0] * (1 - lw) + nl[0] * lw, nc[1] * (1 - lw) + nl[1] * lw + 0.12, nc[2] * (1 - lw) + nl[2] * lw]);
       const h = Math.min(1, Math.max(0, (p[1] - (center[1] - radius[1])) / (radius[1] * 2)));
       let col = mix3(pal.low, pal.high, Math.pow(h, 0.85));
       // the outer shell catches more light than the inner leaves
       col = scale3(col, tint * (0.82 + 0.25 * (d / cl.r)));
       if (accent && rnd() < accent.share) col = scale3(accent.color, 0.9 + rnd() * 0.2);
-      b.card(p, cl.r * grow * (0.8 + rnd() * 0.4), n, col, cs, cell, rnd() * Math.PI * 2);
+      b.card(p, cl.r * grow * sh.leaf * (0.8 + rnd() * 0.4), n, col, cs, cell, rnd() * Math.PI * 2);
     }
   }
   // a thin shell over the whole crown closes the gaps between clumps
@@ -358,6 +444,14 @@ function roots(b: MeshBuilder2, rnd: () => number, n: number, r: number, bark: C
   }
 }
 
+/** A clump's stand-in in the shadow map, squashed like its leaves. */
+function shadowBlob(b: MeshBuilder2, cl: { c: C3; r: number }, sy: number, col: C3, center: C3) {
+  const sh = clumpShape(cl.c);
+  const l = sh.lobes[0];
+  const c: C3 = [cl.c[0] + l.o[0] * cl.r * sh.sx, cl.c[1] + l.o[1] * cl.r * sh.sy - cl.r * sh.droop * 0.2, cl.c[2] + l.o[2] * cl.r * sh.sz];
+  b.blob(c, [cl.r * 0.8 * sh.sx, cl.r * sy * sh.sy * (1 + sh.droop * 0.3), cl.r * 0.8 * sh.sz], 0, noise, 0.2, col, col, center, 0.5);
+}
+
 /** Small inner foliage volumes per clump: the crown stays solid where it should be, open between masses. */
 function clumpCores(b: MeshBuilder2, crown: Crown, pal: Palette, lod: number, shrink = 0.5) {
   // deep inner shade: glimpsed through the leaves, never a lit ball of its own
@@ -366,9 +460,16 @@ function clumpCores(b: MeshBuilder2, crown: Crown, pal: Palette, lod: number, sh
   // only the big masses at the limb ends get one; small clumps stay airy
   for (const cl of crown.clumps) {
     if (!cl.main) continue;
-    const r = cl.r * shrink;
-    // slightly below the clump centre: the lit top stays all leaves
-    b.blob([cl.c[0], cl.c[1] - cl.r * 0.12, cl.c[2]], [r, r * 0.8, r], lod === 0 ? 1 : lod === 1 ? 0 : -1, noise, 0.25, lo, hi, crown.center, (cl.s ?? 0.6) - 0.1, 0.5);
+    const sh = clumpShape(cl.c);
+    // one core per big lobe (up close), squashed like the clump, slightly
+    // below the lobe centre: the lit top stays all leaves
+    // (upward lobes get none: a core there would poke through the thin top)
+    sh.lobes.slice(0, lod === 0 ? 2 : 1).forEach((l, i) => {
+      if (i > 0 && l.o[1] > 0.1) return;
+      const r = cl.r * shrink * (sh.bite ? 0.72 : 0.9) * (i === 0 ? 1 : l.r / sh.lobes[0].r);
+      const c: C3 = [cl.c[0] + l.o[0] * cl.r * sh.sx, cl.c[1] + Math.min(l.o[1], 0) * cl.r * sh.sy - cl.r * (0.16 + sh.droop * 0.2), cl.c[2] + l.o[2] * cl.r * sh.sz];
+      b.blob(c, [r * sh.sx, r * 0.75 * sh.sy, r * sh.sz], lod === 0 ? 1 : lod === 1 ? 0 : -1, noise, 0.25, lo, hi, crown.center, (cl.s ?? 0.6) - 0.1, 0.5);
+    });
   }
 }
 
@@ -431,7 +532,7 @@ export function broadleaf(lod: number, variant: number): Built {
   meshWood(b, limbs, lod, bark, [3, 2, 1, 0], WOOD_SEGS, look);
   if (lod === 0) roots(b, rnd, 5 + (variant % 2), spec.trunkR[0], bark, 6, look);
   if (lod === 3) {
-    for (const cl of crown.clumps) b.blob(cl.c, [cl.r * 0.8, cl.r * 0.7, cl.r * 0.8], 0, noise, 0.2, pal.core, pal.core, crown.center, 0.5);
+    for (const cl of crown.clumps) shadowBlob(b, cl, 0.7, pal.core, crown.center);
     return done(b);
   }
   clumpCores(b, crown, pal, lod);
@@ -474,7 +575,7 @@ export function blossom(lod: number, variant: number): Built {
   meshWood(b, limbs, lod, bark, [3, 2, 1, 0], WOOD_SEGS, look);
   if (lod === 0) roots(b, rnd, 4, spec.trunkR[0], bark, 6, look);
   if (lod === 3) {
-    for (const cl of crown.clumps) b.blob(cl.c, [cl.r * 0.8, cl.r * 0.65, cl.r * 0.8], 0, noise, 0.2, kind.pal.core, kind.pal.core, crown.center, 0.5);
+    for (const cl of crown.clumps) shadowBlob(b, cl, 0.65, kind.pal.core, crown.center);
     return done(b);
   }
   clumpCores(b, crown, kind.pal, lod, 0.4);
