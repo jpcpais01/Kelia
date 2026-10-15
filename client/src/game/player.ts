@@ -188,11 +188,12 @@ export class LocalPlayer {
 
     // ---- facing: where the mouse aims. Moving, the body tracks the camera (A/D
     // strafe, S backpedals); standing, it turns in place once the camera swings
-    // past ~75 degrees, so looking around doesn't spin the character.
+    // past ~75 degrees, so looking around doesn't spin the character. With a free
+    // cursor, it simply turns to face the cursor.
     let wantYaw = this.yaw;
     const camYaw = Math.atan2(fwd.x, fwd.z);
     const camOff = Math.abs(wrap(camYaw - this.yaw));
-    if (wishLen > 0 || camOff > 1.3) this.idleTurn = true;
+    if (wishLen > 0 || camOff > 1.3 || cam.aimYaw !== null) this.idleTurn = true;
     else if (camOff < 0.05) this.idleTurn = false;
     if (this.faceT > 0) wantYaw = this.faceYaw;
     else if (this.dash && this.faceDash) wantYaw = Math.atan2(this.dash.x, this.dash.z);

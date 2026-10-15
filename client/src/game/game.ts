@@ -545,6 +545,8 @@ export class Game {
     if (input.mouseDX || input.mouseDY) this.follow.look(input.mouseDX, input.mouseDY);
     if (input.wheel) this.follow.zoom(input.wheel);
 
+    this.follow.aimYaw = input.cursorAiming ? this.cursorYaw(player.pos, this.follow.aimYaw) : null;
+
     perf.begin('combat');
     this.combat?.update(dt);
     perf.end('combat');
@@ -616,6 +618,37 @@ export class Game {
   }
 
   /** Where the character's head should look: ahead along the camera ray. */
+  /** Yaw from the player to where the free cursor points on the ground. */
+  private cursorYaw(from: Vector3, prev: number | null): number | null {
+    const cam = this.world.camera;
+    const canvas = this.input.canvas;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (!w || !h) return prev;
+    const inv = cam.getViewMatrix().multiply(cam.getProjectionMatrix()).invert();
+    const nx = (this.input.cursorX / w) * 2 - 1;
+    const ny = 1 - (this.input.cursorY / h) * 2;
+    const origin = cam.globalPosition;
+    const dir = Vector3.TransformCoordinates(new Vector3(nx, ny, 0.5), inv).subtractInPlace(origin);
+    // depth conventions differ between WebGL and WebGPU: make sure it points away from the eye
+    if (Vector3.Dot(dir, cam.getDirection(Vector3.Forward())) < 0) dir.scaleInPlace(-1);
+    let dx: number;
+    let dz: number;
+    if (dir.y < -1e-3) {
+      const t = (from.y - origin.y) / dir.y;
+      dx = origin.x + dir.x * t - from.x;
+      dz = origin.z + dir.z * t - from.z;
+    } else {
+      // above the horizon: aim along the ray
+      dx = dir.x;
+      dz = dir.z;
+      if (Math.hypot(dx, dz) < 1e-4) return prev;
+      return Math.atan2(dx, dz);
+    }
+    if (Math.hypot(dx, dz) < 0.6) return prev;
+    return Math.atan2(dx, dz);
+  }
+
   private camLookPoint() {
     const cam = this.world.camera;
     const dir = cam.getTarget().subtract(cam.position).normalize();
