@@ -240,7 +240,7 @@ export class Game {
     const curT = cam.getTarget();
     cam.setTarget(Vector3.Lerp(curT, target, k));
     cam.fov = (40 * Math.PI) / 180;
-    this.world.postfx.setFocus(Vector3.Distance(cam.position, base.add(new Vector3(0, focusY, 0))), close ? 1.8 : 2.4);
+    this.world.postfx.setFocus(base.add(new Vector3(0, focusY, 0)), close ? 0.16 : 0.24);
   }
 
   // ------------------------------------------------------------------ entering the world

@@ -83,9 +83,10 @@ export function prettyPass(name: string): { label: string; group: PassGroup } {
   else if (/ssao/.test(n)) r = { label: n.includes('combine') ? 'SSAO combine' : n.includes('blur') ? `SSAO blur (${words})` : n.includes('original') ? 'SSAO scene copy' : 'SSAO', group: 'Ambient occlusion' };
   else if (/dof|depthoffield|circleofconfusion|coc/.test(n)) r = { label: `Depth of field · ${nice}`, group: 'Depth of field' };
   else if (/volumetric|shafts|vls|lightscattering/.test(n)) r = { label: n.includes('map') || n.includes('pass') ? 'Light shafts occluder pass' : 'Light shafts', group: 'Light shafts' };
+  else if (/prefilter/.test(n)) r = { label: 'Bloom & sky mask prefilter', group: 'Bloom' };
   else if (/bloom|highlight|kernel|blur/.test(n)) r = { label: `Bloom · ${nice}`, group: 'Bloom' };
   else if (/depth/.test(n)) r = { label: 'Depth pre-pass', group: 'Depth' };
-  else if (/imageprocessing/.test(n)) r = { label: 'Tone mapping & colour grading', group: 'Grading & AA' };
+  else if (/imageprocessing|composite/.test(n)) r = { label: 'Composite, tone mapping & grading', group: 'Grading & AA' };
   else if (/fxaa|sharpen|grain|chromatic|pass$/.test(n)) r = { label: nice.replace(/^Fxaa$/, 'FXAA'), group: 'Grading & AA' };
   else r = { label: nice, group: 'Other' };
   passCache.set(name, r);

@@ -5,6 +5,7 @@ import { hash2, type Heightmap } from '@kelia/shared';
 import type { Ambient } from './ambient';
 import type { Atmosphere } from './atmosphere';
 import type { Foliage } from './foliage';
+import { mergeStatic } from './merge';
 
 export class Secrets {
   readonly root: TransformNode;
@@ -12,10 +13,23 @@ export class Secrets {
 
   constructor(private scene: Scene, private hm: Heightmap, private atmosphere: Atmosphere, private foliage: Foliage, private ambient: Ambient) {
     this.root = new TransformNode('secrets', scene);
-    this.fairyRing(-318, 140);
-    this.lantern(196, -276);
-    this.watchtower(-210, -300);
-    this.grotto(-36, 232);
+    this.site('fairyRing', () => this.fairyRing(-318, 140));
+    this.site('lantern', () => this.lantern(196, -276));
+    this.site('watchtower', () => this.watchtower(-210, -300));
+    this.site('grotto', () => this.grotto(-36, 232));
+  }
+
+  /** Build one spot, then batch its pieces into a few meshes (one per material). */
+  private site(name: string, build: () => void) {
+    const before = new Set(this.root.getChildMeshes(true));
+    build();
+    const fresh = this.root.getChildMeshes(true).filter((m) => !before.has(m));
+    const glowing = new Set(this.glow.map((g) => g.mat));
+    for (const m of mergeStatic(fresh, name)) {
+      m.parent = this.root;
+      const lit = !glowing.has(m.material as StandardMaterial);
+      if (lit && m.visibility >= 1) this.atmosphere.addShadowCaster(m, false);
+    }
   }
 
   private glowMat(name: string, c: Color3) {
@@ -32,7 +46,6 @@ export class Secrets {
     m.albedoColor = new Color3(shade, shade * 0.97, shade * 0.92);
     m.metallic = 0;
     m.roughness = 0.95;
-    m.environmentIntensity = 0.6;
     return m;
   }
 

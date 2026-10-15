@@ -4,6 +4,7 @@
 import { Color3, PBRMaterial, TransformNode, Vector3, type AbstractMesh, type InstantiatedEntries, type Scene } from '@babylonjs/core';
 import type { MonsterDef } from '@kelia/shared';
 import { perf } from '../core/perf';
+import { inkCharacter } from './style';
 import { Animator, measureStride } from './animator';
 import type { RigLibrary } from './library';
 import { CHARACTER_HEIGHT } from './model';
@@ -76,12 +77,12 @@ export class MonsterModel {
       } else {
         mat.metallic = 0;
         mat.roughness = 0.7;
-        mat.environmentIntensity = 0.8;
         this.bodyMats.push(mat);
       }
     }
     const s = (CHARACTER_HEIGHT * def.scale) / lib.heightUnits;
     this.body.scaling.setAll(s);
+    inkCharacter(this.meshes.filter((m) => !(m.material && this.eyeMats.includes(m.material as PBRMaterial))), { color: new Color3(0.09, 0.04, 0.08), rim: 1.1 });
 
     this.animator = new Animator(entries.animationGroups, LOCO);
     this.animator.scale = s;

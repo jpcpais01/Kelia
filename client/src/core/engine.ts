@@ -24,8 +24,10 @@ export async function createEngine(canvas: HTMLCanvasElement, settings: UserSett
 
   if (preferWebGPU && (await WebGPUEngine.IsSupportedAsync)) {
     try {
+      // Anti-aliasing is done on the HDR scene buffer by PostFX (MSAA or FXAA);
+      // an MSAA swap chain on top would only cost fill rate.
       const engine = new WebGPUEngine(canvas, {
-        antialias: true,
+        antialias: false,
         stencil: true,
         adaptToDeviceRatio: true,
         powerPreference: 'high-performance',
@@ -33,6 +35,11 @@ export async function createEngine(canvas: HTMLCanvasElement, settings: UserSett
         enableAllFeatures: true,
       });
       await engine.initAsync();
+      // Non-compatibility mode: Babylon records each draw into a reusable
+      // render bundle and replays it while nothing about that draw changes,
+      // instead of re-validating and re-encoding every draw every frame.
+      // This is what makes WebGPU cheaper than WebGL2 on the CPU. (?ncm=0 turns it off.)
+      engine.compatibilityMode = new URLSearchParams(location.search).get('ncm') === '0';
       engine.onContextLostObservable.add(() => markWebGPUBroken());
       const info = (engine as unknown as { _adapterInfo?: { vendor?: string; architecture?: string; description?: string } })._adapterInfo;
       const gpu = [info?.vendor, info?.architecture, info?.description].filter(Boolean).join(' ') || 'WebGPU device';
@@ -42,7 +49,7 @@ export async function createEngine(canvas: HTMLCanvasElement, settings: UserSett
       markWebGPUBroken();
     }
   }
-  const engine = new Engine(canvas, true, {
+  const engine = new Engine(canvas, false, {
     stencil: true,
     powerPreference: 'high-performance',
     preserveDrawingBuffer: false,

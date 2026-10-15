@@ -13,6 +13,8 @@ import { Grass } from './grass';
 import { Terrain } from './terrain';
 import { Water } from './water';
 import type { TerrainData } from './terrainData';
+import { registerToon } from './toon';
+import { setOutlines } from '../char/style';
 
 export class World {
   readonly scene: Scene;
@@ -31,9 +33,14 @@ export class World {
   time = 0;
 
   constructor(readonly engine: AbstractEngine, readonly data: TerrainData, quality: QualitySettings) {
+    // every PBR/Standard material made from here on gets the stylized lighting
+    registerToon();
     const scene = new Scene(engine);
     this.scene = scene;
-    scene.clearColor = new Color4(0, 0, 0, 1);
+    scene.clearColor = new Color4(0, 0, 0, 0);
+    // materials output linear HDR; tone mapping and grading happen in PostFX
+    scene.imageProcessingConfiguration.applyByPostProcess = true;
+    scene.imageProcessingConfiguration.toneMappingEnabled = false;
     scene.skipPointerMovePicking = true;
     scene.autoClear = true;
     scene.autoClearDepthAndStencil = true;
@@ -49,7 +56,7 @@ export class World {
     // Scopes tag the meshes each system creates, so the profiler can say what costs what.
     this.atmosphere = perf.scope('sky', () => new Atmosphere(scene));
     this.terrain = perf.scope('terrain', () => new Terrain(scene, data));
-    this.postfx = new PostFX(scene, this.camera, this.atmosphere.sky.sunBillboard);
+    this.postfx = new PostFX(scene, this.camera);
     this.water = perf.scope('water', () => new Water(scene, this.terrain.heightTexture, this.atmosphere));
     this.grass = perf.scope('grass', () => new Grass(scene, this.terrain.heightTexture, this.terrain.splatTexture, this.atmosphere));
     this.foliage = perf.scope('foliage', () => new Foliage(scene, data.heightmap, this.atmosphere));
@@ -62,8 +69,10 @@ export class World {
     this.quality = q;
     this.engine.setHardwareScalingLevel(1 / (q.renderScale * Math.min(window.devicePixelRatio || 1, 1.5)));
     perf.scope('sky', () => this.atmosphere.applyQuality(q));
-    this.terrain.setShadowGenerator(this.atmosphere.shadows);
     this.postfx.apply(q);
+    setOutlines(q.outlines);
+    // MSAA sample counts changed: WebGPU's cached render bundles must be rebuilt
+    this.scene.resetDrawCache();
     perf.scope('grass', () => this.grass?.applyQuality(q));
     perf.scope('foliage', () => this.foliage?.applyQuality(q));
     this.camera.maxZ = q.viewDistance + 1000;
@@ -90,6 +99,11 @@ export class World {
     this.time += dt;
     const cam = this.camera.globalPosition;
     perf.begin('sky');
+    // shadows follow the camera's focus, pushed a little ahead of the view
+    const focus = this.camera.getTarget();
+    const fwd = this.camera.getDirection(Vector3.Forward());
+    const lead = this.quality.shadowDistance * 0.25;
+    this.atmosphere.shadowFocus.set(focus.x + fwd.x * lead, focus.y, focus.z + fwd.z * lead);
     this.atmosphere.update(dt, this.camera);
     perf.end('sky');
     perf.begin('terrain');
@@ -102,7 +116,12 @@ export class World {
     this.grass.update(this.time, cam);
     perf.end('grass');
     perf.begin('foliage');
-    this.foliage.update(this.time, cam, this.grass.wind);
+    {
+      const fwd = this.camera.getDirection(Vector3.Forward());
+      const aspect = this.engine.getAspectRatio(this.camera);
+      const halfFov = Math.atan(Math.tan(this.camera.fov / 2) * aspect);
+      this.foliage.update(this.time, cam, this.grass.wind, fwd, halfFov);
+    }
     perf.end('foliage');
     perf.begin('props');
     this.props.update(this.time);
@@ -117,9 +136,15 @@ export class World {
     for (const fn of this.updaters) fn(dt);
     perf.end('game');
     perf.begin('postfx');
-    this.postfx.update(this.atmosphere.exposure);
+    const a = this.atmosphere;
+    const sunUp = a.sunDir.y > -0.02;
+    this.postfx.sunDir.copyFrom(sunUp ? a.sunDir : a.moonDir);
+    const s = a.state;
+    // warm golden shafts by day, faint silver ones under the moon
+    if (sunUp) this.postfx.shaftColor.set(s.sun.r * 0.55, s.sun.g * 0.48, s.sun.b * 0.36);
+    else this.postfx.shaftColor.set(0.1, 0.13, 0.2);
+    this.postfx.shaftStrength = sunUp ? Math.min(1, (a.sunDir.y + 0.02) / 0.1) * (1 - a.cloudCover * 0.4) : 0.5 * s.night;
+    this.postfx.update(a.exposure);
     perf.end('postfx');
-    const sunVis = Math.max(0, Math.min(1, (this.atmosphere.sunDir.y + 0.02) / 0.12));
-    this.postfx.shaftStrength = sunVis;
   }
 }

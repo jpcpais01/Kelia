@@ -9,13 +9,13 @@ import {
   Texture,
   VertexData,
   type Scene,
-  type ShadowGenerator,
   type Vector3,
 } from '@babylonjs/core';
 import { WORLD_HALF } from '@kelia/shared';
 import type { TerrainData } from './terrainData';
 import { createShaderPlugin } from './shaderPlugin';
 import { createDetailTexture } from './textures';
+import { setToon } from './toon';
 
 const CHUNK = 64;
 const CHUNKS = (WORLD_HALF * 2) / CHUNK;
@@ -94,7 +94,6 @@ export class Terrain {
   readonly heightTexture: RawTexture;
   private chunks: Chunk[] = [];
   private queue: Chunk[] = [];
-  private shadowGen: ShadowGenerator | null = null;
   lodScale = 1;
 
   constructor(private scene: Scene, private data: TerrainData) {
@@ -109,9 +108,9 @@ export class Terrain {
     mat.metallic = 0;
     mat.roughness = 0.97;
     mat.albedoColor = Color3.White();
-    mat.environmentIntensity = 0.85;
-    mat.specularIntensity = 0.3;
     this.material = mat;
+    // ground has no rim light (it would make every distant slope glow)
+    setToon(mat, { rim: 0 });
     const plugin = createShaderPlugin(mat, {
       name: 'TerrainSplat',
       uniforms: { grassA: 'vec3', grassB: 'vec3', grassDry: 'vec3', forestCol: 'vec3', rockCol: 'vec3', sandCol: 'vec3', dirtCol: 'vec3' },
@@ -120,13 +119,13 @@ export class Terrain {
       wgsl: { fragment: { CUSTOM_FRAGMENT_BEFORE_LIGHTS: WGSL_FRAGMENT } },
     });
     Object.assign(plugin.values, {
-      grassA: lin('#467528'),
-      grassB: lin('#5f8a30'),
-      grassDry: lin('#9c9550'),
-      forestCol: lin('#33502a'),
-      rockCol: lin('#86847f'),
-      sandCol: lin('#d8c79a'),
-      dirtCol: lin('#7a6650'),
+      grassA: lin('#3c7a2c'),
+      grassB: lin('#5d9c37'),
+      grassDry: lin('#b0ac58'),
+      forestCol: lin('#2e6230'),
+      rockCol: lin('#8d8e96'),
+      sandCol: lin('#e3d3a2'),
+      dirtCol: lin('#9a7a58'),
     });
     plugin.textures.splatMap = this.splatTexture;
     plugin.textures.detailTex = this.detailTexture;
@@ -144,10 +143,6 @@ export class Terrain {
         });
       }
     }
-  }
-
-  setShadowGenerator(gen: ShadowGenerator | null) {
-    this.shadowGen = gen;
   }
 
   private desiredLod(c: Chunk, cam: Vector3) {
@@ -277,7 +272,6 @@ export class Terrain {
     mesh.freezeWorldMatrix();
     mesh.doNotSyncBoundingInfo = true;
     mesh.cullingStrategy = Mesh.CULLINGSTRATEGY_BOUNDINGSPHERE_ONLY;
-    if (this.shadowGen && lod <= 1) this.shadowGen.addShadowCaster(mesh, false);
     return mesh;
   }
 

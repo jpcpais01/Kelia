@@ -18,6 +18,7 @@ import {
 import { SHRINE, VILLAGE } from '@kelia/shared';
 import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
+import { TOON_FOG_GLSL, TOON_FOG_UNIFORMS, bindToonFog, toon } from './toon';
 
 Effect.ShadersStore['keliaGrassVertexShader'] = /* glsl */ `
 precision highp float;
@@ -39,6 +40,17 @@ varying vec3 vPos;
 varying float vGust;
 varying vec4 vSplat;
 varying float vRand;
+varying float vPatch;
+#ifdef GSHADOW
+uniform mat4 lightMatrix;
+varying vec4 vLightPos;
+#endif
+
+float hash1(vec2 p) { p = fract(p * vec2(127.1, 311.7)); p += dot(p, p + 19.19); return fract(p.x * p.y); }
+float vnoise1(vec2 p) {
+  vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash1(i), hash1(i + vec2(1.0, 0.0)), u.x), mix(hash1(i + vec2(0.0, 1.0)), hash1(i + vec2(1.0, 1.0)), u.x), u.y);
+}
 
 float terrainH(vec2 xz) {
   vec2 g = clamp(xz + 512.0, vec2(0.0), vec2(1023.99));
@@ -107,6 +119,10 @@ void main(void) {
   vUv = uv;
   vColor = color;
   vRand = grassInst.z;
+  vPatch = vnoise1(wp * 0.06) * 0.65 + vnoise1(wp * 0.21 + 7.0) * 0.35;
+#ifdef GSHADOW
+  vLightPos = lightMatrix * vec4(wpos, 1.0);
+#endif
   gl_Position = viewProjection * vec4(wpos, 1.0);
 }
 `;
@@ -119,17 +135,36 @@ varying vec3 vPos;
 varying float vGust;
 varying vec4 vSplat;
 varying float vRand;
+varying float vPatch;
 uniform vec4 shape;
 uniform vec3 camPos;
+${TOON_FOG_GLSL}
 uniform vec3 sunDir;
 uniform vec3 sunColor;
 uniform vec3 ambientColor;
-uniform vec3 fogColor;
-uniform float fogDensity;
 uniform vec3 baseColor;
 uniform vec3 tipColor;
 uniform vec3 dryColor;
 uniform vec3 forestColor;
+#ifdef GSHADOW
+varying vec4 vLightPos;
+uniform highp sampler2DShadow shadowTex;
+uniform vec4 shadowInfo; // x = strength, y = edge falloff
+// One hardware-filtered tap of the sun's shadow map (same lookup Babylon's
+// PCF uses), faded out toward the map's edge.
+float grassShadow() {
+  vec3 c = vLightPos.xyz / vLightPos.w;
+  vec3 uvd = 0.5 * c + 0.5;
+#ifdef IS_NDC_HALF_ZRANGE
+  uvd.z = c.z;
+#endif
+  vec3 q = clamp(uvd, vec3(0.0005), vec3(0.9995));
+  float s = texture2DLodEXT(shadowTex, q, 0.);
+  float inside = step(abs(c.x), 1.0) * step(abs(c.y), 1.0) * step(uvd.z, 1.0);
+  float edge = smoothstep(1.0 - shadowInfo.y, 1.0, clamp(dot(c.xy, c.xy), 0.0, 1.0));
+  return mix(1.0, s, inside * (1.0 - edge) * shadowInfo.x);
+}
+#endif
 
 vec3 flowerPalette(float r) {
   if (r < 0.2) return vec3(0.95, 0.93, 0.85);
@@ -155,17 +190,21 @@ void main(void) {
     col = mix(bse, tip, smoothstep(0.0, 1.0, h));
     col *= 0.8 + 0.4 * fract(vRand * 13.7);
   }
-  // Lighting: soft lambert + translucency toward the sun + ambient sky.
-  vec3 N = vec3(0.0, 1.0, 0.0);
-  float ndl = clamp(dot(N, sunDir) * 0.6 + 0.4, 0.0, 1.0);
+  // Stylized lighting: blades are lit as a soft, bright mass (no harsh
+  // per-blade shading), tips glow when the sun is behind them, and patches
+  // of lighter and darker green drift across the meadow like brush strokes.
+  col *= mix(0.86, 1.14, vPatch);
+  float ndl = clamp(sunDir.y * 0.7 + 0.35, 0.0, 1.0);
   vec3 V = normalize(camPos - vPos);
-  float trans = pow(clamp(dot(-V, sunDir), 0.0, 1.0), 3.0) * h * 0.9;
-  float ao = mix(0.6, 1.0, h);
-  vec3 lit = col * (sunColor * (ndl + trans) + ambientColor) * ao;
-  lit += col * vGust * 0.12 * sunColor * h; // gusts catch the light
-  float dist = length(camPos - vPos);
-  float fog = exp(-pow(dist * fogDensity, 2.0));
-  gl_FragColor = vec4(mix(fogColor, lit, fog), 1.0);
+  float trans = pow(clamp(dot(-V, sunDir), 0.0, 1.0), 4.0) * h * 0.8;
+  float ao = mix(0.62, 1.0, h);
+  float sh = 1.0;
+#ifdef GSHADOW
+  sh = grassShadow();
+#endif
+  vec3 lit = col * (sunColor * (ndl * (0.62 + 0.38 * h) + trans) * sh * (1.0 - vSplat.r * 0.35) + ambientColor) * ao;
+  lit += col * vGust * 0.16 * sunColor * h * sh; // gusts catch the light
+  gl_FragColor = vec4(kFog(lit, vPos, camPos), 1.0);
 }
 `;
 
@@ -255,6 +294,11 @@ export class Grass {
   private pushers = new Float32Array(16);
   private shapeV = new Vector4();
   readonly wind = new Vector4(0.8, 0.6, 0.55, 1);
+  private sunCol = new Color3();
+  private ambCol = new Color3();
+  private dirV = new Vector3();
+  private pushArr: number[] = [];
+  private shadowV = new Vector4();
 
   constructor(private scene: Scene, private heightTex: Texture, private splatTex: Texture, private atmosphere: Atmosphere) {}
 
@@ -299,18 +343,29 @@ export class Grass {
     mesh.alwaysSelectAsActiveMesh = true;
     mesh.isPickable = false;
     mesh.doNotSyncBoundingInfo = true;
+    const sg = this.atmosphere.shadows;
     const mat = new ShaderMaterial(name + 'Mat', this.scene, 'keliaGrass', {
       attributes: ['position', 'uv', 'color', 'grassInst'],
-      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', 'fogColor', 'fogDensity', 'baseColor', 'tipColor', 'dryColor', 'forestColor'],
-      samplers: ['heightTex', 'splatTex'],
+      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'baseColor', 'tipColor', 'dryColor', 'forestColor', 'lightMatrix', 'shadowInfo'],
+      samplers: ['heightTex', 'splatTex', 'shadowTex'],
+      defines: sg ? ['GSHADOW'] : [],
     });
+    if (sg) {
+      // Grass receives the sun's shadow map: bind its depth texture with the
+      // comparison sampler, exactly like Babylon's own PCF receivers.
+      mat.onBindObservable.add(() => {
+        const map = sg.getShadowMap();
+        const eff = mat.getEffect();
+        if (map && eff) eff.setDepthStencilTexture('shadowTex', map);
+      });
+    }
     mat.backFaceCulling = false;
     mat.setTexture('heightTex', this.heightTex);
     mat.setTexture('splatTex', this.splatTex);
-    mat.setColor3('baseColor', Color3.FromHexString('#3a6524').toLinearSpace());
-    mat.setColor3('tipColor', Color3.FromHexString('#86ad48').toLinearSpace());
-    mat.setColor3('dryColor', Color3.FromHexString('#c9b766').toLinearSpace());
-    mat.setColor3('forestColor', Color3.FromHexString('#3d6a2a').toLinearSpace());
+    mat.setColor3('baseColor', Color3.FromHexString('#2f6a2a').toLinearSpace());
+    mat.setColor3('tipColor', Color3.FromHexString('#9cd055').toLinearSpace());
+    mat.setColor3('dryColor', Color3.FromHexString('#d8cf6a').toLinearSpace());
+    mat.setColor3('forestColor', Color3.FromHexString('#3b7a34').toLinearSpace());
     mesh.material = mat;
     const fv = new Vector4(period, radius, innerCut, 1);
     this.fields.push({ mesh, mat, shape: [shape.h, shape.w, shape.flower ? 1 : 0], fv });
@@ -328,22 +383,29 @@ export class Grass {
 
   update(time: number, cameraPos: Vector3) {
     const a = this.atmosphere;
-    const s = a.state;
-    const sunUp = a.sunDir.y > -0.05;
-    const sunCol = (sunUp ? s.sun : new Color3(0.45, 0.55, 0.85)).scale(Math.min(2.2, a.sun.intensity * 0.55));
-    const amb = s.zenith.add(s.horizon).scale(0.5 * s.ambient * 0.9);
+    const sun = this.sunCol.set(toon.sun.x, toon.sun.y, toon.sun.z);
+    const sh = toon.shade;
+    // grass sits in the sky light; shadowed meadow keeps a cool tint
+    const amb = this.ambCol.set(toon.sky.x * sh.x * 0.9, toon.sky.y * sh.y * 0.9, toon.sky.z * sh.z * 0.9);
+    const dir = this.dirV.set(toon.sunDir.x, toon.sunDir.y, toon.sunDir.z);
+    const sg = a.shadows;
+    this.pushArr.length = 0;
+    for (let i = 0; i < 16; i++) this.pushArr.push(this.pushers[i]);
     this.fields.forEach((f) => {
       const m = f.mat;
       m.setVector4('field', f.fv);
       m.setVector4('shape', this.shapeV.set(f.shape[0], f.shape[1], f.shape[2], time));
       m.setVector3('camPos', cameraPos);
       m.setVector4('wind', this.wind);
-      m.setArray4('pushers', Array.from(this.pushers));
-      m.setVector3('sunDir', sunUp ? a.sunDir : a.moonDir);
-      m.setColor3('sunColor', sunCol);
+      m.setArray4('pushers', this.pushArr);
+      m.setVector3('sunDir', dir);
+      m.setColor3('sunColor', sun);
       m.setColor3('ambientColor', amb);
-      m.setColor3('fogColor', s.fog);
-      m.setFloat('fogDensity', this.scene.fogDensity);
+      bindToonFog(m);
+      if (sg) {
+        m.setMatrix('lightMatrix', sg.getTransformMatrix());
+        m.setVector4('shadowInfo', this.shadowV.set(toon.sunDir.w, sg.frustumEdgeFalloff, 0, 0));
+      }
     });
   }
 }
