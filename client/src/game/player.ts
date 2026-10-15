@@ -1,5 +1,5 @@
-// The local player's movement: camera-relative WASD with acceleration and
-// smooth turning, run/walk/sprint, jumping with coyote time, terrain and
+// The local player's movement: mouse-aimed WASD (the character faces where the
+// camera looks; W runs that way, A/D strafe, S backpedals) with acceleration, run/walk/sprint, jumping with coyote time, terrain and
 // obstacle collision, wading, and 20 Hz position reports to the server.
 import { Vector3 } from '@babylonjs/core';
 import {
@@ -43,6 +43,8 @@ export class LocalPlayer {
   private sendAcc = 0;
   private lastYaw = Math.PI;
   turnRate = 0;
+  /** Standing still and turning in place to catch up with the camera. */
+  private idleTurn = false;
   sprinting = false;
   frozen = false;
   /** Seconds of input lock (attacks, dodges) and forced velocity during them. */
@@ -156,8 +158,9 @@ export class LocalPlayer {
     const wish = fwd.scale(iz).add(right.scale(ix));
     const wishLen = wish.length();
     if (wishLen > 1e-3) wish.scaleInPlace(1 / wishLen);
-    const backpedal = iz < 0 && ix === 0;
-    this.sprinting = !this.walkMode && !backpedal && wishLen > 0 && (input.key('ShiftLeft') || input.key('ShiftRight'));
+    // Facing follows the camera, so anything with a backward component is a backpedal.
+    const backpedal = iz < 0;
+    this.sprinting = !this.walkMode && iz > 0 && wishLen > 0 && (input.key('ShiftLeft') || input.key('ShiftRight'));
     let speed = this.walkMode ? WALK_SPEED : this.sprinting ? SPRINT_SPEED : RUN_SPEED;
     if (backpedal) speed = Math.min(speed, WALK_SPEED * 1.25);
 
@@ -183,13 +186,20 @@ export class LocalPlayer {
     this.vel.x += (target.x - this.vel.x) * k;
     this.vel.z += (target.z - this.vel.z) * k;
 
-    // ---- facing: towards movement (backpedal keeps facing forward)
+    // ---- facing: where the mouse aims. Moving, the body tracks the camera (A/D
+    // strafe, S backpedals); standing, it turns in place once the camera swings
+    // past ~75 degrees, so looking around doesn't spin the character.
     let wantYaw = this.yaw;
+    const camYaw = Math.atan2(fwd.x, fwd.z);
+    const camOff = Math.abs(wrap(camYaw - this.yaw));
+    if (wishLen > 0 || camOff > 1.3) this.idleTurn = true;
+    else if (camOff < 0.05) this.idleTurn = false;
     if (this.faceT > 0) wantYaw = this.faceYaw;
     else if (this.dash && this.faceDash) wantYaw = Math.atan2(this.dash.x, this.dash.z);
-    else if (wishLen > 0 && !(this.lockT > 0 && this.moveScale === 0)) wantYaw = backpedal ? Math.atan2(fwd.x, fwd.z) : Math.atan2(wish.x, wish.z);
+    else if (this.frozen || (this.lockT > 0 && this.moveScale === 0)) wantYaw = this.yaw;
+    else if (this.idleTurn) wantYaw = camYaw;
     const dy = wrap(wantYaw - this.yaw);
-    const turnK = 1 - Math.exp(-dt * (this.faceT > 0 ? 30 : this.grounded ? 12 : 5));
+    const turnK = 1 - Math.exp(-dt * (this.faceT > 0 ? 30 : wishLen > 0 ? (this.grounded ? 16 : 8) : 7));
     this.yaw = wrap(this.yaw + dy * turnK);
     this.turnRate = wrap(this.yaw - this.lastYaw) / Math.max(dt, 1e-4);
     this.lastYaw = this.yaw;
