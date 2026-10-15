@@ -32,6 +32,7 @@ import { h, mount } from '../ui/dom';
 import { Hud } from '../ui/hud';
 import { LoginScreen } from '../ui/login';
 import type { WorldMapState } from '../ui/worldMap';
+import { mixer } from '../audio/mixer';
 import { closeWindow, isWindowOpen, openHelp, openPatchNotes, openSettings } from '../ui/windows';
 import { isInventoryOpen, openInventory, renderInventory, type InventoryActions } from '../ui/inventory';
 import { LATEST_NOTE } from '../data/patchnotes';
@@ -505,6 +506,7 @@ export class Game {
           this.world.applyQuality(PRESETS[level]);
         }
         if (scaleChanged) this.world.setRenderScale(s.renderScale);
+        mixer.setVolumes(s);
         if (reload) setTimeout(() => location.reload(), 300);
       },
       onLogout: async () => {

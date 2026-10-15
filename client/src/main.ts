@@ -11,6 +11,9 @@ import './ui/fullscreen';
 import { Game } from './game/game';
 import { loadTerrainData } from './world/terrainData';
 import { World } from './world/world';
+import { mixer } from './audio/mixer';
+import { Music } from './audio/music';
+import { Soundscape } from './audio/soundscape';
 
 const bar = document.getElementById('boot-progress') as HTMLElement | null;
 const statusEl = document.getElementById('boot-status');
@@ -38,6 +41,14 @@ async function boot() {
     RigLibrary.load(world.scene, 'characters/skeletons.glb', [], false),
     world.loadAssets(),
   ]);
+  // sound starts on the player's first click or key press
+  const sound = new Soundscape(world);
+  const music = new Music();
+  world.onUpdate((dt) => {
+    sound.update(dt);
+    music.update();
+  });
+  mixer.arm(settings);
   progress(0.9, 'Lighting the lanterns…');
   // Let terrain chunks and shaders settle before revealing.
   await world.scene.whenReadyAsync();
@@ -72,7 +83,7 @@ async function boot() {
     }
   });
   window.addEventListener('resize', () => engine.resize());
-  (window as unknown as { kelia: unknown }).kelia = { world, engine, lib, monsterLib, perf };
+  (window as unknown as { kelia: unknown }).kelia = { world, engine, lib, monsterLib, perf, sound, music, mixer };
 
   const cam = params.get('cam')?.split(',').map(Number);
   if (cam) {

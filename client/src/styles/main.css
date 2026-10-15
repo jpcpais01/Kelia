@@ -209,6 +209,7 @@ button { font-family: inherit; }
 .setting .seg button { appearance: none; border: 0; background: none; color: var(--ink-3); padding: 6px 10px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; }
 .setting .seg button.on { background: rgba(232, 194, 122, 0.18); color: var(--gold-2); }
 .setting input[type=range] { width: 160px; accent-color: var(--gold); }
+.setting-head { margin-top: 6px; padding-top: 12px; border-top: 1px solid var(--line); font-family: var(--serif); font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold-2); }
 .patch-group h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--gold); }
 .patch-group ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); line-height: 1.5; }
 .patch-group li b { color: var(--ink); font-weight: 600; }
