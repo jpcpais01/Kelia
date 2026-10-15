@@ -17,6 +17,10 @@ import { Water } from './water';
 import { Mountains } from './mountains';
 import type { TerrainData } from './terrainData';
 import { registerToon, toonOf } from './toon';
+
+/** Average exposed log2 luminance of open views by day and by night: there, adaptation changes nothing. */
+const AUTO_KEY_DAY = -1.55;
+const AUTO_KEY_NIGHT = -5.2;
 import { bakeWorldLight, createWorldLight, worldLight } from './worldLight';
 import { WORLD_HALF } from '@kelia/shared';
 import { setOutlines } from '../char/style';
@@ -203,6 +207,11 @@ export class World {
     if (sunUp) this.postfx.shaftColor.set(s.sun.r * 0.55, s.sun.g * 0.48, s.sun.b * 0.36);
     else this.postfx.shaftColor.set(0.1, 0.13, 0.2);
     this.postfx.shaftStrength = sunUp ? Math.min(1, (a.sunDir.y + 0.02) / 0.1) * (1 - a.cloudCover * 0.4) : 0.5 * s.night;
+    // Eye adaptation aims at how bright the world is meant to look at this
+    // time of day (measured on open meadows and the village), so it only reacts
+    // to what is unusual about the view: a dark forest, a lit cave mouth,
+    // staring at the bright sky.
+    this.postfx.autoKey = AUTO_KEY_DAY + (AUTO_KEY_NIGHT - AUTO_KEY_DAY) * Math.pow(s.night, 0.8);
     this.postfx.update(a.exposure);
     // the real-time shadow map covers this disc; the baked canopy shades the rest
     const shadowR = a.shadows ? this.quality.shadowDistance : 0;
