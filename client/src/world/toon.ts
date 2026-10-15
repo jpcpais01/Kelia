@@ -23,7 +23,6 @@ import {
   type ShaderMaterial,
   type UniformBuffer,
 } from '@babylonjs/core';
-import { WORLD_LIGHT_GLSL, WORLD_LIGHT_WGSL, worldLight } from './worldLight';
 
 /** Lighting state for the whole frame, written by Atmosphere.update(). */
 export const toon = {
@@ -47,7 +46,7 @@ export const toon = {
   fogDir: new Vector4(0, 1, 0, 0),
 };
 
-const UNIFORMS = ['toonSunDir', 'toonSun', 'toonSky', 'toonGround', 'toonShade', 'toonFog', 'toonFog2', 'toonFogSun', 'toonFogDir', 'toonGI', 'toonGIShadow'] as const;
+const UNIFORMS = ['toonSunDir', 'toonSun', 'toonSky', 'toonGround', 'toonShade', 'toonFog', 'toonFog2', 'toonFogSun', 'toonFogDir'] as const;
 const VALUES: Record<(typeof UNIFORMS)[number], Vector4> = {
   toonSunDir: toon.sunDir,
   toonSun: toon.sun,
@@ -58,28 +57,23 @@ const VALUES: Record<(typeof UNIFORMS)[number], Vector4> = {
   toonFog2: toon.fog2,
   toonFogSun: toon.fogSun,
   toonFogDir: toon.fogDir,
-  toonGI: worldLight.strength,
-  toonGIShadow: worldLight.shadow,
 };
-const SAMPLERS = ['kLightMap', 'kBounceMap'];
 
 const FUNCS_GLSL = /* glsl */ `
-${WORLD_LIGHT_GLSL}
-vec3 kToon(vec3 albedo, vec3 N, vec3 V, float sh, vec3 emis, vec3 P) {
+vec3 kToon(vec3 albedo, vec3 N, vec3 V, float sh, vec3 emis) {
   vec3 L = toonSunDir.xyz;
   float ndl = dot(N, L);
   float soft = toonShade.w;
-  vec3 gi = kWorldLight(P);
-  float lit = smoothstep(-soft, soft, ndl) * mix(1.0, sh, toonSunDir.w) * gi.y;
+  float lit = smoothstep(-soft, soft, ndl) * mix(1.0, sh, toonSunDir.w);
   float up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 amb = mix(toonGround.rgb * kBounce, toonSky.rgb, up) * gi.x * mix(vec3(1.0), vec3(0.82, 1.04, 0.78), gi.z);
+  vec3 amb = mix(toonGround.rgb, toonSky.rgb, up);
   vec3 dark = amb * toonShade.rgb;
   vec3 light = dark + toonSun.rgb * lit * (1.0 + 0.12 * smoothstep(0.5, 0.7, ndl));
   vec3 col = albedo * light;
   float nv = clamp(dot(N, V), 0.0, 1.0);
   float rim = smoothstep(0.6, 0.95, 1.0 - nv) * toonSky.w * toonMat.y;
   col += rim * (amb * 0.55 + toonSun.rgb * 0.3 * lit) * (0.3 + albedo);
-  float tr = pow(clamp(dot(-V, L), 0.0, 1.0), 5.0) * toonMat.x * (0.3 + 0.7 * sh) * gi.y;
+  float tr = pow(clamp(dot(-V, L), 0.0, 1.0), 5.0) * toonMat.x * (0.3 + 0.7 * sh);
   col += albedo * toonSun.rgb * tr;
   float sp = smoothstep(0.955, 0.975, dot(N, normalize(L + V))) * toonMat.z * lit;
   col += toonSun.rgb * sp;
@@ -109,11 +103,10 @@ vec3 kToonChar(vec3 albedo, vec3 N0, vec3 V, float sh, vec3 emis, vec3 P) {
   vec3 L = toonSunDir.xyz;
   float ndl = dot(N, L);
   float soft = toonShade.w + skin * 0.2 + bone * 0.05;
-  vec3 gi = kWorldLight(P);
-  float shd = mix(1.0, sh, toonSunDir.w * (1.0 - 0.45 * skin)) * gi.y;
+  float shd = mix(1.0, sh, toonSunDir.w * (1.0 - 0.45 * skin));
   float lit = smoothstep(-soft, soft, ndl + skin * 0.2) * shd;
   float up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 amb = mix(toonGround.rgb * kBounce, toonSky.rgb, up) * gi.x * mix(vec3(1.0), vec3(0.86, 1.03, 0.82), gi.z);
+  vec3 amb = mix(toonGround.rgb, toonSky.rgb, up);
   // skin shadows are rosy, bone shadows cold
   vec3 tint = toonShade.rgb;
   tint *= mix(vec3(1.0), vec3(1.25, 0.95, 0.9), skin);
@@ -183,22 +176,20 @@ vec3 kFog(vec3 col, vec3 P, vec3 E) {
 `;
 
 const FUNCS_WGSL = /* wgsl */ `
-${WORLD_LIGHT_WGSL}
-fn kToon(albedo: vec3f, N: vec3f, V: vec3f, sh: f32, emis: vec3f, P: vec3f) -> vec3f {
+fn kToon(albedo: vec3f, N: vec3f, V: vec3f, sh: f32, emis: vec3f) -> vec3f {
   let L = uniforms.toonSunDir.xyz;
   let ndl = dot(N, L);
   let soft = uniforms.toonShade.w;
-  let gi = kWorldLight(P);
-  let lit = smoothstep(-soft, soft, ndl) * mix(1.0, sh, uniforms.toonSunDir.w) * gi.y;
+  let lit = smoothstep(-soft, soft, ndl) * mix(1.0, sh, uniforms.toonSunDir.w);
   let up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  let amb = mix(uniforms.toonGround.rgb * kBounce, uniforms.toonSky.rgb, up) * gi.x * mix(vec3f(1.0), vec3f(0.82, 1.04, 0.78), gi.z);
+  let amb = mix(uniforms.toonGround.rgb, uniforms.toonSky.rgb, up);
   let dark = amb * uniforms.toonShade.rgb;
   let light = dark + uniforms.toonSun.rgb * lit * (1.0 + 0.12 * smoothstep(0.5, 0.7, ndl));
   var col = albedo * light;
   let nv = clamp(dot(N, V), 0.0, 1.0);
   let rim = smoothstep(0.6, 0.95, 1.0 - nv) * uniforms.toonSky.w * uniforms.toonMat.y;
   col += rim * (amb * 0.55 + uniforms.toonSun.rgb * 0.3 * lit) * (vec3f(0.3) + albedo);
-  let tr = pow(clamp(dot(-V, L), 0.0, 1.0), 5.0) * uniforms.toonMat.x * (0.3 + 0.7 * sh) * gi.y;
+  let tr = pow(clamp(dot(-V, L), 0.0, 1.0), 5.0) * uniforms.toonMat.x * (0.3 + 0.7 * sh);
   col += albedo * uniforms.toonSun.rgb * tr;
   let sp = smoothstep(0.955, 0.975, dot(N, normalize(L + V))) * uniforms.toonMat.z * lit;
   col += uniforms.toonSun.rgb * sp;
@@ -224,11 +215,10 @@ fn kToonChar(albedo: vec3f, N0: vec3f, V: vec3f, sh: f32, emis: vec3f, P: vec3f)
   let L = uniforms.toonSunDir.xyz;
   let ndl = dot(N, L);
   let soft = uniforms.toonShade.w + skin * 0.2 + bone * 0.05;
-  let gi = kWorldLight(P);
-  let shd = mix(1.0, sh, uniforms.toonSunDir.w * (1.0 - 0.45 * skin)) * gi.y;
+  let shd = mix(1.0, sh, uniforms.toonSunDir.w * (1.0 - 0.45 * skin));
   let lit = smoothstep(-soft, soft, ndl + skin * 0.2) * shd;
   let up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  let amb = mix(uniforms.toonGround.rgb * kBounce, uniforms.toonSky.rgb, up) * gi.x * mix(vec3f(1.0), vec3f(0.86, 1.03, 0.82), gi.z);
+  let amb = mix(uniforms.toonGround.rgb, uniforms.toonSky.rgb, up);
   var tint = uniforms.toonShade.rgb;
   tint *= mix(vec3f(1.0), vec3f(1.25, 0.95, 0.9), skin);
   tint *= mix(vec3f(1.0), vec3f(0.8, 0.88, 1.15), bone);
@@ -371,10 +361,6 @@ export class ToonPlugin extends MaterialPluginBase {
     d.KCHAR = d.KTOON && this.char;
   }
 
-  getSamplers(samplers: string[]) {
-    for (const s of SAMPLERS) samplers.push(s);
-  }
-
   getUniforms(lang?: ShaderLanguage) {
     const names = [...UNIFORMS, 'toonMat'];
     const ubo = names.map((name) => ({ name, size: 4, type: 'vec4' }));
@@ -388,8 +374,6 @@ export class ToonPlugin extends MaterialPluginBase {
       ubo.updateFloat4(name, v.x, v.y, v.z, v.w);
     }
     ubo.updateFloat4('toonMat', this.translucency, this.rim, this.spec, this.metal);
-    if (worldLight.map) ubo.setTexture('kLightMap', worldLight.map);
-    if (worldLight.bounce) ubo.setTexture('kBounceMap', worldLight.bounce);
   }
 
   getCustomCode(shaderType: string, lang?: ShaderLanguage): Record<string, string> | null {
@@ -400,13 +384,13 @@ export class ToonPlugin extends MaterialPluginBase {
       const albedo = pbr ? 'baseColor' : 'baseColor.rgb * diffuseColor';
       const emis = pbr ? 'finalEmissive' : 'emissiveColor';
       return {
-        CUSTOM_FRAGMENT_DEFINITIONS: SAMPLERS.map((n) => `var ${n}Sampler: sampler;\nvar ${n}: texture_2d<f32>;`).join('\n') + FUNCS_WGSL,
+        CUSTOM_FRAGMENT_DEFINITIONS: FUNCS_WGSL,
         CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: `
 #ifdef KCHAR
   ${target} = vec4f(kToonChar(${albedo}, normalW, viewDirectionW, shadow, ${emis}, fragmentInputs.vPositionW), ${target}.a);
 #else
 #ifdef KTOON
-  ${target} = vec4f(kToon(${albedo}, normalW, viewDirectionW, shadow, ${emis}, fragmentInputs.vPositionW), ${target}.a);
+  ${target} = vec4f(kToon(${albedo}, normalW, viewDirectionW, shadow, ${emis}), ${target}.a);
 #endif
 #endif
 #ifdef KFOG
@@ -419,13 +403,13 @@ export class ToonPlugin extends MaterialPluginBase {
     const albedo = pbr ? 'baseColor' : 'baseColor.rgb * diffuseColor';
     const emis = pbr ? 'finalEmissive' : 'emissiveColor';
     return {
-      CUSTOM_FRAGMENT_DEFINITIONS: SAMPLERS.map((n) => `uniform sampler2D ${n};`).join('\n') + FUNCS_GLSL + FOG_GLSL_BODY,
+      CUSTOM_FRAGMENT_DEFINITIONS: FUNCS_GLSL + FOG_GLSL_BODY,
       CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: `
 #ifdef KCHAR
   ${target}.rgb = kToonChar(${albedo}, normalW, viewDirectionW, shadow, ${emis}, vPositionW);
 #else
 #ifdef KTOON
-  ${target}.rgb = kToon(${albedo}, normalW, viewDirectionW, shadow, ${emis}, vPositionW);
+  ${target}.rgb = kToon(${albedo}, normalW, viewDirectionW, shadow, ${emis});
 #endif
 #endif
 #ifdef KFOG

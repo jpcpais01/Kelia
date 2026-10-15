@@ -22,7 +22,6 @@ import { GROUND, GROUND_GRASS_GLSL } from './palette';
 import { drawFirst } from './drawOrder';
 import { TOON_FOG_GLSL, TOON_FOG_UNIFORMS, bindToonFog, toon } from './toon';
 import { PLAZA } from './village';
-import { WORLD_LIGHT_GLSL, worldLight } from './worldLight';
 
 Effect.ShadersStore['keliaGrassVertexShader'] = /* glsl */ `
 precision highp float;
@@ -59,12 +58,6 @@ varying float vDetail;
 varying float vHue;
 varying float vFace;
 varying vec3 vBladeN;
-varying vec3 vGI;
-uniform sampler2D kLightMap;
-uniform sampler2D kBounceMap;
-uniform vec4 toonGI;
-uniform vec4 toonGIShadow;
-${WORLD_LIGHT_GLSL}
 #ifdef GSHADOW
 uniform mat4 lightMatrix;
 varying vec4 vLightPos;
@@ -213,8 +206,6 @@ void main(void) {
   vRand = grassInst.z;
   vPatch = vnoise1(wp * 0.06) * 0.65 + vnoise1(wp * 0.21 + 7.0) * 0.35;
   vRoot = groundGrass(wp, sp);
-  // baked sky visibility and canopy at the tuft (blades sit within a few cm of the ground)
-  vGI = kWorldLight(wpos);
 #ifdef GSHADOW
   vLightPos = lightMatrix * vec4(wpos, 1.0);
 #endif
@@ -238,7 +229,6 @@ varying float vBloom;
 varying float vHue;
 varying float vFace;
 varying vec3 vBladeN;
-varying vec3 vGI;
 uniform vec4 shape;
 uniform vec3 camPos;
 ${TOON_FOG_GLSL}
@@ -359,10 +349,8 @@ void main(void) {
 #ifdef GSHADOW
   sh = grassShadow();
 #endif
-  sh *= vGI.y;
   float sun = litK * sh * (1.0 - vSplat.r * 0.25);
-  vec3 sky = ambientColor * vGI.x * mix(vec3(1.0), vec3(0.82, 1.04, 0.78), vGI.z);
-  vec3 lit3 = col * (sunColor * litK * sideLit * sh * (1.0 - vSplat.r * 0.25) + sky) * ao;
+  vec3 lit3 = col * (sunColor * litK * sideLit * sh * (1.0 - vSplat.r * 0.25) + ambientColor) * ao;
   // backlit blades glow a warm, translucent yellow-green
   lit3 += col * vec3(1.15, 1.2, 0.6) * sunColor * trans * sun;
   lit3 += sunColor * vec3(1.0, 0.97, 0.8) * glint * 0.32 * sun;
@@ -774,8 +762,8 @@ export class Grass {
     const sg = this.atmosphere.shadows;
     const mat = new ShaderMaterial(name + 'Mat', this.scene, 'keliaGrass', {
       attributes: ['position', 'uv', 'color', 'grassInst'],
-      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'pxScale', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo', 'toonGI', 'toonGIShadow'],
-      samplers: ['heightTex', 'splatTex', 'detailTex', 'shadowTex', 'kLightMap', 'kBounceMap'],
+      uniforms: ['viewProjection', 'field', 'shape', 'camPos', 'pxScale', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo'],
+      samplers: ['heightTex', 'splatTex', 'detailTex', 'shadowTex'],
       defines: sg ? ['GSHADOW'] : [],
     });
     if (sg) {
@@ -791,8 +779,6 @@ export class Grass {
     mat.setTexture('heightTex', this.heightTex);
     mat.setTexture('splatTex', this.splatTex);
     mat.setTexture('detailTex', this.detailTex);
-    if (worldLight.map) mat.setTexture('kLightMap', worldLight.map);
-    if (worldLight.bounce) mat.setTexture('kBounceMap', worldLight.bounce);
     mat.setColor3('tipColor', Color3.FromHexString('#c4e46a').toLinearSpace());
     mat.setColor3('dryColor', Color3.FromHexString('#e2d77a').toLinearSpace());
     for (const k of ['grassA', 'grassB', 'grassDry', 'forestCol'] as const) mat.setColor3(k, Color3.FromArray(GROUND[k]));
@@ -833,8 +819,6 @@ export class Grass {
       m.setColor3('sunColor', sun);
       m.setColor3('ambientColor', amb);
       bindToonFog(m);
-      m.setVector4('toonGI', worldLight.strength);
-      m.setVector4('toonGIShadow', worldLight.shadow);
       if (sg) {
         m.setMatrix('lightMatrix', sg.getTransformMatrix());
         m.setVector4('shadowInfo', this.shadowV.set(toon.sunDir.w, sg.frustumEdgeFalloff, 0, 0));

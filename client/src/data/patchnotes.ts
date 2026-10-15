@@ -12,6 +12,11 @@ export const PATCH_NOTES: PatchNote[] = [
   {
     // the 21:00 hour already has its five lines, so this opens the next group
     at: '2026-10-15T22:00:00Z',
+    title: 'Black screen fixed',
+    lines: ['On some computers the whole world turned black after the last lighting update, leaving only the menus and map. That update is rolled back for now, so the valley shows again; the bounced light and eye adjustment will return once they work everywhere.'],
+  },
+  {
+    at: '2026-10-15T22:00:00Z',
     title: 'Gliding',
     lines: [
       "You can fly! Fall more than 5 metres (step off a cliff, leap from a ledge) and your glider snaps open above you; Space in the air opens or folds it too. Steer with the mouse, slip sideways with A and D, W to speed up, S to brake and Shift to dive. Each class flies its own colours, the canvas ripples in the wind, wingtips stream contrails and the air roars past as you dive. Three updrafts lift you high: the Hearthmere Windwell behind the market, one at the foot of the Silverfall cliffs, and the Greyspine Thermal below Eagle's Perch, high enough to glide all the way down to the Ruins (they're on the world map). Over deep water the glider skims the surface, and everyone sees you fly.",
