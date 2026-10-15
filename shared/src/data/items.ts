@@ -83,3 +83,23 @@ export interface Equipment {
   offhand: string | null;
   outfit: string | null;
 }
+
+export const INVENTORY_SIZE = 24;
+
+/** Weapons and off-hands of a rarity that a class can use. */
+export function gearPool(cls: ClassId, rarity: Rarity): ItemDef[] {
+  return Object.values(ITEMS).filter((i) => (i.kind === 'weapon' || i.kind === 'offhand') && i.cls === cls && i.rarity === rarity);
+}
+
+/** Can this class put the item on? */
+export function canEquip(cls: ClassId, item: ItemDef | undefined): boolean {
+  if (!item) return false;
+  if (item.kind === 'outfit') return true;
+  return (item.kind === 'weapon' || item.kind === 'offhand') && item.cls === cls;
+}
+
+/** The outfit look index for a set of equipment (falls back to the creator's choice). */
+export function outfitIndex(equipment: Equipment, fallback: number): number {
+  const o = equipment.outfit ? ITEMS[equipment.outfit]?.outfit : undefined;
+  return o ?? fallback;
+}

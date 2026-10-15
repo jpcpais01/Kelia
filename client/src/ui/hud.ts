@@ -18,6 +18,7 @@ export interface HudCallbacks {
   openSettings(): void;
   openPatchNotes(): void;
   openHelp(): void;
+  openInventory(): void;
 }
 
 export class Hud {
@@ -100,6 +101,7 @@ export class Hud {
       h(
         'div',
         { class: 'menu-buttons interactive' },
+        h('button', { class: 'icon-btn', title: 'Inventory (I)', onclick: () => cb.openInventory() }, icon('bag', 18)),
         h('button', { class: 'icon-btn', title: 'Controls', onclick: () => cb.openHelp() }, icon('map', 18)),
         h('button', { class: 'icon-btn', title: 'Patch notes', onclick: () => cb.openPatchNotes() }, icon('scroll', 18), this.notesDot),
         h('button', { class: 'icon-btn', title: 'Settings', onclick: () => cb.openSettings() }, icon('gear', 18)),
@@ -281,6 +283,12 @@ export class Hud {
     const el = h('div', { class: 'zone-toast' }, h('div', { class: 't1' }, discovered ? 'Discovered' : 'Entering'), h('div', { class: 't2' }, poi.name), h('div', { class: 't3' }, poi.description));
     this.toastArea.replaceChildren(el);
     setTimeout(() => el.remove(), 4300);
+  }
+
+  lootToast(name: string, color: string, qty: number) {
+    const el = h('div', { class: 'panel small-toast loot', style: `--rc:${color}` }, 'Looted ', h('b', null, name), qty > 1 ? ` × ${qty}` : '');
+    this.toastArea.append(el);
+    setTimeout(() => el.remove(), 3100);
   }
 
   toast(text: string) {

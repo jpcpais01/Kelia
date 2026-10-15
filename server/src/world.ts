@@ -19,6 +19,8 @@ import {
   isClassId,
   isValidAppearance,
   statsFor,
+  outfitIndex,
+  ITEMS,
   newCharacter,
   normalizeName,
   q,
@@ -87,7 +89,7 @@ export class Player {
       id: this.id,
       name: c.name,
       cls: c.cls,
-      appearance: c.appearance,
+      appearance: { ...c.appearance, outfit: outfitIndex(c.equipment, c.appearance.outfit) },
       level: c.level,
       weapon: c.equipment.weapon,
       offhand: c.equipment.offhand,
@@ -205,6 +207,15 @@ export class World {
         return;
       case 'respawn':
         if (s.player) this.combat.respawn(s.player);
+        return;
+      case 'equip':
+        if (s.player) this.combat.equip(s.player, Number(msg.i) | 0);
+        return;
+      case 'unequip':
+        if (s.player && (msg.slot === 'offhand' || msg.slot === 'outfit')) this.combat.unequip(s.player, msg.slot);
+        return;
+      case 'discard':
+        if (s.player) this.combat.discard(s.player, Number(msg.i) | 0);
         return;
     }
   }
@@ -374,6 +385,13 @@ export class World {
         p.z = z;
         p.y = this.heightmap.sample(x, z);
         p.session.send({ t: 'correct', x: q(p.x), y: q(p.y), z: q(p.z) });
+        return;
+      }
+      case 'give': {
+        if (!config.devCommands) break;
+        const [, id, n] = text.split(/\s+/);
+        if (!ITEMS[id]) return reply('/give itemId [qty]');
+        if (this.combat.addItem(p, id, Math.max(1, Number(n) || 1))) p.session.send({ t: 'loot', id, qty: Math.max(1, Number(n) || 1) });
         return;
       }
       case 'wave':

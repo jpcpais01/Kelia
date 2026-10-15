@@ -30,6 +30,7 @@ import { h, mount } from '../ui/dom';
 import { Hud } from '../ui/hud';
 import { LoginScreen } from '../ui/login';
 import { closeWindow, isWindowOpen, openHelp, openPatchNotes, openSettings } from '../ui/windows';
+import { isInventoryOpen, openInventory, renderInventory, type InventoryActions } from '../ui/inventory';
 import { LATEST_NOTE } from '../data/patchnotes';
 import type { World } from '../world/world';
 import { FollowCamera } from './camera';
@@ -290,6 +291,7 @@ export class Game {
         openSettings: () => this.openSettings(),
         openPatchNotes: () => this.openNotes(),
         openHelp: () => openHelp(),
+        openInventory: () => this.toggleInventory(),
       },
       this.world.data.heightmap,
       this.world.data.splat,
@@ -318,6 +320,9 @@ export class Game {
       monsters: this.monsters,
       canAct: () => !hud.chatOpen && !isWindowOpen(),
     });
+    this.combat.onInventory = () => {
+      if (this.character && isInventoryOpen()) renderInventory(this.character, this.invActions);
+    };
     this.bindNet();
     this.hud.addChat('', `Welcome to Kelia, ${c.name}. Press Enter to chat.`, true);
     this.mode = 'playing';
@@ -356,6 +361,7 @@ export class Game {
     net.on('died', (m) => this.combat?.onDied(m.by));
     net.on('respawned', (m) => this.combat?.onRespawned(m));
     net.on('loot', (m) => this.combat?.onLoot(m.id, m.qty));
+    net.on('look', (m) => this.combat?.onLook(m));
     net.on('join', (m) => this.addRemote(m.p));
     net.on('leave', (m) => {
       const r = this.remotes.get(m.id);
@@ -400,6 +406,22 @@ export class Game {
     const r = new RemotePlayer(p, model);
     this.remotes.set(p.id, r);
     this.hud?.plate(p.id, p.name, p.level);
+  }
+
+  private invActions: InventoryActions = {
+    equip: (i) => this.net.send({ t: 'equip', i }),
+    unequip: (slot) => this.net.send({ t: 'unequip', slot }),
+    discard: (i) => this.net.send({ t: 'discard', i }),
+  };
+
+  private toggleInventory() {
+    if (!this.character) return;
+    if (isInventoryOpen()) {
+      closeWindow();
+      return;
+    }
+    this.input.releaseLock();
+    openInventory(this.character, this.invActions);
   }
 
   private focusPoint() {
@@ -508,6 +530,7 @@ export class Game {
       hud.openChat();
     }
     if (input.pressedKey('Escape') && isWindowOpen()) closeWindow();
+    if (input.pressedKey('KeyI') || input.pressedKey('KeyB')) this.toggleInventory();
     if (input.pressedKey('KeyN')) {
       this.settings = { ...this.settings, showNames: !this.settings.showNames };
       saveSettings(this.settings);

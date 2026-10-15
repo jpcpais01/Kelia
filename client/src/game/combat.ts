@@ -11,6 +11,8 @@ import {
   HIT_HEAL,
   HIT_PLAYER,
   ITEMS,
+  RARITY_COLORS,
+  outfitIndex,
   POTION_COOLDOWN,
   SKILL_UNLOCK,
   clampAim,
@@ -70,10 +72,13 @@ export class CombatController {
   private comboExpire = 0;
   private queued: { k: ActKind; i: number; until: number } | null = null;
   private potionReady = 0;
+  private bagHintShown = false;
   private timers: Timer[] = [];
   private t = 0;
   stats: Stats;
   dead = false;
+  /** Called when inventory or equipment changed (to refresh open windows). */
+  onInventory: (() => void) | null = null;
   maxHp: number;
 
   constructor(private c: CombatContext) {
@@ -607,6 +612,16 @@ export class CombatController {
       ch.inventory = s.inventory;
       hud.setPotions(s.inventory.filter((i) => i.id === 'potion_small' || i.id === 'potion_large').reduce((n, i) => n + i.qty, 0));
     }
+    if (s.equipment) {
+      ch.equipment = s.equipment;
+      this.stats = statsFor(ch.cls, ch.level, ch.equipment);
+      this.c.player.speedMul = this.stats.speed;
+      const model = this.c.player.model;
+      model.setLook({ appearance: { ...ch.appearance, outfit: outfitIndex(ch.equipment, ch.appearance.outfit) }, cls: ch.cls, weapon: ch.equipment.weapon, offhand: ch.equipment.offhand });
+      model.setShadowCaster((m) => this.c.world.atmosphere.addShadowCaster(m, false));
+      this.c.fx.column(this.c.player.pos.clone(), '#fff2b0', { radius: 0.7, count: 30, dur: 0.3 });
+    }
+    if (s.inventory || s.equipment) this.onInventory?.();
     hud.setHp(s.hp, s.maxHp);
     hud.setXp(s.xp / xpToNext(s.level), s.level);
     hud.setLowHealth(s.hp > 0 && s.hp / s.maxHp < 0.25);
@@ -668,6 +683,27 @@ export class CombatController {
 
   onLoot(id: string, qty: number) {
     const it = ITEMS[id];
-    if (it) this.c.hud.toast(`Looted ${qty > 1 ? `${qty} × ` : ''}${it.name}`);
+    if (!it) return;
+    this.c.hud.lootToast(it.name, RARITY_COLORS[it.rarity], qty);
+    if (it.rarity !== 'common') {
+      const p = this.c.player.pos.clone();
+      this.c.fx.column(p, RARITY_COLORS[it.rarity], { radius: 0.5, count: it.rarity === 'epic' ? 140 : 70, height: 4, dur: it.rarity === 'epic' ? 1.4 : 0.8 });
+      if (it.rarity === 'epic') this.c.fx.ring(p, 0.3, 4, RARITY_COLORS.epic, 1.2);
+      if (it.kind !== 'consumable' && !this.bagHintShown) {
+        this.bagHintShown = true;
+        this.later(1, () => this.c.hud.toast('Press I to open your inventory.'));
+      }
+    }
+  }
+
+  /** Another player's gear changed: rebuild their model. */
+  onLook(m: Extract<ServerMessage, { t: 'look' }>) {
+    const r = this.c.remotes.get(m.id);
+    if (!r) return;
+    r.info.weapon = m.weapon;
+    r.info.offhand = m.offhand;
+    r.info.appearance = { ...r.info.appearance, outfit: m.outfit };
+    r.model.setLook({ appearance: r.info.appearance, cls: r.info.cls, weapon: m.weapon, offhand: m.offhand });
+    r.model.setShadowCaster((mm) => this.c.world.atmosphere.addShadowCaster(mm, false));
   }
 }

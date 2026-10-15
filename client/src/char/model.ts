@@ -117,8 +117,8 @@ export class CharacterModel {
   }
 
   /** Rebuild the model for a new look (outfit, weapon, appearance...). */
-  setLook(look: Look) {
-    const prevAction = this.animator?.currentAction;
+  setLook(look: Look, keepAction = false) {
+    const prevAction = keepAction ? this.animator?.currentAction : null;
     this.disposeModel();
     this.look = look;
     const { meshes: wanted, bow } = partsFor(look);
