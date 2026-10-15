@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T20:25:00Z',
+    title: 'Silky-smooth minimap',
+    lines: [
+      'The minimap now glides and turns with you at your full frame rate instead of stepping along, and it is sharper too, with the same height lines as the world map.',
+    ],
+  },
+  {
     at: '2026-10-15T20:12:00Z',
     title: 'Sign in with a username',
     lines: ['Accounts now use a username and password instead of an email: pick any name of 3 to 16 letters, numbers or underscores and you are in. Google sign-in is still there too.'],
