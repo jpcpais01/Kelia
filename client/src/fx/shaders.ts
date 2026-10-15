@@ -137,9 +137,11 @@ void main(void) {
   vec3 col = vCol.rgb;
   float seed = vM.x;
   float age = vM.y;
+  // sample before any branch: WGSL wants texture sampling in uniform control flow
+  float ac = min(cell, 15.0);
+  vec2 cu = vec2(mod(ac, 4.0), floor(ac / 4.0 + 0.01));
+  vec4 t = texture2D(atlas, (cu + clamp(vUv, 0.004, 0.996)) * 0.25);
   if (cell < 15.5) {
-    vec2 cu = vec2(mod(cell, 4.0), floor(cell / 4.0 + 0.01));
-    vec4 t = texture2D(atlas, (cu + clamp(vUv, 0.004, 0.996)) * 0.25);
     core = t.r;
     shape = t.a;
   } else if (cell < 16.5) {

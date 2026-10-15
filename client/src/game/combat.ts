@@ -349,7 +349,8 @@ export class CombatController {
     const melee = skill.shape.kind === 'melee' || (skill.shape.kind === 'aoe-self' && skill.power > 0);
     r.model.root.rotation.y = m.yaw;
     an.play(skill.anim, { speed: skill.animSpeed ?? 1, upper: melee ? false : undefined, fadeIn: 0.06 });
-    this.skillFx(r.model, r.info.cls, skill, m.yaw, m.tx, m.tz, false);
+    // effects of far-away players are not worth their cost
+    if (Vector3.DistanceSquared(r.pos, this.c.player.pos) < 80 * 80) this.skillFx(r.model, r.info.cls, skill, m.yaw, m.tx, m.tz, false);
   }
 
   /** First live monster near point p (for missile visuals). */

@@ -263,7 +263,7 @@ export class Effects {
       name: 'fxSprites',
       shader: 'keliaFxSprite',
       attributes: ['spA', 'spB', 'spC', 'spD', 'spE', 'spF', 'spG', 'spH'],
-      capacity: 4096,
+      capacity: 8192,
       template: quadTemplate(),
       uniforms: ['camRight', 'camUp', 'litTint'],
       samplers: ['atlas'],
@@ -1021,7 +1021,7 @@ export class Effects {
   }
 
   private emitTrail(s: MissileState, prev: Vector3, step: number) {
-    const spacing = s.kind === 'fire' ? 0.22 : s.kind === 'pierce' ? 0.12 : s.kind.startsWith('bolt') || s.kind === 'hex' || s.kind === 'frost' ? 0.14 : 0.3;
+    const spacing = s.kind === 'fire' ? 0.22 : s.kind === 'pierce' ? 0.18 : s.kind.startsWith('bolt') || s.kind === 'hex' || s.kind === 'frost' ? 0.2 : 0.32;
     s.emit += step;
     const c = s.color;
     while (s.emit >= spacing) {
