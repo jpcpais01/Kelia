@@ -79,7 +79,11 @@ export class WorldMap {
   /** A pin the player dropped on the map; the minimap points to it too. */
   marker: MapMarker | null = null;
 
-  constructor(private paint: () => HTMLCanvasElement) {
+  constructor(
+    private paint: () => HTMLCanvasElement,
+    /** Teleport to a place (clicking its badge), and what the tooltip says about that. */
+    private travel: { go(poi: PointOfInterest): void; note(poi: PointOfInterest): string },
+  ) {
     this.canvas = h('canvas', { class: 'wm-canvas' });
     this.ctx = this.canvas.getContext('2d')!;
     this.tip = h('div', { class: 'wm-tip' });
@@ -113,7 +117,7 @@ export class WorldMap {
           legendRow('lg-pin', 'Your marker'),
         ),
         this.scaleEl,
-        h('div', { class: 'wm-hint' }, h('span', { class: 'kbd' }, 'Wheel'), 'zoom', h('span', { class: 'kbd' }, 'Drag'), 'pan', h('span', { class: 'kbd' }, 'Click'), 'drop a marker', h('span', { class: 'kbd' }, 'M'), 'close'),
+        h('div', { class: 'wm-hint' }, h('span', { class: 'kbd' }, 'Wheel'), 'zoom', h('span', { class: 'kbd' }, 'Drag'), 'pan', h('span', { class: 'kbd' }, 'Click'), 'a place to teleport, anywhere else for a marker', h('span', { class: 'kbd' }, 'M'), 'close'),
         this.tip,
       ),
     );
@@ -254,6 +258,18 @@ export class WorldMap {
       if (e.button === 2) {
         this.marker = null;
         return;
+      }
+      // click a place to teleport there
+      const s = this.state;
+      if (s) {
+        for (const poi of POINTS_OF_INTEREST) {
+          if (poi.hidden && !s.discovered.includes(poi.id)) continue;
+          const [x, y] = this.toScreen(poi.pos[0], poi.pos[1]);
+          if (Math.hypot(sx - x, sy - y) < 16) {
+            this.travel.go(poi);
+            return;
+          }
+        }
       }
       // click a pin to lift it, anywhere else to drop it
       if (this.marker) {
@@ -540,13 +556,15 @@ export class WorldMap {
     this.canvas.style.cursor = 'pointer';
     const known = s.discovered.includes(poi.id);
     const dist = Math.round(Math.hypot(poi.pos[0] - s.px, poi.pos[1] - s.pz));
-    const key = `${poi.id}|${known}|${dist}`;
+    const note = this.travel.note(poi);
+    const key = `${poi.id}|${known}|${dist}|${note}`;
     if (tip.dataset.key !== key) {
       tip.dataset.key = key;
       tip.replaceChildren(
         h('b', null, poi.name),
         h('p', null, poi.description),
         h('small', null, `${known ? 'Discovered' : 'Not yet visited'} · ${dist} m away`),
+        ...(note ? [h('div', { class: 'wm-travel' }, icon('blink', 14), note)] : []),
       );
     }
     const left = Math.min(this.hover.x + 18, this.w - 260);

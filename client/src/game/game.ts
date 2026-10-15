@@ -17,6 +17,7 @@ import {
   type PointOfInterest,
   type PublicCharacter,
   type ServerMessage,
+  TRAVEL_COOLDOWN_MS,
 } from '@kelia/shared';
 import { CharacterModel, type Look } from '../char/model';
 import { MonsterModel } from '../char/monsterModel';
@@ -75,6 +76,9 @@ export class Game {
   private camFrom = { pos: new Vector3(), target: new Vector3() };
   private currentZone: PointOfInterest | null = null;
   private mapTimer = 0;
+  /** Teleports being channelled (by entity id), for the shimmer at their feet. */
+  private channels = new Map<number, { poi: string; nextFx: number }>();
+  private travelReadyAt = 0;
   private dayOverride: number | null = 0.72;
 
   constructor(private world: World, private lib: RigLibrary, private settings: UserSettings, private gpu: string, private monsterLib: RigLibrary) {
@@ -306,6 +310,8 @@ export class Game {
         openHelp: () => openHelp(),
         openInventory: () => this.toggleInventory(),
         openMap: () => this.toggleMap(),
+        travel: (poi) => this.travelTo(poi),
+        travelNote: (poi) => this.travelNote(poi),
       },
       this.world.data.heightmap,
       this.world.data.splat,
@@ -402,6 +408,7 @@ export class Game {
       else this.remotes.get(m.id)?.emote(m.e);
     });
     net.on('correct', (m) => this.player?.correct(m.x, m.y, m.z));
+    net.on('travel', (m) => this.onTravel(m));
     net.on('pings', (m) => {
       this.pings.clear();
       for (const [id, ms] of m.p) this.pings.set(id, ms);
@@ -447,6 +454,62 @@ export class Game {
     if (!s || !this.hud) return;
     this.input.releaseLock();
     this.hud.toggleWorldMap(s);
+  }
+
+  /** Ask the server to teleport us to a place on the map (it channels, then moves us). */
+  private travelTo(poi: PointOfInterest) {
+    if (this.channels.get(this.myId)?.poi === poi.id) return;
+    this.net.send({ t: 'travel', poi: poi.id });
+    closeWindow();
+  }
+
+  private travelNote(poi: PointOfInterest) {
+    const p = this.player;
+    if (p && Math.hypot(p.pos.x - poi.pos[0], p.pos.z - poi.pos[1]) < 25) return 'You are here';
+    const wait = Math.ceil((this.travelReadyAt - performance.now()) / 1000);
+    if (wait > 0) return `Teleport recharging (${wait} s)`;
+    return 'Click to teleport here';
+  }
+
+  private onTravel(m: Extract<ServerMessage, { t: 'travel' }>) {
+    const poi = POINTS_OF_INTEREST.find((o) => o.id === m.poi);
+    const me = m.id === this.myId;
+    if (m.s === 'start') {
+      this.channels.set(m.id, { poi: m.poi, nextFx: 0 });
+      if (me) this.hud?.setChannel(`Teleporting to ${poi?.name ?? 'a distant place'}`, m.ms ?? 3000);
+      return;
+    }
+    this.channels.delete(m.id);
+    if (me) this.hud?.setChannel(null);
+    if (m.s !== 'arrive' || m.x === undefined || m.y === undefined || m.z === undefined) return;
+    // a column of light where they leave and where they land
+    const from = me ? this.player?.pos : this.remotes.get(m.id)?.pos;
+    if (from && !me) this.fx.column(from.clone(), '#cdb8ff', { radius: 0.9, count: 60, dur: 0.6, height: 3 });
+    const to = new Vector3(m.x, m.y, m.z);
+    this.fx.column(to, '#cdb8ff', { radius: 0.9, count: 70, dur: 0.8, height: 3.2 });
+    this.fx.ring(to.add(new Vector3(0, 0.05, 0)), 0.4, 4, '#b49bff', 0.7);
+    this.fx.flash(to.add(new Vector3(0, 1, 0)), '#e4d8ff', 2.6, 0.3);
+    if (me) {
+      this.travelReadyAt = performance.now() + TRAVEL_COOLDOWN_MS;
+      // the 'correct' just moved us: cut the camera instead of sweeping across the valley
+      this.follow.snap(this.focusPoint());
+    }
+  }
+
+  /** The shimmer at the feet of anyone channelling a teleport. */
+  private updateChannels() {
+    const now = performance.now();
+    for (const [id, c] of this.channels) {
+      const pos = id === this.myId ? this.player?.pos : this.remotes.get(id)?.pos;
+      if (!pos) {
+        this.channels.delete(id);
+        continue;
+      }
+      if (now < c.nextFx) continue;
+      c.nextFx = now + 550;
+      this.fx.magicCircle(pos.add(new Vector3(0, 0.04, 0)), '#b49bff', { radius: 1.5, dur: 0.95, spin: 1.6, intensity: 2.2 });
+      this.fx.gather(pos.add(new Vector3(0, 1.1, 0)), '#e4d8ff', 0.5, 10, 1.3);
+    }
   }
 
   /** What the big map shows: you, the heroes around you and the monsters you can sense. */
@@ -619,6 +682,7 @@ export class Game {
     perf.end('monsters');
     hud.setBoss(boss ? boss.def.name : null, boss?.hpFrac ?? 1);
     perf.begin('fx');
+    this.updateChannels();
     this.fx.update(dt);
     perf.end('fx');
 

@@ -24,6 +24,8 @@ export interface HudCallbacks {
   openHelp(): void;
   openInventory(): void;
   openMap(): void;
+  travel(poi: PointOfInterest): void;
+  travelNote(poi: PointOfInterest): string;
 }
 
 export class Hud {
@@ -53,6 +55,9 @@ export class Hud {
   private bossFill: HTMLElement;
   private bossName: HTMLElement;
   private hurtEl: HTMLElement;
+  private castEl: HTMLElement;
+  private castFill: HTMLElement;
+  private castLabel: HTMLElement;
   private deathEl: HTMLElement | null = null;
   notesDot: HTMLElement;
   slots: HTMLElement[] = [];
@@ -85,6 +90,9 @@ export class Hud {
     this.bossName = h('div', { class: 'boss-name' });
     this.bossEl = h('div', { class: 'boss-bar' }, this.bossName, h('div', { class: 'boss-track' }, this.bossFill));
     this.hurtEl = h('div', { class: 'hurt' });
+    this.castFill = h('i');
+    this.castLabel = h('div', { class: 'cast-label' });
+    this.castEl = h('div', { class: 'cast-bar' }, this.castLabel, h('div', { class: 'cast-track' }, this.castFill));
 
     const bottom = h(
       'div',
@@ -116,6 +124,7 @@ export class Hud {
       ),
       this.toastArea,
       this.hint,
+      this.castEl,
       this.chatWrap,
       bottom,
     );
@@ -136,7 +145,7 @@ export class Hud {
     // the big map gets a sharper chart with height lines; paint it once things have settled
     let chart: HTMLCanvasElement | null = null;
     const paintChart = () => (chart ??= renderMapImage(hm, 1024, splat, 6));
-    this.worldMap = new WorldMap(paintChart);
+    this.worldMap = new WorldMap(paintChart, { go: (poi) => cb.travel(poi), note: (poi) => cb.travelNote(poi) });
     setTimeout(paintChart, 6000);
   }
 
@@ -378,6 +387,24 @@ export class Hud {
     }
     void w;
     void hgt;
+  }
+
+  // ---------------------------------------------------------------- cast bar
+  /** Show a channel ("Teleporting to …") filling over `ms`, or hide it with null. */
+  setChannel(label: string | null, ms = 0) {
+    const el = this.castEl;
+    if (!label) {
+      el.classList.remove('on');
+      return;
+    }
+    this.castLabel.textContent = label;
+    const f = this.castFill;
+    f.style.transition = 'none';
+    f.style.width = '0%';
+    void f.offsetWidth;
+    f.style.transition = `width ${ms}ms linear`;
+    f.style.width = '100%';
+    el.classList.add('on');
   }
 
   // ---------------------------------------------------------------- world map

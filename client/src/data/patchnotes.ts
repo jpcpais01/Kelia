@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T19:35:00Z',
+    title: 'Teleport from the map',
+    lines: [
+      'Hover a place on the world map and click it to teleport there: a violet circle gathers at your feet for three seconds, then a column of light sets you down nearby, on dry ground and clear of any monster camp. Moving, attacking or taking a hit breaks the spell, you cannot teleport while monsters are hunting you, and it recharges for 20 seconds after each jump. Secret places become destinations once you have found them.',
+    ],
+  },
+  {
     at: '2026-10-15T18:25:00Z',
     title: 'The world map',
     lines: [

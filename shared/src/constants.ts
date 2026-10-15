@@ -18,3 +18,6 @@ export const DAY_LENGTH_SECONDS = 40 * 60; // one full day/night cycle
 export const SAVE_INTERVAL_MS = 30_000;
 export const CHAT_MAX_LENGTH = 160;
 export const CHAT_RATE_PER_10S = 6;
+/** Teleporting to a place from the world map: a short channel, then a cooldown. */
+export const TRAVEL_CHANNEL_MS = 3000;
+export const TRAVEL_COOLDOWN_MS = 20_000;
