@@ -349,3 +349,45 @@ button { font-family: inherit; }
 .perf-foot button:hover { background: rgba(255, 255, 255, 0.12); }
 .perf-keys { margin-left: auto; color: var(--ink-3); font-size: 10px; display: inline-flex; gap: 4px; align-items: center; }
 @media (max-height: 640px) { .perf { top: 12px; max-height: calc(100vh - 24px); right: 220px; } }
+
+/* ---------------------------------------------------------------- roster (hold Tab) */
+.roster { position: absolute; left: 50%; top: 14vh; width: min(720px, 92vw); padding: 18px 20px 14px; transform: translate(-50%, -8px) scale(0.985); opacity: 0; visibility: hidden; transition: opacity 0.16s ease, transform 0.2s ease, visibility 0s linear 0.2s; background: var(--glass-2); font-variant-numeric: tabular-nums; }
+.roster.on { opacity: 1; visibility: visible; transform: translate(-50%, 0); transition: opacity 0.12s ease, transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.2), visibility 0s; }
+.roster::before { content: ''; position: absolute; left: 18%; right: 18%; top: -1px; height: 1px; background: linear-gradient(90deg, transparent, var(--gold), transparent); opacity: 0.8; }
+.roster-head { display: flex; align-items: baseline; justify-content: space-between; }
+.roster-head h2 { margin: 0; font-family: var(--serif); font-size: 17px; font-weight: 600; letter-spacing: 0.22em; color: var(--gold-2); }
+.roster-count { font-family: var(--serif); font-size: 15px; letter-spacing: 0.12em; color: var(--gold); }
+.roster-sub { margin: 4px 0 12px; font-size: 12px; color: var(--ink-3); }
+.roster-row { display: grid; grid-template-columns: 30px minmax(0, 1.5fr) 38px minmax(0, 0.9fr) minmax(0, 1.8fr) 70px; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; font-size: 13px; color: var(--ink); }
+.roster-cols { padding-top: 0; padding-bottom: 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); border-bottom: 1px solid var(--line); border-radius: 0; margin-bottom: 6px; }
+.roster-rows { display: flex; flex-direction: column; gap: 2px; }
+.roster-rows .roster-row { background: linear-gradient(90deg, color-mix(in srgb, var(--cls) 10%, transparent), transparent 60%); }
+.roster-rows .roster-row:nth-child(even) { background-color: rgba(255, 255, 255, 0.025); }
+.roster-row.you { box-shadow: inset 0 0 0 1px var(--gold-dim); background: linear-gradient(90deg, rgba(232, 194, 122, 0.16), rgba(232, 194, 122, 0.03) 70%); }
+.roster-row.dead { opacity: 0.55; }
+.roster-row.dead .roster-name > span { text-decoration: line-through; text-decoration-color: rgba(255, 107, 94, 0.7); }
+.roster-crest { width: 26px; height: 26px; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--cls); background: color-mix(in srgb, var(--cls) 16%, rgba(0, 0, 0, 0.4)); border: 1px solid color-mix(in srgb, var(--cls) 45%, transparent); }
+.roster-name { position: relative; display: flex; align-items: center; gap: 6px; min-width: 0; padding-bottom: 5px; font-weight: 600; }
+.roster-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roster-name small { font-size: 9px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--gold); border: 1px solid var(--gold-dim); border-radius: 4px; padding: 0 4px; }
+.roster-hp { position: absolute; left: 0; bottom: 0; width: 72px; height: 2px; border-radius: 2px; background: rgba(255, 255, 255, 0.1); overflow: hidden; }
+.roster-hp i { display: block; height: 100%; transform-origin: left; background: linear-gradient(90deg, var(--hp), var(--hp-2)); transition: transform 0.25s ease; }
+.roster-lv { font-weight: 700; color: var(--gold-2); text-align: center; }
+.roster-cls { color: var(--cls); font-size: 12px; font-weight: 600; letter-spacing: 0.04em; }
+.roster-where { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--ink-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.roster-where em { font-style: normal; color: var(--ink-3); margin-left: auto; padding-left: 6px; }
+.roster-arrow { flex: none; width: 0; height: 0; border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 9px solid #7fd7ff; filter: drop-shadow(0 0 3px rgba(127, 215, 255, 0.6)); }
+.roster-ping { display: flex; align-items: center; justify-content: flex-end; gap: 6px; font-size: 12px; color: var(--ink-3); }
+.roster-ping b { display: inline-flex; align-items: flex-end; gap: 2px; height: 11px; }
+.roster-ping b i { width: 3px; border-radius: 1px; background: rgba(255, 255, 255, 0.15); }
+.roster-ping b i:nth-child(1) { height: 4px; }
+.roster-ping b i:nth-child(2) { height: 7px; }
+.roster-ping b i:nth-child(3) { height: 11px; }
+.roster-ping.good { color: var(--good); }
+.roster-ping.good b i { background: var(--good); }
+.roster-ping.ok { color: var(--gold); }
+.roster-ping.ok b i:nth-child(-n + 2) { background: var(--gold); }
+.roster-ping.bad { color: var(--bad); }
+.roster-ping.bad b i:nth-child(1) { background: var(--bad); }
+.roster .r { text-align: right; justify-content: flex-end; }
+.roster-foot { margin-top: 12px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; color: var(--ink-3); }

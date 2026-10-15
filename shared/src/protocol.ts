@@ -26,7 +26,8 @@ export type ClientMessage =
   | { t: 'mv'; x: number; y: number; z: number; yaw: number; st: MoveState; seq: number }
   | { t: 'chat'; text: string }
   | { t: 'emote'; e: string }
-  | { t: 'ping'; c: number }
+  /** c = client clock (echoed back), r = the client's smoothed round trip in ms (shown on the Tab roster). */
+  | { t: 'ping'; c: number; r?: number }
   /**
    * Combat action: k = combo / skill / dodge, i = index (combo step or skill
    * slot), yaw = facing, tx/tz = aimed ground point (targeted skills).
@@ -104,7 +105,9 @@ export type ServerMessage =
   | { t: 'chat'; id: number; name: string; text: string; sys?: boolean }
   | { t: 'emote'; id: number; e: string }
   | { t: 'correct'; x: number; y: number; z: number }
-  | { t: 'pong'; c: number; s: number };
+  | { t: 'pong'; c: number; s: number }
+  /** Everyone's latest round trip: [entityId, ms][] (every couple of seconds). */
+  | { t: 'pings'; p: [number, number][] };
 
 export const EMOTES = ['wave', 'cheer', 'sit', 'dance'] as const;
 export type Emote = (typeof EMOTES)[number];

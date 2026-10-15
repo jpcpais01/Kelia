@@ -5,6 +5,7 @@ import { CHAT_MAX_LENGTH, CLASSES, ITEMS, POINTS_OF_INTEREST, SKILL_UNLOCK, WORL
 import { h, icon, mount } from './dom';
 import type { Heightmap } from '@kelia/shared';
 import { renderMapImage } from './mapImage';
+import { Roster } from './roster';
 import { fullscreenSupported, onFullscreenChange, toggleFullscreen } from './fullscreen';
 
 export interface Plate {
@@ -52,6 +53,7 @@ export class Hud {
   notesDot: HTMLElement;
   slots: HTMLElement[] = [];
   chatOpen = false;
+  readonly roster: Roster;
   private plateMap = new Map<number, Plate>();
 
   constructor(cb: HudCallbacks, hm: Heightmap, splat?: Uint8Array) {
@@ -113,6 +115,7 @@ export class Hud {
       this.chatWrap,
       bottom,
     );
+    this.roster = new Roster(this.el);
     mount(this.el);
     setTimeout(() => (this.hint.style.opacity = '0'), 14000);
 
@@ -443,6 +446,10 @@ export class Hud {
     const mm = mins % 60;
     const txt = `${String(hh).padStart(2, '0')}:${String(mm - (mm % 5)).padStart(2, '0')}`;
     if (this.clockEl.textContent !== txt) this.clockEl.textContent = txt;
+  }
+
+  get clockText() {
+    return this.clockEl.textContent ?? '';
   }
 
   dispose() {
