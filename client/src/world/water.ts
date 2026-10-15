@@ -148,7 +148,7 @@ void main(void) {
 }
 `;
 
-function riverPointAt(s: number): { x: number; z: number; dx: number; dz: number } {
+export function riverPointAt(s: number): { x: number; z: number; dx: number; dz: number } {
   let acc = 0;
   for (let i = 1; i < RIVER_POINTS.length; i++) {
     const [ax, az] = RIVER_POINTS[i - 1];

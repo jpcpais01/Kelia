@@ -5,6 +5,8 @@ import type { QualitySettings } from '../core/quality';
 import { Atmosphere } from './atmosphere';
 import { PostFX } from './postfx';
 import { Props } from './props';
+import { Ambient } from './ambient';
+import { Secrets } from './secrets';
 import { Foliage } from './foliage';
 import { Grass } from './grass';
 import { Terrain } from './terrain';
@@ -21,6 +23,8 @@ export class World {
   readonly grass: Grass;
   readonly foliage: Foliage;
   readonly props: Props;
+  ambient: Ambient | null = null;
+  secrets: Secrets | null = null;
   quality!: QualitySettings;
   private updaters: ((dt: number) => void)[] = [];
   time = 0;
@@ -65,6 +69,8 @@ export class World {
   /** Load streamed glTF content (props). Safe to call once. */
   async loadAssets() {
     await this.props.load();
+    this.ambient = new Ambient(this.scene, this.data.heightmap, this.atmosphere, this.props.lights);
+    this.secrets = new Secrets(this.scene, this.data.heightmap, this.atmosphere, this.foliage, this.ambient);
   }
 
   onUpdate(fn: (dt: number) => void) {
@@ -84,6 +90,8 @@ export class World {
     this.grass.update(this.time, this.camera.globalPosition);
     this.foliage.update(this.time, this.camera.globalPosition, this.grass.wind);
     this.props.update(this.time);
+    this.ambient?.update(dt, this.camera.globalPosition);
+    this.secrets?.update(this.time);
     for (const fn of this.updaters) fn(dt);
     this.postfx.update(this.atmosphere.exposure);
     const sunVis = Math.max(0, Math.min(1, (this.atmosphere.sunDir.y + 0.02) / 0.12));
