@@ -118,6 +118,8 @@ export class CharacterModel {
   /** The head node and its ancestors, root first (refreshed each frame for face shading). */
   private headChain: TransformNode[] = [];
   private ink: InkScaler | null = null;
+  private cape: { mesh: AbstractMesh; base: Quaternion; axis: Vector3; angle: number; vel: number } | null = null;
+  private capeT = Math.random() * 10;
   private time = Math.random() * 100;
   private extra: Mesh[] = [];
   private materials: Material[] = [];
@@ -224,6 +226,7 @@ export class CharacterModel {
       }
     }
     this.measureHead(faceMesh ?? null);
+    this.setupCape();
     if (bow) {
       const b = createBow(this.scene, bow);
       const slot = this.nodes.get('handslot.l');
@@ -272,7 +275,7 @@ export class CharacterModel {
     // keep face lines warm and soft, never darker than the default ink
     skin.r = Math.max(skin.r, 0.06);
     for (const m of this.meshes) {
-      const c = m.name.endsWith('__hair') ? hair : m.name.endsWith('__face') ? skin : INK;
+      const c = m.name.endsWith('__hair') ? hair : m.name.endsWith('__face') && !m.name.startsWith('head_hooded') ? skin : INK;
       m.outlineColor.copyFrom(c);
     }
   }
@@ -308,14 +311,15 @@ export class CharacterModel {
 
   /** Move the face-shading sphere with the head (after animation and IK). */
   private updateFace() {
-    if (!this.faceRecolors.length || this.headRadius <= 0) return;
+    if (!this.recolors.length || this.headRadius <= 0) return;
     const chain = this.headChain;
     if (!chain.length) return;
     for (let i = 0; i < chain.length; i++) chain[i].computeWorldMatrix(true);
     const w = chain[chain.length - 1].getWorldMatrix();
     const m = w.m;
     const scale = Math.hypot(m[0], m[1], m[2]);
-    for (const rc of this.faceRecolors) rc.setHead(w, this.headLocal, this.headRadius * scale, this.faceFwd, this.faceUp);
+    // every material: skin near the head, hair and face may each sit in a different atlas
+    for (const rc of this.recolors) rc.setHead(w, this.headLocal, this.headRadius * scale, this.faceFwd, this.faceUp);
   }
 
   /** Model units → metres. */
@@ -384,6 +388,54 @@ export class CharacterModel {
     this.lean += (targetLean - this.lean) * (1 - Math.exp(-dt * 6));
     this.body.rotation.z = this.lean;
     this.dt = dt;
+    this.swayCape(dt, Math.max(0, localZ), Math.abs(localX));
+  }
+
+  /**
+   * Find the cape (a rigid mesh hung from the chest), pivot it at its top edge
+   * and work out which local axis swings its hem backwards.
+   */
+  private setupCape() {
+    this.cape = null;
+    const cape = this.meshes.find((m) => m.name.startsWith('cape_'));
+    if (!cape || cape.skeleton) return;
+    cape.computeWorldMatrix(true);
+    const bb = cape.getBoundingInfo().boundingBox;
+    const top = new Vector3((bb.minimum.x + bb.maximum.x) / 2, bb.maximum.y, (bb.minimum.z + bb.maximum.z) / 2);
+    const hem = new Vector3(top.x, bb.minimum.y, top.z);
+    cape.setPivotPoint(top);
+    if (!cape.rotationQuaternion) cape.rotationQuaternion = Quaternion.FromEulerVector(cape.rotation);
+    const inv = cape.getWorldMatrix().clone().invert();
+    const back = Vector3.TransformNormal(Vector3.TransformNormal(new Vector3(0, 0, -1), this.root.getWorldMatrix()), inv).normalize();
+    const axis = Vector3.Cross(hem.subtract(top), back);
+    if (axis.lengthSquared() < 1e-10) return;
+    axis.normalize();
+    const base = cape.rotationQuaternion.clone();
+    // check the sign: the hem must move backwards
+    const before = Vector3.TransformCoordinates(hem, cape.computeWorldMatrix(true));
+    cape.rotate(axis, 0.3, Space.LOCAL);
+    const after = Vector3.TransformCoordinates(hem, cape.computeWorldMatrix(true));
+    cape.rotationQuaternion.copyFrom(base);
+    cape.computeWorldMatrix(true);
+    const backW = Vector3.TransformNormal(new Vector3(0, 0, -1), this.root.getWorldMatrix());
+    if (Vector3.Dot(after.subtract(before), backW) < 0) axis.scaleInPlace(-1);
+    this.cape = { mesh: cape, base, axis, angle: 0, vel: 0 };
+  }
+
+  /** Cheap secondary motion: the cape lifts behind a running character and breathes at rest. */
+  private swayCape(dt: number, forward: number, sideways: number) {
+    const c = this.cape;
+    if (!c || !c.mesh.rotationQuaternion || dt <= 0) return;
+    this.capeT += dt;
+    const target = Math.min(0.75, forward * 0.085 + sideways * 0.03) + 0.035 * Math.sin(this.capeT * 1.7) + 0.02 * Math.sin(this.capeT * 2.9 + 1.3) + (forward > 0.5 ? 0.05 * Math.sin(this.capeT * 9) : 0);
+    // a damped spring, so it settles back with a little swing
+    const k = 60;
+    const damp = 9;
+    const h = Math.min(dt, 0.05);
+    c.vel += ((target - c.angle) * k - c.vel * damp) * h;
+    c.angle = Math.max(-0.05, Math.min(0.9, c.angle + c.vel * h));
+    c.mesh.rotationQuaternion.copyFrom(c.base);
+    c.mesh.rotate(c.axis, c.angle, Space.LOCAL);
   }
 
   private dt = 0.016;

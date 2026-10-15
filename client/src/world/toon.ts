@@ -109,8 +109,8 @@ vec3 kToonChar(vec3 albedo, vec3 N0, vec3 V, float sh, vec3 emis, vec3 P) {
   vec3 amb = mix(toonGround.rgb, toonSky.rgb, up);
   // skin shadows are rosy, bone shadows cold
   vec3 tint = toonShade.rgb;
-  tint = mix(tint, vec3(1.12, 0.84, 0.86), skin * 0.9);
-  tint = mix(tint, vec3(0.62, 0.7, 1.12), bone * 0.85);
+  tint *= mix(vec3(1.0), vec3(1.25, 0.95, 0.9), skin);
+  tint *= mix(vec3(1.0), vec3(0.8, 0.88, 1.15), bone);
   vec3 dark = amb * tint * (1.0 + 0.3 * skin);
   vec3 light = dark + toonSun.rgb * lit * (1.0 + 0.12 * smoothstep(0.5, 0.7, ndl));
   // warm scattering along the skin's terminator
@@ -220,8 +220,8 @@ fn kToonChar(albedo: vec3f, N0: vec3f, V: vec3f, sh: f32, emis: vec3f, P: vec3f)
   let up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
   let amb = mix(uniforms.toonGround.rgb, uniforms.toonSky.rgb, up);
   var tint = uniforms.toonShade.rgb;
-  tint = mix(tint, vec3f(1.12, 0.84, 0.86), skin * 0.9);
-  tint = mix(tint, vec3f(0.62, 0.7, 1.12), bone * 0.85);
+  tint *= mix(vec3f(1.0), vec3f(1.25, 0.95, 0.9), skin);
+  tint *= mix(vec3f(1.0), vec3f(0.8, 0.88, 1.15), bone);
   let dark = amb * tint * (1.0 + 0.3 * skin);
   var light = dark + uniforms.toonSun.rgb * lit * (1.0 + 0.12 * smoothstep(0.5, 0.7, ndl));
   let band = lit * (1.0 - lit) * 4.0;

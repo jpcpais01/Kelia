@@ -74,10 +74,18 @@ const GLSL = /* glsl */ `
         vec3 kh = rcHair.rgb * mix(1.0, g, 0.55);
         float tip = clamp((kR * 0.55 - dot(kD, rcUp.xyz)) / (kR * 1.8), 0.0, 1.0);
         kh = mix(kh, kh * 1.3 + rcHair.rgb * 0.3 + 0.012, tip * 0.75);
+        // drawn strands: thin darker lines combed down from the crown
+        vec3 kRt = cross(rcUp.xyz, rcFwd.xyz);
+        float az = atan(dot(kD, kRt), dot(kD, rcFwd.xyz));
+        float hy = dot(kD, rcUp.xyz) / kR;
+        float st = az * 4.5 + sin(az * 7.0 + hy * 3.0) * 0.18;
+        float sid = fract(sin(floor(st) * 12.9898) * 43758.5453);
+        float strand = 1.0 - smoothstep(0.02 + 0.05 * sid, 0.06 + 0.07 * sid, abs(fract(st) - 0.3 - 0.4 * sid));
+        kh *= 1.0 - (0.12 + 0.2 * fract(sid * 7.31)) * strand * (1.0 - smoothstep(0.35, 0.75, hy)) * step(0.001, rcHead.w);
         surfaceAlbedo = kh;
         kSurf.y = 1.0;
       } else if (kc.x < 2.5) {
-        vec2 e = (kf - rcEyeBox.xy) / rcEyeBox.zw;
+        vec2 e = (kf - rcEyeBox.xy) / max(rcEyeBox.zw, vec2(0.001));
         float inside = (1.0 - step(1.3, max(abs(e.x), abs(e.y)))) * step(0.001, rcEyeBox.z);
         vec3 iris = rcEye.rgb;
         float t = clamp(e.y * 0.5 + 0.5, 0.0, 1.0);
@@ -102,10 +110,10 @@ const GLSL = /* glsl */ `
     kRimC = rcRim;
     float kPulse = 0.8 + 0.2 * sin(rcFx.x * 2.6);
     float kFlow = pow(0.5 + 0.5 * sin(vPositionW.y * 14.0 - rcFx.x * 4.5), 6.0);
-    vec3 kE = rcGlow.rgb * rcGlow.a * (kGem * 0.5 * kPulse + kMetal * (0.12 + 0.9 * kFlow));
+    vec3 kE = rcGlow.rgb * rcGlow.a * (kGem * 0.22 * kPulse + kMetal * (0.12 + 0.9 * kFlow));
     kE += rcRim.rgb * rcFx.z * (1.0 - smoothstep(rcFx.w * 0.3, rcFx.w, kl)) * (0.65 + 0.35 * sin(rcFx.x * 3.1 + vPositionW.y * 6.0));
     kE += vec3(rcFx.y);
-    kGlow = vec4(kE, 1.5 * rcGlow.a * (kMetal + kGem * 2.0) + 2.0 * rcFx.y);
+    kGlow = vec4(kE, 1.5 * rcGlow.a * (kMetal + kGem) + 2.0 * rcFx.y);
     surfaceAlbedo = mix(surfaceAlbedo, surfaceAlbedo * rcTint.rgb, rcTint.a * (1.0 - kBone));
   }
 `;
@@ -144,10 +152,17 @@ const WGSL = /* wgsl */ `
         var kh = uniforms.rcHair.rgb * mix(1.0, g, 0.55);
         let tip = clamp((kR * 0.55 - dot(kD, uniforms.rcUp.xyz)) / (kR * 1.8), 0.0, 1.0);
         kh = mix(kh, kh * 1.3 + uniforms.rcHair.rgb * 0.3 + vec3f(0.012), tip * 0.75);
+        let kRt = cross(uniforms.rcUp.xyz, uniforms.rcFwd.xyz);
+        let az = atan2(dot(kD, kRt), dot(kD, uniforms.rcFwd.xyz));
+        let hy = dot(kD, uniforms.rcUp.xyz) / kR;
+        let st = az * 4.5 + sin(az * 7.0 + hy * 3.0) * 0.18;
+        let sid = fract(sin(floor(st) * 12.9898) * 43758.5453);
+        let strand = 1.0 - smoothstep(0.02 + 0.05 * sid, 0.06 + 0.07 * sid, abs(fract(st) - 0.3 - 0.4 * sid));
+        kh *= 1.0 - (0.12 + 0.2 * fract(sid * 7.31)) * strand * (1.0 - smoothstep(0.35, 0.75, hy)) * step(0.001, uniforms.rcHead.w);
         surfaceAlbedo = kh;
         kSurf.y = 1.0;
       } else if (kc.x < 2.5) {
-        let e = (kf - uniforms.rcEyeBox.xy) / uniforms.rcEyeBox.zw;
+        let e = (kf - uniforms.rcEyeBox.xy) / max(uniforms.rcEyeBox.zw, vec2f(0.001));
         let inside = (1.0 - step(1.3, max(abs(e.x), abs(e.y)))) * step(0.001, uniforms.rcEyeBox.z);
         let iris = uniforms.rcEye.rgb;
         let t = clamp(e.y * 0.5 + 0.5, 0.0, 1.0);
@@ -172,10 +187,10 @@ const WGSL = /* wgsl */ `
     kRimC = uniforms.rcRim;
     let kPulse = 0.8 + 0.2 * sin(uniforms.rcFx.x * 2.6);
     let kFlow = pow(0.5 + 0.5 * sin(fragmentInputs.vPositionW.y * 14.0 - uniforms.rcFx.x * 4.5), 6.0);
-    var kE = uniforms.rcGlow.rgb * uniforms.rcGlow.a * (kGem * 0.5 * kPulse + kMetal * (0.12 + 0.9 * kFlow));
+    var kE = uniforms.rcGlow.rgb * uniforms.rcGlow.a * (kGem * 0.22 * kPulse + kMetal * (0.12 + 0.9 * kFlow));
     kE += uniforms.rcRim.rgb * uniforms.rcFx.z * (1.0 - smoothstep(uniforms.rcFx.w * 0.3, uniforms.rcFx.w, kl)) * (0.65 + 0.35 * sin(uniforms.rcFx.x * 3.1 + fragmentInputs.vPositionW.y * 6.0));
     kE += vec3f(uniforms.rcFx.y);
-    kGlow = vec4f(kE, 1.5 * uniforms.rcGlow.a * (kMetal + kGem * 2.0) + 2.0 * uniforms.rcFx.y);
+    kGlow = vec4f(kE, 1.5 * uniforms.rcGlow.a * (kMetal + kGem) + 2.0 * uniforms.rcFx.y);
     surfaceAlbedo = mix(surfaceAlbedo, surfaceAlbedo * uniforms.rcTint.rgb, uniforms.rcTint.a * (1.0 - kBone));
   }
 `;
