@@ -106,7 +106,7 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
       const m = new MonsterModel(world.scene, monsterLib, MONSTERS[id], 'dm' + i);
       const x = ox + (i - 2) * 2.2;
       m.root.position.set(x, world.groundAt(x, oz), oz);
-      m.root.rotation.y = 0;
+      m.root.rotation.y = Number(params.get('yaw') ?? 0);
       m.setShadowCaster((mm) => world.atmosphere.addShadowCaster(mm, false));
       if (anim) m.animator.play(anim, { loop: true, upper: false });
       return m;

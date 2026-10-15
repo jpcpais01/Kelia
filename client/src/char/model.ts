@@ -2,7 +2,6 @@
 // to its appearance, animated with blended locomotion, and finished with
 // two-bone foot IK on uneven ground, head look-at and turn lean.
 import {
-  Color3,
   Mesh,
   Node,
   PBRMaterial,
@@ -33,7 +32,7 @@ import { Animator, measureStride } from './animator';
 import { createBow } from './bow';
 import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
-import { inkCharacter } from './style';
+import { INK, InkScaler, inkCharacter, inkFor } from './style';
 
 export interface Look {
   appearance: Appearance;
@@ -107,6 +106,19 @@ export class CharacterModel {
   private entries: InstantiatedEntries | null = null;
   private nodes = new Map<string, TransformNode>();
   private recolors: RecolorPlugin[] = [];
+  /** Recolour plugins of the materials that carry the face. */
+  private faceRecolors: RecolorPlugin[] = [];
+  /** Recolour plugins of glowing weapons (animated). */
+  private glowRecolors: RecolorPlugin[] = [];
+  /** Head centre (head node space), radius (head node units) and face axes, for face shading. */
+  private headLocal = new Vector3();
+  private headRadius = 0;
+  private faceFwd = new Vector3(0, 0, 1);
+  private faceUp = new Vector3(0, 1, 0);
+  /** The head node and its ancestors, root first (refreshed each frame for face shading). */
+  private headChain: TransformNode[] = [];
+  private ink: InkScaler | null = null;
+  private time = Math.random() * 100;
   private extra: Mesh[] = [];
   private materials: Material[] = [];
   animator!: Animator;
@@ -166,17 +178,22 @@ export class CharacterModel {
     const meshes = rootNode.getChildMeshes(false);
     this.meshes = meshes;
     // Weapon glow needs its own material (cloned before any plugin is attached).
+    const glowOf = new Map<Material, string>();
     for (const id of [look.weapon, look.offhand]) {
       const it = id ? ITEMS[id] : null;
       if (!it?.glow || !it.mesh || it.mesh.startsWith('bow:')) continue;
       const wm = meshes.find((m) => m.name === it.mesh);
       if (wm && wm.material) {
         const gm = (wm.material as PBRMaterial).clone(wm.material.name + '_glow') as PBRMaterial;
-        gm.emissiveColor = Color3.FromHexString(it.glow).toLinearSpace().scale(0.9);
         wm.material = gm;
+        glowOf.set(gm, it.glow);
       }
     }
+    const faceMesh = meshes.find((m) => m.name.endsWith('__face'));
+    const faceId = faceMesh ? faceMesh.name.slice(5, -6) : null;
     const seen = new Set<Material>();
+    this.faceRecolors = [];
+    this.glowRecolors = [];
     for (const m of meshes) {
       m.isPickable = false;
       m.receiveShadows = true;
@@ -188,15 +205,25 @@ export class CharacterModel {
       if (mat instanceof PBRMaterial) {
         mat.metallic = 0;
         mat.roughness = 0.62;
-        const baseName = mat.name.replace(/^Clone of /, '').replace(/\.\d+$/, '');
+        const baseName = mat.name.replace(/^Clone of /, '').replace(/\.\d+$/, '').replace(/_glow$/, '');
         const refs = this.lib.swatches[baseName] ?? this.lib.swatches[Object.keys(this.lib.swatches)[0]];
         if (refs) {
           const rc = addRecolor(mat, refs);
           rc.set(SKIN_TONES[a.skin].color, HAIR_COLORS[a.hairColor].color, EYE_COLORS[a.eyes].color);
           this.recolors.push(rc);
+          if (faceMesh && faceMesh.material === mat) {
+            rc.setFace(faceId);
+            this.faceRecolors.push(rc);
+          }
+          const glow = glowOf.get(mat);
+          if (glow) {
+            rc.setGlow(glow, 1);
+            this.glowRecolors.push(rc);
+          }
         }
       }
     }
+    this.measureHead(faceMesh ?? null);
     if (bow) {
       const b = createBow(this.scene, bow);
       const slot = this.nodes.get('handslot.l');
@@ -231,7 +258,64 @@ export class CharacterModel {
     this.applyStrides();
     if (prevAction) this.animator.play(prevAction, { loop: true });
     inkCharacter(this.meshes);
+    this.inkColors(a);
+    this.ink = new InkScaler(this.meshes);
+    this.headChain = [];
+    for (let n: Node | null = head ?? null; n; n = n.parent) if (n instanceof TransformNode) this.headChain.unshift(n);
     this.setVisible(this.visible);
+  }
+
+  /** Outline colours per part: hair and face lines take their own dark tone. */
+  private inkColors(a: Appearance) {
+    const hair = inkFor(HAIR_COLORS[a.hairColor].color);
+    const skin = inkFor(SKIN_TONES[a.skin].color);
+    // keep face lines warm and soft, never darker than the default ink
+    skin.r = Math.max(skin.r, 0.06);
+    for (const m of this.meshes) {
+      const c = m.name.endsWith('__hair') ? hair : m.name.endsWith('__face') ? skin : INK;
+      m.outlineColor.copyFrom(c);
+    }
+  }
+
+  /**
+   * Find the head's centre and size from the face mesh in its rest pose, in
+   * head-node space, plus which way the face looks (for face shading, blush
+   * and the hair gradient).
+   */
+  private measureHead(face: AbstractMesh | null) {
+    const head = this.nodes.get('head');
+    this.headRadius = 0;
+    if (!head || !face) return;
+    const chain: TransformNode[] = [];
+    for (let n: Node | null = head; n; n = n.parent) if (n instanceof TransformNode) chain.unshift(n);
+    for (const n of chain) n.computeWorldMatrix(true);
+    face.computeWorldMatrix(true);
+    const bb = face.getBoundingInfo().boundingBox;
+    const inv = head.getWorldMatrix().clone().invert();
+    Vector3.TransformCoordinatesToRef(bb.centerWorld, inv, this.headLocal);
+    const ext = bb.extendSizeWorld;
+    const headScale = Vector3.TransformNormal(Vector3.Right(), head.getWorldMatrix()).length();
+    // a sphere a bit smaller than the box: KayKit heads are rounded cubes
+    this.headRadius = ((ext.x + ext.y + ext.z) / 3) * 0.95 / Math.max(headScale, 1e-6);
+    const rootW = this.root.getWorldMatrix();
+    const fwd = Vector3.TransformNormal(new Vector3(0, 0, 1), rootW);
+    const up = Vector3.TransformNormal(new Vector3(0, 1, 0), rootW);
+    Vector3.TransformNormalToRef(fwd, inv, this.faceFwd);
+    Vector3.TransformNormalToRef(up, inv, this.faceUp);
+    this.faceFwd.normalize();
+    this.faceUp.normalize();
+  }
+
+  /** Move the face-shading sphere with the head (after animation and IK). */
+  private updateFace() {
+    if (!this.faceRecolors.length || this.headRadius <= 0) return;
+    const chain = this.headChain;
+    if (!chain.length) return;
+    for (let i = 0; i < chain.length; i++) chain[i].computeWorldMatrix(true);
+    const w = chain[chain.length - 1].getWorldMatrix();
+    const m = w.m;
+    const scale = Math.hypot(m[0], m[1], m[2]);
+    for (const rc of this.faceRecolors) rc.setHead(w, this.headLocal, this.headRadius * scale, this.faceFwd, this.faceUp);
   }
 
   /** Model units → metres. */
@@ -270,6 +354,7 @@ export class CharacterModel {
   /** Recolour without rebuilding (live preview in the creator). */
   setColors(a: Appearance) {
     for (const rc of this.recolors) rc.set(SKIN_TONES[a.skin].color, HAIR_COLORS[a.hairColor].color, EYE_COLORS[a.eyes].color);
+    this.inkColors(a);
     this.look = { ...this.look, appearance: { ...this.look.appearance, skin: a.skin, hairColor: a.hairColor, eyes: a.eyes } };
   }
 
@@ -307,6 +392,11 @@ export class CharacterModel {
     if (!this.visible || !this.entries) return;
     this.applyLookAt();
     if (this.ikEnabled && this.groundAt) this.applyFootIK();
+    this.updateFace();
+    this.time += this.dt;
+    for (const rc of this.glowRecolors) rc.setTime(this.time);
+    const cam = this.scene.activeCamera;
+    if (cam && this.ink) this.ink.update(this.root.position, cam.globalPosition);
   }
 
   private applyLookAt() {
