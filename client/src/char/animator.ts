@@ -1,9 +1,12 @@
 // Weight-blended animation for KayKit rigs.
 //
 // Locomotion clips (idle / walk / run / sprint / back / strafe) all play at
-// once with weights from the current velocity. Their playback rates are tied
-// to the distance actually travelled (cycles per second = speed / stride), and
-// they are started together, so the feet stay phase-locked and never slide.
+// once with weights from the current velocity, started together and advanced
+// at one shared cycle rate so they stay phase-locked. That rate follows the
+// distance travelled (cycles per second = speed / stride) until it reaches a
+// natural cadence for the gait; past that the legs keep a human rhythm and
+// the stride lengthens instead (`strideGain`, applied by the model), because
+// the stylised clips take much shorter steps than the speeds we move at.
 // One-shot actions (attacks, casts, dodges, hits) fade in on top: full-body
 // when standing still, upper-body only while moving (weighted over the legs' clips).
 import { AnimationGroupMask, AnimationGroupMaskMode, type AnimationGroup, type TransformNode } from '@babylonjs/core';
@@ -68,6 +71,14 @@ export class Animator {
   airborne = false;
   /** Model units → metres (character scale). */
   scale = 1;
+  /**
+   * Natural cadence per gait: [loops per second, at this speed in m/s]. The
+   * cadence scales with the square root of speed around that point. Null keeps
+   * the playback strictly foot-locked (monsters).
+   */
+  cadence: Partial<Record<LocoKey, [number, number]>> | null = null;
+  /** How much longer than the clip's own stride the legs should swing (1 = as authored). */
+  strideGain = 1;
 
   constructor(groups: AnimationGroup[], clips: LocoClips, strideOverrides: Partial<Record<LocoKey, number>> = {}) {
     for (const g of groups) {
@@ -118,11 +129,12 @@ export class Animator {
    */
   setMotion(localX: number, localZ: number, dt: number) {
     const sp = Math.hypot(localX, localZ);
-    const k = 1 - Math.exp(-dt * 10);
+    const k = 1 - Math.exp(-dt * 7);
     this.speed += (sp - this.speed) * k;
     if (sp > 0.05) {
-      this.dirX += (localX / sp - this.dirX) * k;
-      this.dirZ += (localZ / sp - this.dirZ) * k;
+      const kd = 1 - Math.exp(-dt * 8);
+      this.dirX += (localX / sp - this.dirX) * kd;
+      this.dirZ += (localZ / sp - this.dirZ) * kd;
     }
   }
 
@@ -241,19 +253,26 @@ export class Animator {
     }
     // shared cycle rate (loops per second) from the weighted stride
     let strideSum = 0;
+    let naturalSum = 0;
     let wSum = 0;
     for (const k of ['walk', 'run', 'sprint', 'back', 'left', 'right'] as LocoKey[]) {
       if (w[k] > 0) {
         strideSum += (this.strides.get(k) ?? 2) * this.scale * w[k];
+        const c = this.cadence?.[k];
+        naturalSum += (c ? c[0] * Math.sqrt(Math.max(s, 0) / c[1]) : Infinity) * w[k];
         wSum += w[k];
       }
     }
     const stride = wSum > 0 ? strideSum / wSum : 2;
-    const cyclesPerSec = Math.max(0.35, s / stride);
+    const locked = s / stride;
+    const natural = wSum > 0 ? naturalSum / wSum : Infinity;
+    const cyclesPerSec = Math.max(0.35, Math.min(locked, natural));
+    const gain = this.airborne ? 1 : Math.max(1, Math.min(1.3, locked / cyclesPerSec));
+    this.strideGain += (gain - this.strideGain) * (1 - Math.exp(-dt * 6));
     for (const [k, g] of this.loco) {
       const target = (w[k] ?? 0) * (1 - actionFull);
       const cur = this.locoW.get(k) ?? 0;
-      const nw = cur + (target - cur) * (1 - Math.exp(-dt * 14));
+      const nw = cur + (target - cur) * (1 - Math.exp(-dt * 9));
       this.locoW.set(k, nw);
       // Never exactly 0: Babylon's multi-clip quaternion blend divides by the
       // sum of the first two weights, which turns 0/0 into NaN bones.

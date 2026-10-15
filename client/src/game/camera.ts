@@ -30,6 +30,8 @@ export class FollowCamera {
   /** Blocking test for obstacles (buildings, trees): returns true if point is inside one. */
   blocked: (x: number, y: number, z: number) => boolean = () => false;
   private initialized = false;
+  /** Set while the free cursor aims: forward() then points at the cursor instead. */
+  aimYaw: number | null = null;
 
   constructor(readonly camera: UniversalCamera) {}
 
@@ -49,8 +51,9 @@ export class FollowCamera {
     this.targetDistance = Math.max(2.2, Math.min(14, this.targetDistance * Math.pow(1.12, steps)));
   }
 
-  /** Forward direction on the ground plane (where W walks). */
+  /** Forward direction on the ground plane (where W walks and skills aim). */
   forward() {
+    if (this.aimYaw !== null) return new Vector3(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw));
     return new Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
   }
 
