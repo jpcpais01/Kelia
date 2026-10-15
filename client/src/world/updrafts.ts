@@ -37,21 +37,24 @@ void main() {
   float a = vUv.x;
   float h = vUv.y;
   float alpha;
+  // the streak coordinate and its screen-space width are worked out before
+  // branching: WGSL only allows fwidth in uniform control flow (WebGPU
+  // rejects the whole shader otherwise, and with it the frame)
+  float H = vInfo.y;
+  float inner = layer;
+  float s = a * (inner > 0.5 ? 5.0 : 8.0) + h * H / (inner > 0.5 ? 7.0 : 11.0);
+  float w = 0.05 + fwidth(s) * 1.2;
   if (layer > 1.5) {
     // ground swirl: arms curling in towards the centre, turning
     float r = h;
-    float s = a * 5.0 + r * 2.2 - t * 0.35;
-    float f = fract(s);
+    float sw = a * 5.0 + r * 2.2 - t * 0.35;
+    float f = fract(sw);
     float arm = smoothstep(0.0, 0.18, f) * smoothstep(0.62, 0.2, f);
     alpha = arm * smoothstep(1.0, 0.55, r) * smoothstep(0.05, 0.3, r) * 0.45;
   } else {
-    float H = vInfo.y;
-    float inner = layer;
     // streaks along a spiral, opposite turns per shell
-    float s = a * (inner > 0.5 ? 5.0 : 8.0) + h * H / (inner > 0.5 ? 7.0 : 11.0);
     float id = floor(s);
     float f = fract(s);
-    float w = 0.05 + fwidth(s) * 1.2;
     float line = smoothstep(0.5 - w, 0.5, f) * smoothstep(0.5 + w, 0.5, f);
     // dashes racing upwards, each streak at its own pace
     float rnd = hash(id + inner * 17.0);
