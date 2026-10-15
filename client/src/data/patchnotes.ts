@@ -10,15 +10,17 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    at: '2026-10-15T12:30:00Z',
-    title: 'Go fullscreen',
-    lines: ['A new button next to Settings (or F11) takes Kelia fullscreen and back, keeping your mouse captured if it was.'],
+    at: '2026-10-15T12:45:00Z',
+    title: 'A calmer stride',
+    lines: [
+      'Walking and running look natural now: legs move at a relaxed, human rhythm with longer strides instead of a frantic shuffle, the body settles into each step, and starting, stopping and turning blend more smoothly.',
+    ],
   },
   {
     at: '2026-10-15T12:15:00Z',
-    title: 'Click, aim, strike',
+    title: 'Click, aim, strike, go fullscreen',
     lines: [
-      'Clicking the world works again: it captures the mouse for the action camera and attacks. With the mouse free, your character turns to face your cursor, W runs toward it, A and D strafe around it, and skills fire where you point.',
+      'Clicking the world works again: it captures the mouse for the action camera and attacks. With the mouse free, your character turns to face your cursor, W runs toward it, A and D strafe around it, and skills fire where you point. A new button next to Settings (or F11) takes Kelia fullscreen and back.',
     ],
   },
   {

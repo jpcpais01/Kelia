@@ -4,6 +4,7 @@
 import {
   Color3,
   Mesh,
+  Node,
   PBRMaterial,
   Quaternion,
   Space,
@@ -54,6 +55,20 @@ const LOCO = {
   air: 'Jump_Idle',
 };
 
+/**
+ * Natural cadence per gait ([loops per second, at m/s]; one loop = two steps).
+ * About 150 steps a minute walking and 210 running: brisk, but calm enough to
+ * read as a person rather than the clips' tiny strides played back at 3-5x.
+ */
+const CADENCE = {
+  walk: [1.25, 2.1],
+  back: [1.15, 2.6],
+  run: [1.75, 5.4],
+  left: [1.7, 5.4],
+  right: [1.7, 5.4],
+  sprint: [1.95, 8.0],
+} satisfies Record<string, [number, number]>;
+
 const strideCache = new WeakMap<RigLibrary, Record<string, number>>();
 
 /** Which part meshes to show for a look. */
@@ -102,6 +117,8 @@ export class CharacterModel {
   private lookPitch = 0;
   private lean = 0;
   private hipDrop = 0;
+  /** Running average of each thigh's animated rotation: the centre the stride swings around. */
+  private thighMean: [Quaternion | null, Quaternion | null] = [null, null];
   /** World-space point to look at (null = straight ahead). */
   lookTarget: Vector3 | null = null;
   /** Ground height sampler for foot IK (null disables IK). */
@@ -209,6 +226,8 @@ export class CharacterModel {
     const groups = entries.animationGroups;
     this.animator = new Animator(groups, LOCO);
     this.animator.scale = s * bt.height;
+    this.animator.cadence = CADENCE;
+    this.thighMean = [null, null];
     this.applyStrides();
     if (prevAction) this.animator.play(prevAction, { loop: true });
     inkCharacter(this.meshes);
@@ -333,6 +352,7 @@ export class CharacterModel {
       ['upperleg.l', 'lowerleg.l', 'foot.l'],
       ['upperleg.r', 'lowerleg.r', 'foot.r'],
     ];
+    const rise = this.warpStride(legs);
     const offsets: number[] = [];
     const feet: Vector3[] = [];
     for (const [, , f] of legs) {
@@ -345,7 +365,8 @@ export class CharacterModel {
       offsets.push(Math.max(-0.45, Math.min(0.45, h - rootY)));
     }
     // Lower the hips so the lower foot can reach its ground.
-    const drop = Math.min(0, offsets[0], offsets[1]);
+    // (and to take back the height a longer stride lifts the planted foot by)
+    const drop = Math.min(0, offsets[0], offsets[1]) - rise;
     this.hipDrop += (drop - this.hipDrop) * (1 - Math.exp(-this.dt * 12));
     const hips = this.nodes.get('hips');
     if (hips && Math.abs(this.hipDrop) > 0.002) {
@@ -355,10 +376,59 @@ export class CharacterModel {
     }
     for (let i = 0; i < 2; i++) {
       const target = feet[i].clone();
-      target.y += offsets[i];
-      if (Math.abs(offsets[i] - this.hipDrop) < 0.01) continue;
+      target.y += offsets[i] - rise;
+      if (Math.abs(offsets[i] - rise - this.hipDrop) < 0.01) continue;
       this.solveLeg(legs[i], target);
     }
+  }
+
+  /**
+   * Lengthen the stride by swinging each thigh further around its average
+   * pose, so a natural cadence still covers the ground. Returns how far that
+   * lifted the lower foot (metres), for the hips to sink back down.
+   */
+  private warpStride(legs: [string, string, string][]): number {
+    const gain = this.animator.strideGain;
+    const k = 1 - Math.exp(-this.dt / 0.45);
+    const before = this.lowestFoot(legs);
+    let warped = false;
+    for (let i = 0; i < 2; i++) {
+      const thigh = this.nodes.get(legs[i][0]);
+      const q = thigh?.rotationQuaternion;
+      if (!thigh || !q) continue;
+      let mean = this.thighMean[i];
+      if (!mean) mean = this.thighMean[i] = q.clone();
+      else Quaternion.SlerpToRef(mean, q, k, mean);
+      if (gain < 1.005) continue;
+      // delta = mean⁻¹·q, scaled in angle, re-applied on the mean
+      const delta = Quaternion.Inverse(mean).multiply(q);
+      if (delta.w < 0) delta.scaleInPlace(-1);
+      const half = Math.acos(Math.min(1, delta.w));
+      const sinHalf = Math.sin(half);
+      if (sinHalf < 1e-5) continue;
+      const nh = Math.min(half * gain, 1.2);
+      const f = Math.sin(nh) / sinHalf;
+      const scaled = new Quaternion(delta.x * f, delta.y * f, delta.z * f, Math.cos(nh));
+      mean.multiplyToRef(scaled, q);
+      warped = true;
+    }
+    if (!warped || before === null) return 0;
+    const after = this.lowestFoot(legs);
+    return after === null ? 0 : Math.max(0, Math.min(0.08, after - before));
+  }
+
+  /** World height of the lower foot, with its whole parent chain refreshed. */
+  private lowestFoot(legs: [string, string, string][]): number | null {
+    let low = Infinity;
+    for (const [, , f] of legs) {
+      const foot = this.nodes.get(f);
+      if (!foot) return null;
+      const chain: TransformNode[] = [];
+      for (let n: Node | null = foot; n; n = n.parent) if (n instanceof TransformNode) chain.push(n);
+      for (let j = chain.length - 1; j >= 0; j--) chain[j].computeWorldMatrix(true);
+      low = Math.min(low, foot.getAbsolutePosition().y);
+    }
+    return low;
   }
 
   /** Analytic two-bone IK in world space, bending in the leg's current plane. */
