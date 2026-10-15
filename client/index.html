@@ -20,6 +20,7 @@
     <canvas id="game" tabindex="0"></canvas>
     <div id="ui"></div>
     <div id="boot">
+      <div class="boot-bg" id="boot-bg" aria-hidden="true"></div>
       <div class="boot-mark">
         <svg viewBox="0 0 64 64" width="56" height="56" aria-hidden="true"><path d="M32 4 L38 26 L60 32 L38 38 L32 60 L26 38 L4 32 L26 26 Z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="32" cy="32" r="5" fill="currentColor"/></svg>
       </div>
@@ -27,6 +28,36 @@
       <div class="boot-bar"><i id="boot-progress"></i></div>
       <div class="boot-status" id="boot-status">Preparing the world…</div>
     </div>
+    <script>
+      // Loading backdrop: start on a random hero shot of the valley, then slowly crossfade
+      // through the others with a gentle pan. Runs before the game bundle so it shows at once.
+      (function () {
+        var shots = ['lake-sunset', 'village', 'lake-dawn', 'falls', 'meadow', 'vista', 'shrine', 'peaks'];
+        var host = document.getElementById('boot-bg');
+        if (!host) return;
+        var start = Math.floor(Math.random() * shots.length);
+        var n = 0;
+        function show() {
+          if (!host.isConnected) return;
+          var name = shots[(start + n) % shots.length];
+          var img = new Image();
+          img.decoding = 'async';
+          img.alt = '';
+          img.className = 'pan-' + (n % 4);
+          if (n === 0) img.fetchPriority = 'high';
+          img.onload = function () {
+            host.appendChild(img);
+            requestAnimationFrame(function () { img.classList.add('on'); });
+            // drop layers that are fully covered by the new one
+            setTimeout(function () { while (host.children.length > 1) host.removeChild(host.firstChild); }, 2600);
+            n++;
+            setTimeout(show, 8000);
+          };
+          img.src = '/assets/backdrops/' + name + '.webp';
+        }
+        show();
+      })();
+    </script>
     <noscript>Kelia needs JavaScript to run.</noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>
