@@ -10,6 +10,7 @@ import {
   Vector4,
   type Scene,
 } from '@babylonjs/core';
+import { drawLast } from './drawOrder';
 
 Effect.ShadersStore['keliaSkyVertexShader'] = /* glsl */ `
 precision highp float;
@@ -243,6 +244,9 @@ export class Sky {
     this.dome.material = this.material;
     this.dome.renderingGroupId = 0;
     this.dome.alwaysSelectAsActiveMesh = true;
+    // shaded last, only where nothing else covers the far plane
+    this.material.needAlphaTestingForMesh = () => true;
+    drawLast(this.dome);
   }
 
   update(state: SkyState, sunDir: Vector3, moonDir: Vector3, time: number, cloudCover: number, cameraPos: Vector3) {

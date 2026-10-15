@@ -1,6 +1,7 @@
 // Assembles the 3D world: scene, camera, sky & lighting, terrain, water,
 // vegetation, props and ambient life.
 import { Color4, Scene, UniversalCamera, Vector3, type AbstractEngine } from '@babylonjs/core';
+import { applyDrawOrder } from './drawOrder';
 import { refreshStatics } from './frozen';
 import { perf } from '../core/perf';
 import type { QualitySettings } from '../core/quality';
@@ -50,6 +51,7 @@ export class World {
     scene.autoClearDepthAndStencil = true;
     scene.blockMaterialDirtyMechanism = false;
     perf.watch(scene);
+    applyDrawOrder(scene);
 
     this.camera = new UniversalCamera('cam', new Vector3(0, 30, -120), scene);
     this.camera.inputs.clear();

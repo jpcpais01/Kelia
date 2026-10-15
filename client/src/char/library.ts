@@ -2,7 +2,7 @@
 // assembly: heads are split into face and hair so any face can wear any
 // hairstyle, atlas swatches are measured for recolouring, and locomotion
 // clips are measured for stride length (so feet never slide).
-import { Mesh, Vector3, VertexBuffer, type AssetContainer, type Scene, type TransformNode } from '@babylonjs/core';
+import { BoundingInfo, Matrix, Mesh, Vector3, VertexBuffer, type AbstractMesh, type AssetContainer, type Scene, type Skeleton, type TransformNode } from '@babylonjs/core';
 import { loadContainer } from '../core/assets';
 
 /** Swatch cells (column, row) in the 8×4 KayKit colour atlas. */
@@ -26,6 +26,8 @@ export class RigLibrary {
   heightUnits = 2.4;
   swatches: Record<string, SwatchRefs> = {};
   clips: Record<string, ClipInfo> = {};
+  /** Original bounds of parts whose vertices moved to the shared skeleton's bind space. */
+  private bindBounds = new Map<string, [Vector3, Vector3]>();
 
   private constructor(readonly container: AssetContainer, readonly scene: Scene) {}
 
@@ -33,6 +35,7 @@ export class RigLibrary {
     const c = await loadContainer(scene, file);
     const lib = new RigLibrary(c, scene);
     if (splitHeads) lib.splitHeads();
+    lib.unifySkins();
     await Promise.all(atlasNames.map((n) => lib.measureAtlas(n)));
     lib.measure();
     return lib;
@@ -64,6 +67,74 @@ export class RigLibrary {
         this.scene.removeMesh(part);
         c.meshes.push(part);
       }
+    }
+  }
+
+  /**
+   * Every part of a rig is skinned to the same joints, but each glTF skin
+   * brings its own skeleton, so a character used to prepare (and upload) one
+   * bone set per body part every frame. A part's inverse bind matrices only
+   * differ from the reference skin's by one constant transform; bake that into
+   * its vertices and let every part share the reference skeleton.
+   */
+  private unifySkins() {
+    const c = this.container;
+    const refs: Skeleton[] = [];
+    const inv = new Matrix();
+    const x = new Matrix();
+    const x0 = new Matrix();
+    const v = new Vector3();
+    const keep = new Set<Skeleton>();
+    for (const m of c.meshes) {
+      const s = m.skeleton;
+      if (!(m instanceof Mesh) || !s) continue;
+      const ref = refs.find((r) => r.bones.length === s.bones.length && r.bones.every((b, i) => b.getTransformNode() === s.bones[i].getTransformNode()));
+      if (!ref || !s.bones.every((b) => b.getTransformNode())) {
+        if (!ref) refs.push(s);
+        keep.add(s);
+        continue;
+      }
+      if (ref === s) continue;
+      // X with IBM_part = X · IBM_ref, the same for every joint (checked)
+      let ok = true;
+      for (let i = 0; i < s.bones.length && ok; i++) {
+        ref.bones[i].getAbsoluteInverseBindMatrix().invertToRef(inv);
+        s.bones[i].getAbsoluteInverseBindMatrix().multiplyToRef(inv, i === 0 ? x0 : x);
+        if (i > 0) for (let k = 0; k < 16; k++) if (Math.abs(x.m[k] - x0.m[k]) > 1e-3 * (k > 11 ? 10 : 1)) ok = false;
+      }
+      if (!ok) {
+        keep.add(s);
+        continue;
+      }
+      // the old bind-pose box is where the skinned part actually renders: keep it
+      const bi = m.getBoundingInfo();
+      const box: [Vector3, Vector3] = [bi.minimum.clone(), bi.maximum.clone()];
+      this.bindBounds.set(m.name, box);
+      if ((m.geometry?.meshes.length ?? 0) > 1) m.makeGeometryUnique();
+      for (const [kind, normal] of [[VertexBuffer.PositionKind, false], [VertexBuffer.NormalKind, true], [VertexBuffer.TangentKind, true]] as const) {
+        const data = m.getVerticesData(kind);
+        if (!data) continue;
+        const stride = kind === VertexBuffer.TangentKind ? 4 : 3;
+        const out = Float32Array.from(data);
+        for (let o = 0; o < out.length; o += stride) {
+          v.set(out[o], out[o + 1], out[o + 2]);
+          if (normal) Vector3.TransformNormalToRef(v, x0, v).normalize();
+          else Vector3.TransformCoordinatesToRef(v, x0, v);
+          out[o] = v.x;
+          out[o + 1] = v.y;
+          out[o + 2] = v.z;
+        }
+        m.setVerticesData(kind, out, false, stride);
+      }
+      m.skeleton = ref;
+      m.setBoundingInfo(new BoundingInfo(box[0].clone(), box[1].clone()));
+    }
+    for (const r of refs) keep.add(r);
+    // skeletons nobody uses any more would still be cloned with every character
+    for (const s of [...c.skeletons]) {
+      if (keep.has(s)) continue;
+      c.skeletons.splice(c.skeletons.indexOf(s), 1);
+      s.dispose();
     }
   }
 
@@ -104,6 +175,14 @@ export class RigLibrary {
       maxY = Math.max(maxY, b.maximumWorld.y);
     }
     if (Number.isFinite(minY)) this.heightUnits = maxY - minY;
+  }
+
+  /** Give instantiated parts their real (rendered) bounds back after cloning recomputed them. */
+  restoreBounds(meshes: AbstractMesh[]) {
+    for (const m of meshes) {
+      const box = this.bindBounds.get(m.name);
+      if (box && m.skeleton) m.setBoundingInfo(new BoundingInfo(box[0].clone(), box[1].clone()));
+    }
   }
 
   node(nodes: TransformNode[], name: string) {
