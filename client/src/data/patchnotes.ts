@@ -11,6 +11,11 @@ export interface PatchNote {
 export const PATCH_NOTES: PatchNote[] = [
   {
     at: '2026-10-15T20:05:00Z',
+    title: 'Easier account setup',
+    lines: ['Behind the scenes, account sign-in is now simpler to switch on, bringing Google and email login closer for everyone.'],
+  },
+  {
+    at: '2026-10-15T20:05:00Z',
     title: 'Choose your time of day',
     lines: [
       'A new button next to Settings sets the sky for your own view: Automatic follows the world clock as before, or hold it at Sunrise, Day, Sunset or Night. Each click sweeps the sun smoothly to the new time, and everything follows: the light and shadows, the sky and stars, village windows and lanterns, fireflies and butterflies, and the birdsong, crickets and owls. Other players keep their own sky, and your choice is remembered.',

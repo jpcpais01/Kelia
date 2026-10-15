@@ -106,7 +106,7 @@ function friendly(err: unknown): string {
     'auth/unauthorized-domain': 'This site is not yet authorised for Google sign-in (add it in Firebase → Authentication → Settings).',
   };
   if (code.startsWith('auth/api-key-not-valid') || code === 'auth/invalid-api-key') {
-    return `Firebase rejected this build's API key (${maskKey(FIREBASE_CONFIG?.apiKey ?? '')}). Copy the Web API key from Firebase → Project settings → General into VITE_FIREBASE_API_KEY on Vercel, then redeploy. Guest play still works.`;
+    return `Firebase rejected this build's API key (${maskKey(FIREBASE_CONFIG?.apiKey ?? '')}). Copy the Web API key from Firebase → Project settings → General into FIREBASE_API_KEY on Vercel, then redeploy. Guest play still works.`;
   }
   if (code === 'auth/requests-from-referer-blocked') {
     return 'This API key is restricted to other websites. Add this site to the key in Google Cloud → Credentials.';
