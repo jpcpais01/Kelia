@@ -25,6 +25,7 @@ import { perf } from '../core/perf';
 import { fxTextures } from './fxTextures';
 import { ATLAS_SURFACES, RecolorPlugin } from './recolor';
 import { InkScaler, inkCharacter } from './style';
+import { mergeSkinnedParts } from './mergeSkin';
 import { Animator, measureStride } from './animator';
 import type { RigLibrary } from './library';
 import { spring, stepSpring } from './spring';
@@ -119,6 +120,7 @@ export class MonsterModel {
     for (const s of entries.skeletons) if (!used.has(s)) s.dispose();
 
     this.meshes = rootNode.getChildMeshes(false);
+    lib.restoreBounds(this.meshes);
     const eye = Color3.FromHexString(def.eyeColor).toLinearSpace();
     const seen = new Set();
     for (const m of this.meshes) {
@@ -143,6 +145,8 @@ export class MonsterModel {
         }
       }
     }
+    // bones, ribs and skull draw as one skinned mesh per material (eyes keep their glow)
+    this.meshes = mergeSkinnedParts(this.meshes, (m) => !this.eyeMats.includes(m.material as PBRMaterial) && !m.name.startsWith('eyes_'));
     const s = (CHARACTER_HEIGHT * def.scale) / lib.heightUnits;
     this.body.scaling.setAll(s);
     this.inked = this.meshes.filter((m) => !(m.material && this.eyeMats.includes(m.material as PBRMaterial)));

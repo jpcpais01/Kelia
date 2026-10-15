@@ -31,7 +31,7 @@ import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
 import { LEAF_CUTOFF, getLeafAtlas } from './leafAtlas';
 import { CARD_CORNER_KIND } from './meshgen';
-import { birch, blossom, broadleaf, bush, pine, rock, type Built } from './trees';
+import { birch, blossom, broadleaf, buildHorizon, bush, pine, rock, type Built } from './trees';
 import { createShaderPlugin, type ShaderPlugin } from './shaderPlugin';
 import { freezeStatic } from './frozen';
 import { setToon } from './toon';
@@ -156,6 +156,8 @@ interface Slot {
 
 const LOD_NEAR = 40;
 const LOD_MID = 140;
+/** Past this, trees switch to their horizon LOD (no limbs, only the trunk). */
+const LOD_HORIZON = 280;
 /** Layer only the shadow map renders (the camera's mask leaves this bit out). */
 const SHADOW_ONLY_LAYER = 0x10000000;
 
@@ -172,6 +174,7 @@ export class Foliage {
   private near: Chunk[] = [];
   private mid: Chunk[] = [];
   private far: Chunk[] = [];
+  private horizon: Chunk[] = [];
   private shadowChunks: Chunk[] = [];
   /** Horizontal half field of view (radians), set by update(). */
   private halfFov = 0.9;
@@ -215,9 +218,9 @@ export class Foliage {
       plugin.values.windStrength = t.wind;
       freezeStatic(mat);
       const total = this.totals[i] ?? 0;
-      const mk = (lod: number, name: string): Slot => {
+      const mk = (lod: number, name: string, build = () => t.build(lod)): Slot => {
         const m = new Mesh(name, this.scene);
-        const built = t.build(lod);
+        const built = build();
         built.data.applyToMesh(m);
         if (built.corners) m.setVerticesData(CARD_CORNER_KIND, built.corners, false, 2);
         m.material = lod === 3 ? proxyMat : mat;
@@ -227,6 +230,7 @@ export class Foliage {
         m.receiveShadows = true;
         m.alwaysSelectAsActiveMesh = true;
         m.doNotSyncBoundingInfo = true;
+        m.freezeWorldMatrix();
         const buf = new Float32Array(Math.max(1, total) * 16);
         m.thinInstanceSetBuffer('matrix', buf, 16, false);
         m.thinInstanceCount = 0;
@@ -234,6 +238,8 @@ export class Foliage {
         return { mesh: m, buf, count: 0 };
       };
       const lods = [mk(0, `${t.id}_L0`), mk(1, `${t.id}_L1`), mk(2, `${t.id}_L2`)];
+      // trees seen across the valley get a stripped-down horizon LOD
+      if (t.cards && t.maxDist === undefined) lods.push(mk(2, `${t.id}_L3`, () => buildHorizon(() => t.build(2))));
       let shadow: Slot | null = null;
       if (t.shadow) {
         // low-poly opaque stand-ins drawn only into the shadow map
@@ -412,6 +418,7 @@ export class Foliage {
     const near = (this.near.length = 0, this.near);
     const mid = (this.mid.length = 0, this.mid);
     const far = (this.far.length = 0, this.far);
+    const horizon = (this.horizon.length = 0, this.horizon);
     const cone = Math.cos(Math.min(Math.PI, this.halfFov + 0.25));
     for (const c of this.chunks) {
       const dx = c.cx - cam.x;
@@ -427,12 +434,16 @@ export class Foliage {
       if (d < LOD_NEAR + 46) near.push(c);
       if (d > LOD_NEAR - 46 && d < LOD_MID + 46) mid.push(c);
       if (d > LOD_MID - 46) far.push(c);
+      if (d > LOD_HORIZON - 46) horizon.push(c);
     }
     this.sources.forEach((src, type) => {
       const lim = Math.min(maxDist, TYPES[type].maxDist ?? 1e9);
       this.fill(src.lods[0], near, type, cam, 0, LOD_NEAR);
       this.fill(src.lods[1], mid, type, cam, LOD_NEAR, Math.min(LOD_MID, lim));
-      this.fill(src.lods[2], far, type, cam, LOD_MID, lim);
+      if (src.lods[3]) {
+        this.fill(src.lods[2], far, type, cam, LOD_MID, Math.min(LOD_HORIZON, lim));
+        this.fill(src.lods[3], horizon, type, cam, LOD_HORIZON, lim);
+      } else this.fill(src.lods[2], far, type, cam, LOD_MID, lim);
     });
   }
 

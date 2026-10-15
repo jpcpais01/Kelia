@@ -16,6 +16,8 @@
 import { AnimationGroupMask, AnimationGroupMaskMode, type AnimationGroup, type TransformNode } from '@babylonjs/core';
 
 const MIN_W = 1e-4;
+/** Below this a fading locomotion loop no longer shows and is paused. */
+const LIVE_W = 0.004;
 
 export const UPPER_BODY = [
   'spine', 'chest', 'head',
@@ -358,12 +360,32 @@ export class Animator {
       // Never exactly 0: Babylon's multi-clip quaternion blend divides by the
       // sum of the first two weights, which turns 0/0 into NaN bones.
       g.weight = Math.max(MIN_W, nw);
-      if (k === 'idle' || k === 'air') g.speedRatio = 1;
+      const gait = k !== 'idle' && k !== 'air';
+      if (!gait) g.speedRatio = 1;
       else {
         const fps = g.targetedAnimations[0]?.animation.framePerSecond || 30;
         const dur = (g.to - g.from) / fps;
         g.speedRatio = cyclesPerSec * dur;
       }
+      // A clip with no weight left is paused instead of being sampled and
+      // blended at 0.0001 every frame (most of a character's animation cost).
+      const live = target > 0 || nw > LIVE_W;
+      if (!live && g.isPlaying) g.pause();
+      else if (live && !g.isPlaying) this.resume(k, g, gait);
+    }
+  }
+
+  /** Unpause a locomotion loop, back in step with the gaits still playing. */
+  private resume(key: LocoKey, g: AnimationGroup, gait: boolean) {
+    g.play(true);
+    if (!gait) return;
+    for (const [k, other] of this.loco) {
+      if (k === key || k === 'idle' || k === 'air' || !other.isPlaying) continue;
+      const f = other.animatables[0]?.masterFrame;
+      if (f === undefined) break;
+      const phase = (f - other.from) / Math.max(1e-3, other.to - other.from);
+      g.goToFrame(g.from + (phase - Math.floor(phase)) * (g.to - g.from));
+      break;
     }
   }
 

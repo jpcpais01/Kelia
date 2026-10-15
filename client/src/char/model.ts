@@ -32,6 +32,7 @@ import {
 import { perf } from '../core/perf';
 import { Animator, measureStride } from './animator';
 import { createBow } from './bow';
+import { mergeSkinnedParts } from './mergeSkin';
 import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
 import { setToon } from '../world/toon';
@@ -191,7 +192,8 @@ export class CharacterModel {
 
     // Materials: recolour skin/hair/eyes; weapon glow.
     const a = look.appearance;
-    const meshes = rootNode.getChildMeshes(false);
+    let meshes = rootNode.getChildMeshes(false);
+    this.lib.restoreBounds(meshes);
     this.meshes = meshes;
     // Weapon glow needs its own material (cloned before any plugin is attached).
     const glowOf = new Map<Material, string>();
@@ -241,6 +243,9 @@ export class CharacterModel {
     }
     this.measureHead(faceMesh ?? null);
     this.setupCape();
+    // body, arms, legs and hats draw as one skinned mesh; face and hair keep their own ink
+    meshes = mergeSkinnedParts(meshes, (m) => !m.name.endsWith('__face') && !m.name.endsWith('__hair'));
+    this.meshes = meshes;
     if (bow) {
       const b = createBow(this.scene, bow);
       const slot = this.nodes.get('handslot.l');

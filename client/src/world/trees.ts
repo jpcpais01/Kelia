@@ -27,6 +27,23 @@ const scale3 = (a: C3, s: number): C3 => [a[0] * s, a[1] * s, a[2] * s];
 
 const noise = new Simplex2(4242);
 
+/**
+ * Set while building a tree's horizon LOD: the far band's geometry with only
+ * the trunk for wood. Past a few hundred metres a tree is a few dozen pixels
+ * tall and its limbs (half its triangles) are thinner than a pixel.
+ */
+let horizon = false;
+
+/** Build a type's horizon stand-in (its far LOD, stripped of invisible detail). */
+export function buildHorizon(build: () => Built): Built {
+  horizon = true;
+  try {
+    return build();
+  } finally {
+    horizon = false;
+  }
+}
+
 function done(b: MeshBuilder2): Built {
   return { data: b.toVertexData(), corners: b.cornerData() };
 }
@@ -276,8 +293,8 @@ function envelope(clumps: Clump[]): Crown {
 /** Mesh the wood: deeper branches drop out at lower detail. */
 function meshWood(b: MeshBuilder2, limbs: Limb[], lod: number, bark: C3, maxDepth: number[], segs: number[][], colorAt?: (l: Limb, i: number) => C3) {
   for (const l of limbs) {
-    if (l.depth > maxDepth[lod]) continue;
-    const sg = segs[lod][Math.min(l.depth, segs[lod].length - 1)];
+    if (l.depth > maxDepth[lod] || (horizon && l.depth > 0)) continue;
+    const sg = horizon ? 4 : segs[lod][Math.min(l.depth, segs[lod].length - 1)];
     let pts = l.pts;
     let radii = l.radii;
     let sways = l.sways;
@@ -322,7 +339,7 @@ function clumpCores(b: MeshBuilder2, crown: Crown, pal: Palette, lod: number, sh
     if (!cl.main) continue;
     const r = cl.r * shrink;
     // slightly below the clump centre: the lit top stays all leaves
-    b.blob([cl.c[0], cl.c[1] - cl.r * 0.12, cl.c[2]], [r, r * 0.8, r], lod === 0 ? 1 : 0, noise, 0.25, lo, hi, crown.center, (cl.s ?? 0.6) - 0.1, 0.5);
+    b.blob([cl.c[0], cl.c[1] - cl.r * 0.12, cl.c[2]], [r, r * 0.8, r], lod === 0 ? 1 : lod === 1 ? 0 : -1, noise, 0.25, lo, hi, crown.center, (cl.s ?? 0.6) - 0.1, 0.5);
   }
 }
 

@@ -19,6 +19,7 @@ import { SHRINE, VILLAGE } from '@kelia/shared';
 import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
 import { GROUND, GROUND_GRASS_GLSL } from './palette';
+import { drawFirst } from './drawOrder';
 import { TOON_FOG_GLSL, TOON_FOG_UNIFORMS, bindToonFog, toon } from './toon';
 import { PLAZA } from './village';
 
@@ -86,6 +87,15 @@ void main(void) {
   vec2 wp = base + mod(grassInst.xy - base, P);
   float dist = length(wp - camPos.xz);
 
+  // Most of the lattice is behind the camera, off to the sides, past the fade
+  // or inside the near field's hole: collapse those tufts before any texture,
+  // noise or wind work (every vertex of a tuft takes the same branch).
+  vec4 OFF = vec4(2.0, 2.0, 2.0, 1.0);
+  if (dist > field.y || dist < field.z * 0.7) { gl_Position = OFF; return; }
+  vec4 cp = viewProjection * vec4(wp.x, texelFetch(heightTex, ivec2(clamp(wp + 512.0, vec2(0.0), vec2(1023.0))), 0).r + 0.5, wp.y, 1.0);
+  float M = 4.0;
+  if (cp.w < -1.5 || cp.x > cp.w + M || cp.x < -cp.w - M || cp.y > cp.w + M || cp.y < -cp.w - M) { gl_Position = OFF; return; }
+
   vec4 sp = texelFetch(splatTex, ivec2(clamp(wp + 512.5, vec2(0.0), vec2(1024.0))), 0);
   vSplat = sp;
   float dens = clamp((1.0 - sp.g * 1.6) * (1.0 - sp.b * 1.8) * (1.0 - sp.a * 1.4), 0.0, 1.0);
@@ -99,6 +109,7 @@ void main(void) {
   // the near and far fields cross-fade over a wide band so there is no seam
   float inner = field.z > 0.0 ? smoothstep(field.z * 0.7, field.z, dist) : 1.0;
   float s = keep * fade * inner * (0.55 + 0.9 * grassInst.w);
+  if (s <= 0.0) { gl_Position = OFF; return; }
   // Past a few metres a blade or a flower is only a pixel or two wide: tone
   // its detail down so it reads as a soft mass instead of glittering.
   vFar = smoothstep(6.0, 28.0, dist);
@@ -470,6 +481,8 @@ export class Grass {
     mesh.alwaysSelectAsActiveMesh = true;
     mesh.isPickable = false;
     mesh.doNotSyncBoundingInfo = true;
+    mesh.freezeWorldMatrix();
+    drawFirst(mesh);
     const sg = this.atmosphere.shadows;
     const mat = new ShaderMaterial(name + 'Mat', this.scene, 'keliaGrass', {
       attributes: ['position', 'uv', 'color', 'grassInst'],
