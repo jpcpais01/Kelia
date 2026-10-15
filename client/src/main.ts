@@ -7,6 +7,7 @@ import { PRESETS, autoQuality, loadSettings } from './core/quality';
 import { RigLibrary } from './char/library';
 import { perf } from './core/perf';
 import { perfOverlay } from './ui/perfOverlay';
+import './ui/fullscreen';
 import { Game } from './game/game';
 import { loadTerrainData } from './world/terrainData';
 import { World } from './world/world';

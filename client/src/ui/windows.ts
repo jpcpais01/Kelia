@@ -64,6 +64,7 @@ export function openHelp() {
       ...row(['/wave', '/cheer', '/dance', '/sit'], 'Emotes'),
       ...row(['/who', '/roll', '/stuck'], 'Who is online, roll dice, get unstuck'),
       ...row(['N'], 'Toggle name plates'),
+      ...row(['F11'], 'Toggle fullscreen'),
       ...row(['F3'], 'Performance overlay (full, compact, off)'),
       ...row(['F4'], 'Measure the GPU cost of each part of the world'),
     ),

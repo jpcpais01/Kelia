@@ -162,7 +162,7 @@ button { font-family: inherit; }
 .portrait-sub { font-size: 12px; color: var(--ink-3); }
 .menu-buttons { position: absolute; right: 222px; top: 22px; display: flex; gap: 8px; }
 .icon-btn { appearance: none; width: 38px; height: 38px; border-radius: 11px; border: 1px solid var(--line); background: var(--glass); color: var(--ink-2); display: flex; align-items: center; justify-content: center; cursor: pointer; backdrop-filter: blur(10px); transition: all 0.15s; position: relative; }
-.icon-btn:hover { color: var(--gold-2); border-color: var(--gold-dim); }
+.icon-btn:hover, .icon-btn.active { color: var(--gold-2); border-color: var(--gold-dim); }
 .icon-btn .dot { position: absolute; right: 6px; top: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 8px var(--gold); }
 
 .toast-area { position: absolute; left: 50%; top: 16vh; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; }

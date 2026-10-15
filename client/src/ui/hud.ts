@@ -5,6 +5,7 @@ import { CHAT_MAX_LENGTH, CLASSES, ITEMS, POINTS_OF_INTEREST, SKILL_UNLOCK, WORL
 import { h, icon, mount } from './dom';
 import type { Heightmap } from '@kelia/shared';
 import { renderMapImage } from './mapImage';
+import { fullscreenSupported, onFullscreenChange, toggleFullscreen } from './fullscreen';
 
 export interface Plate {
   el: HTMLElement;
@@ -105,6 +106,7 @@ export class Hud {
         h('button', { class: 'icon-btn', title: 'Controls', onclick: () => cb.openHelp() }, icon('map', 18)),
         h('button', { class: 'icon-btn', title: 'Patch notes', onclick: () => cb.openPatchNotes() }, icon('scroll', 18), this.notesDot),
         h('button', { class: 'icon-btn', title: 'Settings', onclick: () => cb.openSettings() }, icon('gear', 18)),
+        fullscreenButton(),
       ),
       this.toastArea,
       this.hint,
@@ -446,4 +448,15 @@ export class Hud {
   dispose() {
     this.el.remove();
   }
+}
+
+function fullscreenButton() {
+  const btn = h('button', { class: 'icon-btn', onclick: () => void toggleFullscreen() }) as HTMLButtonElement;
+  if (!fullscreenSupported()) btn.style.display = 'none';
+  onFullscreenChange((on) => {
+    btn.replaceChildren(icon(on ? 'shrink' : 'expand', 18));
+    btn.title = on ? 'Exit fullscreen (F11)' : 'Fullscreen (F11)';
+    btn.classList.toggle('active', on);
+  });
+  return btn;
 }
