@@ -10,6 +10,15 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T14:05:00Z',
+    title: 'Hearthmere rebuilt',
+    lines: [
+      'Hearthmere has been rebuilt from the ground up: half-timbered houses with jettied upper floors, tiled roofs, dormers, shuttered windows and flower boxes, a three-storey tavern with a hanging sign and benches out front, an open smithy with a glowing forge, a stone chapel with a rose window and spire, a round watchtower and a windmill whose sails really turn.',
+      'The well now stands in a cobbled square with benches, flower tubs and lantern posts strung with colourful bunting, and every building faces the square.',
+      'At dusk the village comes alive: windows light up one by one, lanterns glow warm in the dark, and smoke curls from the chimneys. The standing stones at the Shrine of Arrival are now weathered, mossy monoliths.',
+    ],
+  },
+  {
     at: '2026-10-15T13:25:00Z',
     title: 'A painted wilderness',
     lines: [

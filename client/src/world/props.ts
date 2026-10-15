@@ -1,5 +1,6 @@
 // Hand-placed props: the village of Hearthmere, the ruins, the shrine's
-// standing stones and lake plants. Models are CC0 KayKit packs (see
+// standing stones and lake plants. Hearthmere's buildings are modelled in code
+// (village.ts); clutter, ruins and plants are CC0 KayKit packs (see
 // public/assets/LICENSES.txt); the shrine is modelled in code.
 import {
   Color3,
@@ -12,7 +13,7 @@ import {
   type AssetContainer,
   type Scene,
 } from '@babylonjs/core';
-import { LAKE, RUINS, RUINS_PROPS, SHRINE, Simplex2, VILLAGE_PROPS, hash2, waterAt, type Heightmap, type Placement } from '@kelia/shared';
+import { LAKE, RUINS, RUINS_PROPS, SHRINE, VILLAGE_PROPS, hash2, waterAt, type Heightmap, type Placement } from '@kelia/shared';
 import { loadContainer } from '../core/assets';
 import type { Atmosphere } from './atmosphere';
 import type { Foliage } from './foliage';
@@ -20,11 +21,19 @@ import { mergeStatic } from './merge';
 import { MeshBuilder2 } from './meshgen';
 import { freezeStatic } from './frozen';
 import { setToon } from './toon';
+import { Village } from './village';
+
+const lin = (h: string) => Color3.FromHexString(h).toLinearSpace().asArray();
+const SHRINE_STONE = lin('#a7a29c');
+const SHRINE_DARK = lin('#5b5866');
+const SHRINE_MOSS = lin('#5f9a42');
 
 export interface Light {
   pos: Vector3;
   color: Color3;
   radius: number;
+  /** Lanterns behind glass get no open flame. */
+  kind?: 'torch' | 'lamp' | 'crystal';
 }
 
 export class Props {
@@ -35,6 +44,7 @@ export class Props {
   /** The glTF __root__ node (right- to left-handed conversion), copied onto every placement. */
   private gltfRoot: TransformNode | null = null;
   shrineCrystal: Mesh | null = null;
+  village: Village | null = null;
 
   constructor(private scene: Scene, private hm: Heightmap, private atmosphere: Atmosphere, private foliage: Foliage) {
     this.root = new TransformNode('props', scene);
@@ -44,9 +54,11 @@ export class Props {
   async load() {
     const c = await loadContainer(this.scene, 'props/props.glb');
     this.collectTemplates(c);
+    this.village = new Village(this.scene, this.hm, this.atmosphere, this.foliage);
+    for (const pos of this.village.lamps) this.lights.push({ pos, color: new Color3(1, 0.62, 0.3), radius: 7, kind: 'lamp' });
     const village = new TransformNode('village', this.scene);
     village.parent = this.root;
-    for (const p of VILLAGE_PROPS) this.place(p, 0, 0, village);
+    for (const p of VILLAGE_PROPS) if (!p.prop.startsWith('building_')) this.place(p, 0, 0, village);
     const ruins = new TransformNode('ruins', this.scene);
     ruins.parent = this.root;
     for (const p of RUINS_PROPS) this.place(p, RUINS.center[0], RUINS.center[1], ruins);
@@ -129,14 +141,13 @@ export class Props {
     }
     this.spawn(tpl, x, y - 0.05, z, p.rot, p.scale, parent);
     if (p.collide) this.foliage.addStaticCollider(x, z, p.collide);
-    if (p.prop.includes('torch')) this.lights.push({ pos: new Vector3(x, y + p.scale * 1.05, z), color: new Color3(1, 0.55, 0.2), radius: 9 });
+    if (p.prop.includes('torch')) this.lights.push({ pos: new Vector3(x, y + p.scale * 1.05, z), color: new Color3(1, 0.55, 0.2), radius: 9, kind: 'torch' });
   }
 
   /** Circle of mossy standing stones around a softly glowing crystal. */
   private buildShrine() {
     const [cx, cz] = SHRINE.center;
     const cy = this.hm.sample(cx, cz);
-    const noise = new Simplex2(777);
     const b = new MeshBuilder2();
     const n = 7;
     for (let i = 0; i < n; i++) {
@@ -145,7 +156,8 @@ export class Props {
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
       const h = 2.6 + hash2(i, 3, 9) * 1.4;
-      b.rock([x, h * 0.45, z], [0.55, h * 0.55, 0.42], noise, i * 2.3 + 1, [0.3, 0.3, 0.31], [0.16, 0.25, 0.1]);
+      const ry = h / 1.35;
+      b.boulder([x, ry * 0.35 - 0.15, z], [0.62, ry, 0.48], i * 13 + 5, SHRINE_STONE, SHRINE_DARK, SHRINE_MOSS, { subdiv: 2, cuts: 7, mossLine: 0.5 });
     }
     const stones = new Mesh('shrineStones', this.scene);
     b.toVertexData().applyToMesh(stones);
@@ -197,7 +209,7 @@ export class Props {
     freezeStatic(cm);
     crystal.parent = this.root;
     this.shrineCrystal = crystal;
-    this.lights.push({ pos: crystal.position.clone(), color: new Color3(0.45, 0.85, 1), radius: 10 });
+    this.lights.push({ pos: crystal.position.clone(), color: new Color3(0.45, 0.85, 1), radius: 10, kind: 'crystal' });
   }
 
   private scatterLakePlants(parent: TransformNode) {
@@ -226,7 +238,8 @@ export class Props {
     this.spawn(tpl, x, y, z, rot, scale, parent);
   }
 
-  update(time: number) {
+  update(time: number, cameraPos: Vector3) {
+    this.village?.update(time, cameraPos);
     if (this.shrineCrystal) {
       this.shrineCrystal.rotation.y = time * 0.4;
       this.shrineCrystal.position.y = this.hm.sample(SHRINE.center[0], SHRINE.center[1]) + 5.2 + Math.sin(time * 1.3) * 0.12;

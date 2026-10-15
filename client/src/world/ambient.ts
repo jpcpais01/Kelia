@@ -16,7 +16,7 @@ import {
   type Scene,
   type Texture,
 } from '@babylonjs/core';
-import { FALL_S1, Simplex2, VILLAGE_PROPS, forestMask, hash2, riverWaterY, waterAt, type Heightmap } from '@kelia/shared';
+import { FALL_S1, Simplex2, forestMask, hash2, riverWaterY, waterAt, type Heightmap } from '@kelia/shared';
 import type { Atmosphere } from './atmosphere';
 import type { Light } from './props';
 import { freezeStatic } from './frozen';
@@ -77,13 +77,13 @@ export class Ambient {
   private wingBuf = new Float32Array(0);
   private haloMat: StandardMaterial | null = null;
 
-  constructor(private scene: Scene, private hm: Heightmap, private atmosphere: Atmosphere, lights: Light[]) {
+  constructor(private scene: Scene, private hm: Heightmap, private atmosphere: Atmosphere, lights: Light[], chimneys: Vector3[]) {
     this.root = new TransformNode('ambient', scene);
     this.dot = createSoftDotTexture(scene);
     this.puff = createCloudSpriteTexture(scene);
 
-    for (const l of lights) if (l.color.b < 0.5) this.addFlame(l.pos);
-    this.addChimneys();
+    for (const l of lights) if (l.kind === 'torch') this.addFlame(l.pos);
+    for (const c of chimneys) this.addSmoke(c);
     this.addWaterfallMist();
 
     this.fireflies = this.makeFireflies(new Vector3(0, 0, 0), 26, 70, new Color3(0.75, 1, 0.35));
@@ -169,18 +169,6 @@ export class Ambient {
     ps.preWarmCycles = 200;
     ps.preWarmStepOffset = 4;
     this.emitters.push({ pos, range, ps, on: false });
-  }
-
-  private addChimneys() {
-    for (const p of VILLAGE_PROPS) {
-      if (!/building_(tavern|home|blacksmith)/.test(p.prop)) continue;
-      // chimneys sit towards the back of the roof
-      const back = p.prop.includes('blacksmith') ? 0.25 : 0.15;
-      const x = p.x - Math.sin(p.rot) * p.scale * back;
-      const z = p.z - Math.cos(p.rot) * p.scale * back;
-      const y = this.hm.sample(p.x, p.z) + p.scale * (p.prop.includes('tavern') ? 1.15 : 1.05);
-      this.addSmoke(new Vector3(x, y, z));
-    }
   }
 
   private addWaterfallMist() {
