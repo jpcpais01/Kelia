@@ -456,7 +456,7 @@ export class CombatController {
         fx.after(0.05, () => fx.gather(hand.getAbsolutePosition().add(new Vector3(0, 0.3, 0)), '#c47bff', Math.max(0.15, a.impactAt - 0.1), 12, 0.9));
       }
       const g = e.pos;
-      fx.magicCircle(new Vector3(g.x, this.c.world.groundAt(g.x, g.z), g.z), '#b45cff', { radius: 1.3 * e.def.scale, dur: a.impactAt + 0.3, cell: D.hex, spin: 1.5, intensity: 2 });
+      fx.magicCircle(new Vector3(g.x, this.c.world.groundAt(g.x, g.z), g.z), '#b45cff', { radius: 1.3 * e.def.scale, dur: a.impactAt + 0.3, cell: D.hex, spin: 1.5, intensity: 2, drift: 0 });
     }
     this.later(a.impactAt, () => {
       if (!e.model || !e.alive) return;

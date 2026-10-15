@@ -10,10 +10,28 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    at: '2026-10-15T21:00:00Z',
+    // the 21:00 hour already has its five lines, so this opens the next group
+    at: '2026-10-15T22:00:00Z',
     title: 'Gliding',
     lines: [
       "You can fly! Fall more than 5 metres (step off a cliff, leap from a ledge) and your glider snaps open above you; Space in the air opens or folds it too. Steer with the mouse, slip sideways with A and D, W to speed up, S to brake and Shift to dive. Each class flies its own colours, the canvas ripples in the wind, wingtips stream contrails and the air roars past as you dive. Three updrafts lift you high: the Hearthmere Windwell behind the market, one at the foot of the Silverfall cliffs, and the Greyspine Thermal below Eagle's Perch, high enough to glide all the way down to the Ruins (they're on the world map). Over deep water the glider skims the surface, and everyone sees you fly.",
+    ],
+  },
+  {
+    at: '2026-10-15T21:05:00Z',
+    title: 'Light that fills the world',
+    lines: ['Light now behaves like it really bounces around the valley: tree crowns shade the forest floor and turn the light under them a soft green, even far beyond the real-time shadows, valleys, cliff bases and the foot of every wall gather gentle shade, and the ground tints the light it reflects. Your eyes adjust too, opening up as you walk into a dark wood and settling back down in the bright meadow, and hidden surfaces are now skipped before they are painted, which saves graphics work.'],
+  },
+  {
+    at: '2026-10-15T21:02:00Z',
+    title: 'A view of the valley while you load',
+    lines: ['The loading screen now opens on a view of Kelia itself: Mirror Lake at sunset and at dawn, Hearthmere in the evening light, the wildflower meadows, the Shrine of Arrival, Silverfall, the Greyspine peaks and the vista from the heights. Each visit starts on a different scene, gently dimmed so the title stays clear, and slowly drifts and fades into the next while the world gets ready.'],
+  },
+  {
+    at: '2026-10-15T21:00:00Z',
+    title: 'Smooth spellcasting and nature magic',
+    lines: [
+      'Arcanists no longer twist out of shape when chaining Arcane Bolts or casting Mending Light right after a Blink: back-to-back casts now flow into each other, and the end of every attack blends cleanly back into your stance. Spell circles are now drawn from nature instead of a hexagram: a breeze of wind swirls and leaves around an opening flower, with petals lifting off as you cast. Level ups and respawns bloom in a crown of leaves and petals, Arcane Bolts carry a spinning blossom, and enemy mages and the Bonelord call up rings of thorned briars.',
     ],
   },
   {

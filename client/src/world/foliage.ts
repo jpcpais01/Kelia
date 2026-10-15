@@ -35,6 +35,8 @@ import { birch, blossom, broadleaf, buildHorizon, bush, pine, rock, type Built }
 import { createShaderPlugin, type ShaderPlugin } from './shaderPlugin';
 import { freezeStatic } from './frozen';
 import { setToon } from './toon';
+import type { Blob } from './worldLight';
+import { drawDistance } from './drawOrder';
 
 const CHUNK = 64;
 
@@ -209,11 +211,58 @@ export class Foliage {
   private shadowChunks: Chunk[] = [];
   /** Horizontal half field of view (radians), set by update(). */
   private halfFov = 0.9;
+  private placements: Placement[];
+  /** Per type: the crown (or rock) as an ellipsoid in model space. */
+  private shapes: { x: number; y: number; z: number; r: number; ry: number }[] = [];
 
   constructor(private scene: Scene, private hm: Heightmap, private atmosphere: Atmosphere) {
-    const placements = this.scatter();
-    this.buildChunks(placements);
+    this.placements = this.scatter();
+    this.buildChunks(this.placements);
     this.buildSources();
+  }
+
+  /** Every tree crown, bush and rock as an ellipsoid, for the baked world lighting. */
+  occluders(): Blob[] {
+    return this.placements.map((p) => {
+      const sh = this.shapes[p.type];
+      const c = Math.cos(p.rot);
+      const s = Math.sin(p.rot);
+      return {
+        x: p.x + (sh.x * c + sh.z * s) * p.scale,
+        y: p.y + sh.y * p.scale,
+        z: p.z + (-sh.x * s + sh.z * c) * p.scale,
+        r: sh.r * p.scale,
+        ry: sh.ry * p.scale,
+        canopy: TYPES[p.type].cards,
+      };
+    });
+  }
+
+  /** Bounds of the leaves (or of the whole rock) of a model. */
+  private measureShape(m: Mesh, cards: boolean) {
+    const pos = m.getVerticesData('position');
+    const cor = cards ? m.getVerticesData(CARD_CORNER_KIND) : null;
+    const lo = [Infinity, Infinity, Infinity];
+    const hi = [-Infinity, -Infinity, -Infinity];
+    if (pos) {
+      for (let v = 0; v < pos.length / 3; v++) {
+        // leaf cards have a corner offset; trunks and limbs don't
+        const pad = cor ? Math.hypot(cor[v * 2], cor[v * 2 + 1]) : 0;
+        if (cor && pad === 0) continue;
+        for (let k = 0; k < 3; k++) {
+          lo[k] = Math.min(lo[k], pos[v * 3 + k] - pad);
+          hi[k] = Math.max(hi[k], pos[v * 3 + k] + pad);
+        }
+      }
+    }
+    if (!Number.isFinite(lo[0])) return { x: 0, y: 0, z: 0, r: 0.01, ry: 0.01 };
+    return {
+      x: (lo[0] + hi[0]) / 2,
+      y: (lo[1] + hi[1]) / 2,
+      z: (lo[2] + hi[2]) / 2,
+      r: Math.max(hi[0] - lo[0], hi[2] - lo[2]) / 2,
+      ry: (hi[1] - lo[1]) / 2,
+    };
   }
 
   private buildSources() {
@@ -269,6 +318,9 @@ export class Foliage {
         return { mesh: m, buf, count: 0 };
       };
       const lods = [mk(0, `${t.id}_L0`), mk(1, `${t.id}_L1`), mk(2, `${t.id}_L2`)];
+      this.shapes[i] = this.measureShape(lods[1].mesh, t.cards);
+      // instances sit anywhere in their LOD ring: sort each set by the ring's inner edge
+      lods.forEach((sl, k) => drawDistance(sl.mesh, [0, LOD_NEAR, LOD_MID, LOD_HORIZON][k]));
       // trees seen across the valley get a stripped-down horizon LOD
       if (t.cards && t.maxDist === undefined) lods.push(mk(2, `${t.id}_L3`, () => buildHorizon(() => t.build(2))));
       let shadow: Slot | null = null;

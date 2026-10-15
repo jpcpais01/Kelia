@@ -617,10 +617,14 @@ export class CharacterModel {
     // (bones are only reset by playing animations: layering on a frozen pose would accumulate)
     if (!this.visible || !this.entries || !this.scene.animationsEnabled) return;
     if (this.glideOn && !this.glider) this.makeGlider();
-    this.applyBodyLayer();
-    this.applyLookAt();
-    if (this.glideW > 0.001) this.applyGlidePose();
-    if (this.ikEnabled && this.groundAt && this.glideW < 0.5) this.applyFootIK();
+    // with no clip writing the skeleton the bones still hold last frame's
+    // layered pose: layering again would bend the torso a bit more every frame
+    if (this.animator.posing) {
+      this.applyBodyLayer();
+      this.applyLookAt();
+      if (this.glideW > 0.001) this.applyGlidePose();
+      if (this.ikEnabled && this.groundAt && this.glideW < 0.5) this.applyFootIK();
+    }
     this.updateFace();
     if (this.glider) {
       const cam = this.scene.activeCamera;

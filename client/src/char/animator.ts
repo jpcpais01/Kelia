@@ -13,6 +13,10 @@
 // each frame the clip's playback rate is steered so its pose lands on the
 // beat curve, which is how attacks get their anticipation, snap and
 // follow-through (see attacks.ts), and how hit-stop freezes them on contact.
+// A clip can be asked for again while its last play is still fading out (the
+// staff's bolt combo casts the same clip three times in a row): that play
+// keeps its group, and the new one runs on a twin of the clip, so the two
+// cross-fade instead of fighting over one group's weight and clock.
 import { AnimationGroupMask, AnimationGroupMaskMode, type AnimationGroup, type TransformNode } from '@babylonjs/core';
 
 const MIN_W = 1e-4;
@@ -101,6 +105,8 @@ export interface PlayOptions {
 
 export class Animator {
   private groups = new Map<string, AnimationGroup>();
+  /** Second copies of action clips, made the first time a clip is replayed mid-fade. */
+  private twins = new Map<string, AnimationGroup>();
   private loco = new Map<LocoKey, AnimationGroup>();
   private locoW = new Map<LocoKey, number>();
   private strides = new Map<LocoKey, number>();
@@ -181,9 +187,9 @@ export class Animator {
   }
 
   play(name: string, o: PlayOptions = {}): number {
-    const g = this.groups.get(name);
-    if (!g) return 0;
+    if (!this.groups.has(name)) return 0;
     if (this.action) this.retire(this.action);
+    const g = this.freeGroup(name);
     const beats = o.beats && o.beats.length > 1 ? o.beats : undefined;
     const speed = beats ? 1 : o.speed ?? 1;
     const fps = g.targetedAnimations[0]?.animation.framePerSecond || 30;
@@ -250,6 +256,44 @@ export class Animator {
     return this.action ? stripName(this.action.group.name) : null;
   }
 
+  /**
+   * A group for a new play of `name` that no other play is using. A replay
+   * while the previous one still fades out goes to the clip's twin; if both
+   * are busy, the fainter fading play gives its group up.
+   */
+  private freeGroup(name: string): AnimationGroup {
+    const g = this.groups.get(name)!;
+    const user = (grp: AnimationGroup) => this.fading.findIndex((f) => f.group === grp);
+    if (user(g) < 0) return g;
+    let twin = this.twins.get(name);
+    if (!twin) {
+      twin = g.clone(g.name);
+      twin.stop();
+      twin.weight = 0;
+      twin.enableBlending = false;
+      this.twins.set(name, twin);
+    }
+    if (user(twin) < 0) return twin;
+    const a = user(g);
+    const b = user(twin);
+    const drop = this.fading[a].weight <= this.fading[b].weight ? a : b;
+    const grp = this.fading[drop].group;
+    this.fading.splice(drop, 1);
+    return grp;
+  }
+
+  /**
+   * True while some clip is writing the skeleton this frame. When nothing
+   * plays, the bones keep last frame's values, so procedural layers that
+   * build on the animated pose must not be applied again.
+   */
+  get posing() {
+    if (this.action?.group.isPlaying) return true;
+    for (const f of this.fading) if (f.group.isPlaying) return true;
+    for (const g of this.loco.values()) if (g.isPlaying) return true;
+    return false;
+  }
+
   private retire(a: Action) {
     a.hold = false;
     a.loop = false;
@@ -291,7 +335,8 @@ export class Animator {
         }
         // Upper-body actions out-weigh locomotion on the masked bones (Babylon normalises weights > 1).
         a.group.weight = a.upper ? a.weight * 6 : a.weight;
-        if (!a.upper) actionFull = a.weight;
+        // a clip that stopped writing bones must not hold locomotion off
+        if (!a.upper && (a.group.isPlaying || a.hold)) actionFull = a.weight;
       }
     }
     for (let i = this.fading.length - 1; i >= 0; i--) {
@@ -303,7 +348,7 @@ export class Animator {
         this.fading.splice(i, 1);
       } else {
         f.group.weight = f.upper ? f.weight * 6 : f.weight;
-        if (!f.upper) actionFull = Math.max(actionFull, f.weight);
+        if (!f.upper && f.group.isPlaying) actionFull = Math.max(actionFull, f.weight);
       }
     }
 
@@ -352,14 +397,18 @@ export class Animator {
     const cyclesPerSec = Math.max(0.35, Math.min(locked, natural));
     const gain = this.airborne ? 1 : Math.max(1, Math.min(1.3, locked / cyclesPerSec));
     this.strideGain += (gain - this.strideGain) * (1 - Math.exp(-dt * 6));
+    // The gait mix is smoothed on its own; an action then takes its exact
+    // share off the top, so action + locomotion always add up to a full pose
+    // (below 1 in total, Babylon blends toward the rig's T-pose).
+    const rest = 1 - actionFull;
     for (const [k, g] of this.loco) {
-      const target = (w[k] ?? 0) * (1 - actionFull);
       const cur = this.locoW.get(k) ?? 0;
-      const nw = cur + (target - cur) * (1 - Math.exp(-dt * 9));
+      const nw = cur + ((w[k] ?? 0) - cur) * (1 - Math.exp(-dt * 9));
       this.locoW.set(k, nw);
+      const eff = nw * rest;
       // Never exactly 0: Babylon's multi-clip quaternion blend divides by the
       // sum of the first two weights, which turns 0/0 into NaN bones.
-      g.weight = Math.max(MIN_W, nw);
+      g.weight = Math.max(MIN_W, eff);
       const gait = k !== 'idle' && k !== 'air';
       if (!gait) g.speedRatio = 1;
       else {
@@ -369,7 +418,7 @@ export class Animator {
       }
       // A clip with no weight left is paused instead of being sampled and
       // blended at 0.0001 every frame (most of a character's animation cost).
-      const live = target > 0 || nw > LIVE_W;
+      const live = eff > LIVE_W || (w[k] > 0 && rest > 0);
       if (!live && g.isPlaying) g.pause();
       else if (live && !g.isPlaying) this.resume(k, g, gait);
     }
@@ -391,6 +440,7 @@ export class Animator {
 
   dispose() {
     for (const g of this.groups.values()) g.dispose();
+    for (const g of this.twins.values()) g.dispose();
   }
 
   /**
