@@ -25,7 +25,7 @@ export class MeshBuilder2 {
   private pad() {
     const n = this.vertexCount;
     if (this.uvs.length / 2 < n) {
-      const [u, v] = cellUV('bark', 0.5, 0.5);
+      const [u, v] = cellUV('solid', 0.5, 0.5);
       while (this.uvs.length / 2 < n) this.uvs.push(u, v);
     }
     while (this.corners.length / 2 < n) this.corners.push(0, 0);
@@ -84,14 +84,30 @@ export class MeshBuilder2 {
     sways: number[],
     segs: number,
     color: number[],
-    o: { shade?: [number, number]; bark?: number; colorAt?: (i: number) => number[] } = {},
+    o: {
+      shade?: [number, number];
+      /** Bark texture repeats per metre along the tube (default: from its girth, so the bark keeps its proportions). */
+      bark?: number;
+      /** Bark texture repeats around the tube. */
+      around?: number;
+      cell?: AtlasCell;
+      colorAt?: (i: number) => number[];
+      /** Per-vertex blend (0..1) toward `tintColor`: moss, lichen, wet bark. */
+      tint?: (x: number, y: number, z: number, nx: number, ny: number, nz: number) => number;
+      tintColor?: number[];
+    } = {},
   ) {
     const n = pts.length;
     if (n < 2) return;
     this.pad();
     const start = this.vertexCount;
     const [s0, s1] = o.shade ?? [0.72, 1];
-    const barkK = o.bark ?? 0.35;
+    const around = o.around ?? 1;
+    const meanR = radii.reduce((a, r) => a + r, 0) / n;
+    // one texture height per half circumference / `around`, so plates and furrows stay in proportion
+    const barkK = o.bark ?? Math.min(4, Math.max(0.3, around / (Math.PI * Math.max(meanR, 0.02))));
+    const cell = o.cell ?? 'barkOak';
+    const tc = o.tintColor ?? [1, 1, 1];
     const tan = (i: number) => {
       const a = pts[Math.max(0, i - 1)];
       const b = pts[Math.min(n - 1, i + 1)];
@@ -121,10 +137,20 @@ export class MeshBuilder2 {
         const ny = u[1] * ca + v[1] * sa;
         const nz = u[2] * ca + v[2] * sa;
         const r = radii[i];
-        this.positions.push(pts[i][0] + nx * r, pts[i][1] + ny * r, pts[i][2] + nz * r);
+        const px = pts[i][0] + nx * r;
+        const py = pts[i][1] + ny * r;
+        const pz = pts[i][2] + nz * r;
+        this.positions.push(px, py, pz);
         this.normals.push(nx, ny, nz);
-        this.colors.push(col[0] * shade, col[1] * shade, col[2] * shade, sways[i]);
-        const [bu, bvv] = cellUV('bark', 1 - Math.abs(1 - (2 * k) / segs), bv);
+        const m = o.tint ? Math.min(1, Math.max(0, o.tint(px, py, pz, nx, ny, nz))) : 0;
+        this.colors.push(
+          (col[0] + (tc[0] - col[0]) * m) * shade,
+          (col[1] + (tc[1] - col[1]) * m) * shade,
+          (col[2] + (tc[2] - col[2]) * m) * shade,
+          sways[i],
+        );
+        const ua = ((k / segs) * around * 2) % 2;
+        const [bu, bvv] = cellUV(cell, ua < 1 ? ua : 2 - ua, bv);
         this.uvs.push(bu, bvv);
         this.corners.push(0, 0);
       }
@@ -175,7 +201,7 @@ export class MeshBuilder2 {
         this.positions.push(cx + nx * rad, cy + ny * rad, cz + nz * rad);
         this.normals.push(nx, ny, nz);
         this.colors.push(color[0] * shade, color[1] * shade, color[2] * shade, sway0 + (sway1 - sway0) * t);
-        const [bu, bv] = cellUV('bark', s / segs, (t * length * 0.35) % 1);
+        const [bu, bv] = cellUV('barkOak', s / segs, (t * length * 0.35) % 1);
         this.uvs.push(bu, bv);
         this.corners.push(0, 0);
       }

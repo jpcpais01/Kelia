@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T20:00:00Z',
+    title: 'Trees with character',
+    lines: [
+      'Every tree in Kelia is now its own: bark is hand-painted per species, with ridged, mossy oak trunks, flaky red pine plates, white birch with dark scars and glossy banded cherry, and no two neighbours share quite the same shape, height, lean or shade of bark and leaves. Oaks grow as broad giants, upright crowns or gnarled leaners with low side limbs, cherries come in classic pink or pale white blossom, pines grow crooked trunks and uneven tiers, and birches by the water often grow as clusters of two or three stems.',
+    ],
+  },
+  {
     at: '2026-10-15T19:45:00Z',
     title: 'Smoother frames',
     lines: [
