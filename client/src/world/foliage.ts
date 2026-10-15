@@ -1,6 +1,10 @@
-// Trees, bushes and rocks: procedurally modelled, scattered deterministically
-// over the world, drawn as thin instances per 64 m chunk with two LODs, and
-// swaying in the same wind as the grass.
+// Trees, bushes and rocks: procedurally modelled in a soft, stylized shape,
+// scattered deterministically over the world and drawn as thin instances with
+// three LODs. Only chunks inside the view cone are gathered (re-gathered when
+// you move to a new cell or turn far enough), instance buffers never change
+// size (so WebGPU can keep its cached render bundles), and shadows come from a
+// separate set of low-poly proxies that exist only in the shadow map and only
+// near the player.
 import {
   Color3,
   Matrix,
@@ -29,6 +33,7 @@ import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
 import { MeshBuilder2 } from './meshgen';
 import { createShaderPlugin, type ShaderPlugin } from './shaderPlugin';
+import { setToon } from './toon';
 
 const CHUNK = 64;
 
@@ -44,34 +49,46 @@ interface TreeType {
   collider: number; // trunk radius
   shadow: boolean;
   wind: number;
+  /** Not drawn beyond this distance (small things). */
+  maxDist?: number;
 }
 
 const noise = new Simplex2(4242);
 
+// LOD 0 = close-up, 1 = mid, 2 = far / shadow proxy.
 function broadleaf(lod: number, variant: number): VertexData {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 977 + 13);
   const trunkH = 3.2 + rnd() * 1.6;
   const lean: C3 = [(rnd() - 0.5) * 0.25, 1, (rnd() - 0.5) * 0.25];
-  b.branch([0, -0.3, 0], lean, trunkH + 0.6, 0.38, 0.2, lod ? 5 : 8, lod ? 2 : 4, hex('#6b4a33'), 0, 0.05);
+  const bark = hex('#6e4a34');
+  b.branch([0, -0.3, 0], lean, trunkH + 0.6, 0.38, 0.2, [8, 5, 4][lod], [3, 2, 1][lod], bark, 0, 0.05);
   const top: C3 = [lean[0] * trunkH, trunkH, lean[2] * trunkH];
-  if (!lod) {
-    for (let i = 0; i < 3; i++) {
-      const a = rnd() * Math.PI * 2;
-      b.branch([top[0] * 0.7, trunkH * 0.7, top[2] * 0.7], [Math.cos(a), 0.9, Math.sin(a)], 1.8, 0.14, 0.06, 5, 2, hex('#6b4a33'), 0.05, 0.2);
+  const r0 = rnd();
+  const r1 = rnd();
+  const r2 = rnd();
+  if (lod === 0) {
+    for (const a of [r0, r1, r2]) {
+      const ang = a * Math.PI * 2;
+      b.branch([top[0] * 0.7, trunkH * 0.7, top[2] * 0.7], [Math.cos(ang), 0.9, Math.sin(ang)], 1.8, 0.14, 0.06, 5, 1, bark, 0.05, 0.2);
     }
   }
-  const leafA = variant % 3 === 2 ? hex('#3e5a1e') : hex('#2b4a1d');
-  const leafB = variant % 3 === 2 ? hex('#9a8f36') : variant % 3 === 1 ? hex('#6f9236') : hex('#5f8a30');
+  // anime foliage: deep teal-green undersides, sunny yellow-green crowns
+  const leafA = variant % 3 === 2 ? hex('#2d5a2a') : hex('#1f4d32');
+  const leafB = variant % 3 === 2 ? hex('#c2c048') : variant % 3 === 1 ? hex('#8fcf4a') : hex('#79c043');
   const canopyC: C3 = [top[0], trunkH + 1.6, top[2]];
-  const clumps = lod ? 3 : 6;
+  if (lod === 2) {
+    b.blob(canopyC, [3.4, 2.7, 3.4], 1, noise, 0.2, leafA, leafB, canopyC, 0.5);
+    return b.toVertexData();
+  }
   b.blob(canopyC, [2.6, 2.1, 2.6], lod ? 1 : 2, noise, 0.22, leafA, leafB, canopyC, 0.5);
+  const clumps = lod ? 3 : 5;
   for (let i = 0; i < clumps; i++) {
     const a = (i / clumps) * Math.PI * 2 + rnd();
     const r = 1.7 + rnd() * 0.6;
     const c: C3 = [canopyC[0] + Math.cos(a) * r, canopyC[1] + (rnd() - 0.4) * 1.4, canopyC[2] + Math.sin(a) * r];
     const s = 1.3 + rnd() * 0.6;
-    b.blob(c, [s, s * 0.85, s], lod ? 1 : 2, noise, 0.25, leafA, leafB, canopyC, 0.8);
+    b.blob(c, [s, s * 0.85, s], 1, noise, 0.25, leafA, leafB, canopyC, 0.8);
   }
   return b.toVertexData();
 }
@@ -80,14 +97,16 @@ function pine(lod: number, variant: number): VertexData {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 331 + 7);
   const h = 7 + rnd() * 3;
-  b.branch([0, -0.3, 0], [0, 1, 0], h * 0.9, 0.32, 0.08, lod ? 5 : 7, 2, hex('#5a4030'), 0, 0.1);
-  const layers = lod ? 3 : 5;
-  const dark = hex('#24452c');
-  const light = hex('#4f7a3c');
+  b.branch([0, -0.3, 0], [0, 1, 0], h * 0.9, 0.32, 0.08, [7, 5, 4][lod], [2, 1, 1][lod], hex('#5e4232'), 0, 0.1);
+  const layers = [5, 3, 2][lod];
+  const segs = [11, 8, 6][lod];
+  const dark = hex('#163f33');
+  const light = hex('#4f9a4c');
   for (let i = 0; i < layers; i++) {
     const t = i / layers;
-    const radius = 2.6 * (1 - t * 0.75) + rnd() * 0.3;
-    b.cone(1.6 + t * h * 0.78, 2.6 - t * 0.6, radius, lod ? 7 : 11, dark, light, 0.25 + t * 0.6, 0.18, rnd() * 6);
+    const radius = 2.7 * (1 - t * 0.75) + rnd() * 0.3;
+    const height = (2.6 - t * 0.6) * (0.55 + (0.45 * 5) / layers);
+    b.cone(1.6 + t * h * 0.78, height, radius, segs, dark, light, 0.25 + t * 0.6, 0.18, rnd() * 6);
   }
   return b.toVertexData();
 }
@@ -96,12 +115,12 @@ function birch(lod: number, variant: number): VertexData {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 51 + 3);
   const h = 5 + rnd() * 1.5;
-  b.branch([0, -0.3, 0], [(rnd() - 0.5) * 0.15, 1, (rnd() - 0.5) * 0.15], h, 0.2, 0.1, lod ? 5 : 7, 3, hex('#e8e4dc'), 0, 0.1);
+  b.branch([0, -0.3, 0], [(rnd() - 0.5) * 0.15, 1, (rnd() - 0.5) * 0.15], h, 0.2, 0.1, [7, 5, 4][lod], [3, 2, 1][lod], hex('#efebe2'), 0, 0.1);
   const c: C3 = [0, h + 0.4, 0];
-  const leafA = hex('#4a6e26');
-  const leafB = hex('#a6a848');
-  b.blob(c, [1.8, 2.4, 1.8], lod ? 1 : 2, noise, 0.3, leafA, leafB, c, 0.7);
-  if (!lod) {
+  const leafA = hex('#2f6a2c');
+  const leafB = hex('#c6d455');
+  b.blob(c, lod === 2 ? [2.0, 2.6, 2.0] : [1.8, 2.4, 1.8], lod ? 1 : 2, noise, 0.3, leafA, leafB, c, 0.7);
+  if (lod === 0) {
     b.blob([c[0] + 0.9, c[1] - 1.1, c[2] + 0.4], [1.1, 1.2, 1.1], 1, noise, 0.3, leafA, leafB, c, 0.8);
     b.blob([c[0] - 0.8, c[1] - 0.6, c[2] - 0.6], [1.0, 1.1, 1.0], 1, noise, 0.3, leafA, leafB, c, 0.8);
   }
@@ -112,18 +131,21 @@ function bush(lod: number, variant: number): VertexData {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 71 + 5);
   const c: C3 = [0, 0.5, 0];
-  const a = variant % 2 ? hex('#25451c') : hex('#2d4f1f');
-  const t = variant % 2 ? hex('#557a2c') : hex('#678b34');
-  b.blob(c, [1.2 + rnd() * 0.4, 0.95, 1.2 + rnd() * 0.4], lod ? 1 : 2, noise, 0.3, a, t, [0, -0.4, 0], 0.35, 0.5);
-  if (!lod) b.blob([0.7, 0.35, 0.3], [0.7, 0.6, 0.7], 1, noise, 0.3, a, t, [0, -0.4, 0], 0.35, 0.5);
+  const a = variant % 2 ? hex('#1d4a2a') : hex('#24532a');
+  const t = variant % 2 ? hex('#6fb03e') : hex('#8cc24a');
+  b.blob(c, [1.2 + rnd() * 0.4, 0.95, 1.2 + rnd() * 0.4], lod === 2 ? 0 : 1, noise, 0.3, a, t, [0, -0.4, 0], 0.35, 0.5);
+  if (lod === 0) b.blob([0.7, 0.35, 0.3], [0.7, 0.6, 0.7], 1, noise, 0.3, a, t, [0, -0.4, 0], 0.35, 0.5);
   return b.toVertexData();
 }
 
-function rock(_lod: number, variant: number): VertexData {
+function rock(lod: number, variant: number): VertexData {
   const b = new MeshBuilder2();
   const rnd = mulberry(variant * 17 + 1);
-  b.rock([0, 0, 0], [1 + rnd() * 0.4, 0.75 + rnd() * 0.3, 1 + rnd() * 0.4], noise, variant * 3.7, hex('#8a8783'), hex('#5f7a3a'));
-  if (variant % 2 === 0) b.rock([0.9, -0.1, 0.5], [0.5, 0.45, 0.5], noise, variant * 5.1 + 2, hex('#8a8783'), hex('#5f7a3a'));
+  const sub = lod === 2 ? 0 : 1;
+  const stone = hex('#8f9098');
+  const moss = hex('#6a9a3e');
+  b.rock([0, 0, 0], [1 + rnd() * 0.4, 0.75 + rnd() * 0.3, 1 + rnd() * 0.4], noise, variant * 3.7, stone, moss, sub);
+  if (variant % 2 === 0 && lod < 2) b.rock([0.9, -0.1, 0.5], [0.5, 0.45, 0.5], noise, variant * 5.1 + 2, stone, moss, sub);
   return b.toVertexData();
 }
 
@@ -145,11 +167,11 @@ const TYPES: TreeType[] = [
   { id: 'pine0', build: (l) => pine(l, 0), collider: 0.45, shadow: true, wind: 0.6 },
   { id: 'pine1', build: (l) => pine(l, 1), collider: 0.45, shadow: true, wind: 0.6 },
   { id: 'birch', build: (l) => birch(l, 0), collider: 0.35, shadow: true, wind: 1.2 },
-  { id: 'bush0', build: (l) => bush(l, 0), collider: 0, shadow: false, wind: 0.6 },
-  { id: 'bush1', build: (l) => bush(l, 1), collider: 0, shadow: false, wind: 0.6 },
-  { id: 'rock0', build: (l) => rock(l, 0), collider: 1.0, shadow: true, wind: 0 },
-  { id: 'rock1', build: (l) => rock(l, 1), collider: 1.0, shadow: true, wind: 0 },
-  { id: 'rock2', build: (l) => rock(l, 2), collider: 1.0, shadow: true, wind: 0 },
+  { id: 'bush0', build: (l) => bush(l, 0), collider: 0, shadow: true, wind: 0.6, maxDist: 220 },
+  { id: 'bush1', build: (l) => bush(l, 1), collider: 0, shadow: true, wind: 0.6, maxDist: 220 },
+  { id: 'rock0', build: (l) => rock(l, 0), collider: 1.0, shadow: true, wind: 0, maxDist: 320 },
+  { id: 'rock1', build: (l) => rock(l, 1), collider: 1.0, shadow: true, wind: 0, maxDist: 320 },
+  { id: 'rock2', build: (l) => rock(l, 2), collider: 1.0, shadow: true, wind: 0, maxDist: 320 },
 ];
 
 export interface Collider {
@@ -200,19 +222,39 @@ const WIND_WGSL = /* wgsl */ `
   worldPos = vec4f(worldPos.x + kDisp.x * kSway * min(kH * 0.12, 1.2) * uniforms.windStrength, worldPos.y, worldPos.z + kDisp.y * kSway * min(kH * 0.12, 1.2) * uniforms.windStrength, worldPos.w);
 `;
 
+/** One drawable set: a source mesh whose thin-instance buffer never changes size. */
+interface Slot {
+  mesh: Mesh;
+  buf: Float32Array;
+  count: number;
+}
+
+const LOD_NEAR = 40;
+const LOD_MID = 140;
+/** Layer only the shadow map renders (the camera's mask leaves this bit out). */
+const SHADOW_ONLY_LAYER = 0x10000000;
+
 export class Foliage {
   readonly colliders: Collider[] = [];
   private grid = new Map<number, Collider[]>();
   private chunks: Chunk[] = [];
-  private lastCell = '';
-  private bufs: { hi: Float32Array; lo: Float32Array }[] = [];
-  private sources: { hi: Mesh; lo: Mesh; mat: PBRMaterial; plugin: ShaderPlugin }[] = [];
+  private lastKey = '';
+  private lastYaw = 1e9;
+  private lastShadowCell = '';
+  private sources: { lods: Slot[]; shadow: Slot | null; mat: PBRMaterial; plugin: ShaderPlugin }[] = [];
+  private totals: number[] = [];
   private q!: QualitySettings;
+  private near: Chunk[] = [];
+  private mid: Chunk[] = [];
+  private far: Chunk[] = [];
+  private shadowChunks: Chunk[] = [];
+  /** Horizontal half field of view (radians), set by update(). */
+  private halfFov = 0.9;
 
   constructor(private scene: Scene, private hm: Heightmap, private atmosphere: Atmosphere) {
-    this.buildSources();
     const placements = this.scatter();
     this.buildChunks(placements);
+    this.buildSources();
   }
 
   private buildSources() {
@@ -220,16 +262,11 @@ export class Foliage {
       const mat = new PBRMaterial('foliage_' + t.id, this.scene);
       mat.albedoColor = Color3.White();
       mat.metallic = 0;
-      mat.roughness = t.id.startsWith('rock') ? 0.9 : 0.85;
-      mat.environmentIntensity = 0.6;
-      mat.specularIntensity = 0.25;
+      mat.roughness = 0.9;
       mat.backFaceCulling = true;
-      // Soft subsurface-like brightening on foliage seen against the light.
-      if (!t.id.startsWith('rock')) {
-        mat.subSurface.isTranslucencyEnabled = true;
-        mat.subSurface.translucencyIntensity = 0.35;
-        mat.subSurface.tintColor = new Color3(0.6, 0.9, 0.3);
-      }
+      const isRock = t.id.startsWith('rock');
+      // leaves glow when the sun is behind them; rocks get a crisp rim
+      setToon(mat, isRock ? { rim: 0.5, translucency: 0 } : { rim: 0.65, translucency: 0.5 });
       const plugin = createShaderPlugin(mat, {
         name: 'FoliageWind',
         uniforms: { windParams: 'vec4', windStrength: 'float' },
@@ -237,17 +274,33 @@ export class Foliage {
         wgsl: { vertex: { CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_WGSL } },
       });
       plugin.values.windStrength = t.wind;
-      const mk = (lod: number) => {
-        const m = new Mesh(`${t.id}_L${lod}`, this.scene);
+      const total = this.totals[i] ?? 0;
+      const mk = (lod: number, name: string): Slot => {
+        const m = new Mesh(name, this.scene);
         t.build(lod, i).applyToMesh(m);
         m.material = mat;
         m.useVertexColors = true;
         m.hasVertexAlpha = false;
         m.isPickable = false;
-        m.setEnabled(false);
-        return m;
+        m.receiveShadows = true;
+        m.alwaysSelectAsActiveMesh = true;
+        m.doNotSyncBoundingInfo = true;
+        const buf = new Float32Array(Math.max(1, total) * 16);
+        m.thinInstanceSetBuffer('matrix', buf, 16, false);
+        m.thinInstanceCount = 0;
+        m.isVisible = false;
+        return { mesh: m, buf, count: 0 };
       };
-      this.sources.push({ hi: mk(0), lo: mk(1), mat, plugin });
+      const lods = [mk(0, `${t.id}_L0`), mk(1, `${t.id}_L1`), mk(2, `${t.id}_L2`)];
+      let shadow: Slot | null = null;
+      if (t.shadow) {
+        // low-poly stand-ins drawn only into the shadow map
+        shadow = mk(t.id.startsWith('bush') || t.id.startsWith('rock') ? 2 : 1, `${t.id}_shadow`);
+        shadow.mesh.layerMask = SHADOW_ONLY_LAYER;
+        shadow.mesh.receiveShadows = false;
+        this.atmosphere.addShadowCaster(shadow.mesh, false, true);
+      }
+      this.sources.push({ lods, shadow, mat, plugin });
     }
   }
 
@@ -342,17 +395,7 @@ export class Foliage {
       };
       this.chunks.push(chunk);
     }
-    for (const [type, src] of this.sources.entries()) {
-      for (const mesh of [src.hi, src.lo]) {
-        mesh.receiveShadows = true;
-        mesh.alwaysSelectAsActiveMesh = true;
-        mesh.thinInstanceSetBuffer('matrix', new Float32Array(16), 16, false);
-        mesh.thinInstanceCount = 0;
-        mesh.setEnabled(true);
-        if (TYPES[type].shadow) this.atmosphere.addShadowCaster(mesh, false);
-      }
-      this.bufs.push({ hi: new Float32Array(0), lo: new Float32Array(0) });
-    }
+    this.totals = TYPES.map((_, type) => list.filter((p) => p.type === type).length);
   }
 
   private addCollider(c: Collider) {
@@ -386,53 +429,86 @@ export class Foliage {
 
   applyQuality(q: QualitySettings) {
     this.q = q;
-    this.lastCell = '';
+    this.lastKey = '';
+    this.lastShadowCell = '';
   }
 
-  update(time: number, cam: Vector3, wind: { x: number; y: number; z: number; w: number }) {
-    for (const src of this.sources) {
-      src.plugin.values.windParams = [wind.x, wind.y, wind.z, time];
+  update(time: number, cam: Vector3, wind: { x: number; y: number; z: number; w: number }, fwd?: Vector3, halfFov = 0.9) {
+    for (const src of this.sources) src.plugin.values.windParams = [wind.x, wind.y, wind.z, time];
+    this.halfFov = halfFov;
+    const q = this.q;
+    if (!q) return;
+
+    // Shadow proxies: everything near the player, in every direction.
+    const sCell = `${Math.floor(cam.x / 12)},${Math.floor(cam.z / 12)},${q.shadows}`;
+    if (sCell !== this.lastShadowCell) {
+      this.lastShadowCell = sCell;
+      const r = q.shadows ? q.shadowDistance + 30 : -1;
+      this.shadowChunks = this.chunks.filter((c) => Math.hypot(c.cx - cam.x, c.cz - cam.z) < r + 46);
+      this.sources.forEach((src, type) => {
+        if (src.shadow) this.fill(src.shadow, this.shadowChunks, type, cam, -1, r);
+      });
     }
-    // Re-gather visible instances whenever the camera moves to a new 16 m cell.
-    const cell = `${Math.floor(cam.x / 16)},${Math.floor(cam.z / 16)}`;
-    if (cell === this.lastCell) return;
-    this.lastCell = cell;
-    const maxDist = this.q?.treeDistance ?? 400;
-    const hiDist = Math.min(150, maxDist * 0.32);
-    const hiChunks: Chunk[] = [];
-    const loChunks: Chunk[] = [];
+
+    // Visible instances: re-gather on a new 16 m cell or after turning ~10°.
+    const yaw = fwd ? Math.atan2(fwd.x, fwd.z) : 0;
+    let dYaw = Math.abs(yaw - this.lastYaw);
+    if (dYaw > Math.PI) dYaw = Math.PI * 2 - dYaw;
+    const key = `${Math.floor(cam.x / 16)},${Math.floor(cam.z / 16)}`;
+    if (key === this.lastKey && dYaw < 0.17) return;
+    this.lastKey = key;
+    this.lastYaw = yaw;
+    const maxDist = q.treeDistance;
+    const near = (this.near.length = 0, this.near);
+    const mid = (this.mid.length = 0, this.mid);
+    const far = (this.far.length = 0, this.far);
+    const cone = Math.cos(Math.min(Math.PI, this.halfFov + 0.25));
     for (const c of this.chunks) {
-      const d = Math.hypot(c.cx - cam.x, c.cz - cam.z);
-      if (d > maxDist + 45) continue;
-      (d < hiDist ? hiChunks : loChunks).push(c);
+      const dx = c.cx - cam.x;
+      const dz = c.cz - cam.z;
+      const d = Math.hypot(dx, dz);
+      if (d > maxDist + 46) continue;
+      // keep chunks in (or touching) the view cone; everything close is kept
+      if (fwd && d > 64) {
+        const cosA = (dx * fwd.x + dz * fwd.z) / (d * Math.hypot(fwd.x, fwd.z) || 1);
+        const pad = Math.atan(48 / d);
+        if (Math.acos(Math.max(-1, Math.min(1, cosA))) > Math.acos(cone) + pad) continue;
+      }
+      if (d < LOD_NEAR + 46) near.push(c);
+      if (d > LOD_NEAR - 46 && d < LOD_MID + 46) mid.push(c);
+      if (d > LOD_MID - 46) far.push(c);
     }
     this.sources.forEach((src, type) => {
-      const b = this.bufs[type];
-      b.hi = this.gather(hiChunks, type, b.hi, src.hi);
-      b.lo = this.gather(loChunks, type, b.lo, src.lo);
+      const lim = Math.min(maxDist, TYPES[type].maxDist ?? 1e9);
+      this.fill(src.lods[0], near, type, cam, 0, LOD_NEAR);
+      this.fill(src.lods[1], mid, type, cam, LOD_NEAR, Math.min(LOD_MID, lim));
+      this.fill(src.lods[2], far, type, cam, LOD_MID, lim);
     });
   }
 
-  private gather(list: Chunk[], type: number, buf: Float32Array, mesh: Mesh): Float32Array {
+  /** Copy the instances of `type` whose distance is in [d0, d1) into a slot. */
+  private fill(slot: Slot, list: Chunk[], type: number, cam: Vector3, d0: number, d1: number) {
+    const buf = slot.buf;
+    const cap = buf.length / 16;
     let n = 0;
-    for (const c of list) n += c.mats[type]?.length ?? 0;
-    if (buf.length < n) buf = new Float32Array(Math.ceil(n * 1.25 / 16) * 16);
-    let o = 0;
+    const lo2 = d0 > 0 ? d0 * d0 : -1;
+    const hi2 = d1 * d1;
     for (const c of list) {
       const m = c.mats[type];
-      if (m) {
-        buf.set(m, o);
-        o += m.length;
+      if (!m) continue;
+      for (let o = 0; o < m.length && n < cap; o += 16) {
+        const dx = m[o + 12] - cam.x;
+        const dz = m[o + 14] - cam.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < lo2 || d2 >= hi2) continue;
+        buf.set(m.subarray(o, o + 16), n * 16);
+        n++;
       }
     }
-    if (n === 0) {
-      mesh.thinInstanceCount = 0;
-      mesh.isVisible = false;
-      return buf;
-    }
-    mesh.isVisible = true;
-    mesh.thinInstanceSetBuffer('matrix', buf, 16, false);
-    mesh.thinInstanceCount = n / 16;
-    return buf;
+    slot.count = n;
+    const mesh = slot.mesh;
+    mesh.isVisible = n > 0;
+    mesh.thinInstanceCount = n;
+    if (n > 0) mesh.thinInstanceBufferUpdated('matrix');
   }
 }

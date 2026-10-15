@@ -16,7 +16,9 @@ import { LAKE, RUINS, RUINS_PROPS, SHRINE, Simplex2, VILLAGE_PROPS, hash2, water
 import { loadContainer } from '../core/assets';
 import type { Atmosphere } from './atmosphere';
 import type { Foliage } from './foliage';
+import { mergeStatic } from './merge';
 import { MeshBuilder2 } from './meshgen';
+import { setToon } from './toon';
 
 export interface Light {
   pos: Vector3;
@@ -41,16 +43,24 @@ export class Props {
   async load() {
     const c = await loadContainer(this.scene, 'props/props.glb');
     this.collectTemplates(c);
-    for (const p of VILLAGE_PROPS) this.place(p, 0, 0);
-    for (const p of RUINS_PROPS) this.place(p, RUINS.center[0], RUINS.center[1]);
-    this.scatterLakePlants();
-    this.root.getChildMeshes(false).forEach((m) => {
-      if (m === this.shrineCrystal) return;
-      m.computeWorldMatrix(true);
-      m.freezeWorldMatrix();
-      m.isPickable = false;
-      m.doNotSyncBoundingInfo = true;
-    });
+    const village = new TransformNode('village', this.scene);
+    village.parent = this.root;
+    for (const p of VILLAGE_PROPS) this.place(p, 0, 0, village);
+    const ruins = new TransformNode('ruins', this.scene);
+    ruins.parent = this.root;
+    for (const p of RUINS_PROPS) this.place(p, RUINS.center[0], RUINS.center[1], ruins);
+    const lake = new TransformNode('lakePlants', this.scene);
+    lake.parent = this.root;
+    this.scatterLakePlants(lake);
+    // Batch each area into a few meshes (one per material).
+    for (const [node, cast] of [[village, true], [ruins, true], [lake, false]] as const) {
+      for (const m of mergeStatic(node.getChildMeshes(false), node.name)) {
+        m.parent = null;
+        m.doNotSyncBoundingInfo = true;
+        if (cast) this.atmosphere.addShadowCaster(m, false);
+      }
+      node.dispose();
+    }
   }
 
   private collectTemplates(c: AssetContainer) {
@@ -65,17 +75,17 @@ export class Props {
     }
     for (const mat of c.materials) {
       if (mat instanceof PBRMaterial) {
-        mat.environmentIntensity = 0.75;
         mat.metallic = 0;
         mat.roughness = Math.max(mat.roughness ?? 0.8, 0.75);
       }
+      setToon(mat, { rim: 0.45 });
     }
   }
 
   /** Clone a template under a fresh node that carries the placement transform. */
-  private spawn(tpl: TransformNode, x: number, y: number, z: number, rot: number, scale: number) {
+  private spawn(tpl: TransformNode, x: number, y: number, z: number, rot: number, scale: number, parent: TransformNode) {
     const holder = new TransformNode('p_' + tpl.name, this.scene);
-    holder.parent = this.root;
+    holder.parent = parent;
     holder.position.set(x, y, z);
     holder.rotation.set(0, rot, 0);
     holder.scaling.setAll(scale);
@@ -100,7 +110,7 @@ export class Props {
     return this.templates.get(name) ?? this.templates.get(name.replace(/_red$/, ''));
   }
 
-  private place(p: Placement, ox: number, oz: number) {
+  private place(p: Placement, ox: number, oz: number, parent: TransformNode) {
     const tpl = this.template(p.prop);
     if (!tpl) {
       console.warn('[props] missing', p.prop);
@@ -115,8 +125,7 @@ export class Props {
       const a = (i / 6) * Math.PI * 2;
       y = Math.min(y, this.hm.sample(x + Math.cos(a) * r, z + Math.sin(a) * r));
     }
-    const holder = this.spawn(tpl, x, y - 0.05, z, p.rot, p.scale);
-    for (const m of holder.getChildMeshes(false)) this.atmosphere.addShadowCaster(m, false);
+    this.spawn(tpl, x, y - 0.05, z, p.rot, p.scale, parent);
     if (p.collide) this.foliage.addStaticCollider(x, z, p.collide);
     if (p.prop.includes('torch')) this.lights.push({ pos: new Vector3(x, y + p.scale * 1.05, z), color: new Color3(1, 0.55, 0.2), radius: 9 });
   }
@@ -134,7 +143,7 @@ export class Props {
       const x = Math.cos(a) * r;
       const z = Math.sin(a) * r;
       const h = 2.6 + hash2(i, 3, 9) * 1.4;
-      b.rock([x, h * 0.45, z], [0.55, h * 0.55, 0.42], noise, i * 2.3 + 1, [0.42, 0.41, 0.4], [0.22, 0.32, 0.12]);
+      b.rock([x, h * 0.45, z], [0.55, h * 0.55, 0.42], noise, i * 2.3 + 1, [0.3, 0.3, 0.31], [0.16, 0.25, 0.1]);
     }
     const stones = new Mesh('shrineStones', this.scene);
     b.toVertexData().applyToMesh(stones);
@@ -142,7 +151,6 @@ export class Props {
     mat.albedoColor = Color3.White();
     mat.metallic = 0;
     mat.roughness = 0.92;
-    mat.environmentIntensity = 0.7;
     stones.material = mat;
     stones.useVertexColors = true;
     stones.position.set(cx, cy, cz);
@@ -166,7 +174,7 @@ export class Props {
       const n = d.getTotalVertices();
       const cols: number[] = [];
       for (let v = 0; v < n; v++) {
-        const s = 0.42 + hash2(v, i, 31) * 0.1;
+        const s = 0.17 + hash2(v, i, 31) * 0.05;
         cols.push(s, s * 0.97, s * 0.93, 1);
       }
       d.setVerticesData('color', cols);
@@ -181,13 +189,14 @@ export class Props {
     cm.diffuseColor = new Color3(0.2, 0.4, 0.5);
     cm.specularColor = new Color3(1, 1, 1);
     cm.disableLighting = false;
+    setToon(cm, { spec: 1.2, rim: 1.4 });
     crystal.material = cm;
     crystal.parent = this.root;
     this.shrineCrystal = crystal;
     this.lights.push({ pos: crystal.position.clone(), color: new Color3(0.45, 0.85, 1), radius: 10 });
   }
 
-  private scatterLakePlants() {
+  private scatterLakePlants(parent: TransformNode) {
     const lilies = ['waterlily_A', 'waterlily_B'];
     const reeds = ['waterplant_A', 'waterplant_B'];
     for (let i = 0; i < 70; i++) {
@@ -200,17 +209,17 @@ export class Props {
       if (w === -Infinity) continue;
       const depth = w - g;
       if (depth > 0.15 && depth < 1.6 && i % 2 === 0) {
-        this.placeRaw(lilies[i % 2], x, w + 0.02, z, hash2(i, 3, 51) * 6.28, 4.5 + hash2(i, 4, 51) * 2);
+        this.placeRaw(lilies[i % 2], x, w + 0.02, z, hash2(i, 3, 51) * 6.28, 4.5 + hash2(i, 4, 51) * 2, parent);
       } else if (depth > -0.4 && depth < 0.5) {
-        this.placeRaw(reeds[i % 2], x, g - 0.05, z, hash2(i, 3, 51) * 6.28, 5 + hash2(i, 4, 51) * 2);
+        this.placeRaw(reeds[i % 2], x, g - 0.05, z, hash2(i, 3, 51) * 6.28, 5 + hash2(i, 4, 51) * 2, parent);
       }
     }
   }
 
-  private placeRaw(name: string, x: number, y: number, z: number, rot: number, scale: number) {
+  private placeRaw(name: string, x: number, y: number, z: number, rot: number, scale: number, parent: TransformNode) {
     const tpl = this.template(name);
     if (!tpl) return;
-    this.spawn(tpl, x, y, z, rot, scale);
+    this.spawn(tpl, x, y, z, rot, scale, parent);
   }
 
   update(time: number) {

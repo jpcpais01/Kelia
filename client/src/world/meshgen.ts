@@ -163,8 +163,8 @@ export class MeshBuilder2 {
   }
 
   /** Faceted rock: displaced icosphere with flat shading and mossy tops. */
-  rock(center: [number, number, number], radius: [number, number, number], noise: Simplex2, seed: number, base: [number, number, number], moss: [number, number, number]) {
-    const ico = icosphere(1);
+  rock(center: [number, number, number], radius: [number, number, number], noise: Simplex2, seed: number, base: [number, number, number], moss: [number, number, number], subdiv = 1) {
+    const ico = icosphere(subdiv);
     const pts: number[] = [];
     for (let i = 0; i < ico.positions.length; i += 3) {
       const x = ico.positions[i];

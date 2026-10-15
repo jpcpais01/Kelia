@@ -32,6 +32,7 @@ import { Animator, measureStride } from './animator';
 import { createBow } from './bow';
 import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
+import { inkCharacter } from './style';
 
 export interface Look {
   appearance: Appearance;
@@ -170,7 +171,6 @@ export class CharacterModel {
       if (mat instanceof PBRMaterial) {
         mat.metallic = 0;
         mat.roughness = 0.62;
-        mat.environmentIntensity = 0.85;
         const baseName = mat.name.replace(/^Clone of /, '').replace(/\.\d+$/, '');
         const refs = this.lib.swatches[baseName] ?? this.lib.swatches[Object.keys(this.lib.swatches)[0]];
         if (refs) {
@@ -211,6 +211,7 @@ export class CharacterModel {
     this.animator.scale = s * bt.height;
     this.applyStrides();
     if (prevAction) this.animator.play(prevAction, { loop: true });
+    inkCharacter(this.meshes);
     this.setVisible(this.visible);
   }
 

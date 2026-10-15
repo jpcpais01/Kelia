@@ -23,6 +23,7 @@ import {
   riverWaterY,
 } from '@kelia/shared';
 import type { Atmosphere } from './atmosphere';
+import { TOON_FOG_GLSL, TOON_FOG_UNIFORMS, bindToonFog, toon } from './toon';
 
 Effect.ShadersStore['keliaWaterVertexShader'] = /* glsl */ `
 precision highp float;
@@ -59,10 +60,10 @@ uniform vec3 sunDir;
 uniform vec3 sunColor;
 uniform vec3 zenithColor;
 uniform vec3 horizonColor;
-uniform vec3 fogColor;
-uniform float fogDensity;
 uniform vec3 deepColor;
 uniform vec3 shallowColor;
+uniform vec3 ambientColor;
+${TOON_FOG_GLSL}
 
 float terrainH(vec2 xz) {
   vec2 g = clamp(xz + 512.0, vec2(0.0), vec2(1023.99));
@@ -118,15 +119,17 @@ void main(void) {
   float ry = clamp(R.y, 0.0, 1.0);
   vec3 sky = mix(horizonColor, zenithColor, pow(ry, 0.45));
   vec3 H = normalize(V + sunDir);
-  float spec = pow(max(dot(n, H), 0.0), 380.0) * 6.0 + pow(max(dot(n, H), 0.0), 40.0) * 0.12;
+  // stylized glints: hard-edged sparkles plus a soft sheen
+  float nh = max(dot(n, H), 0.0);
+  float spec = smoothstep(0.992, 0.996, nh) * 4.0 + pow(nh, 60.0) * 0.25;
   vec3 sun = sunColor * spec * step(0.0, sunDir.y);
 
   float d = max(depth, 0.0);
   float absorb = 1.0 - exp(-d * 0.55);
   vec3 body = mix(shallowColor, deepColor, absorb);
   // light the water body softly
-  float light = 0.35 + 0.65 * clamp(sunDir.y + 0.2, 0.0, 1.0);
-  body *= light * (1.0 - params.y * 0.6);
+  vec3 light = ambientColor + sunColor * clamp(sunDir.y + 0.2, 0.0, 1.0) * 0.55;
+  body *= light;
   vec3 col = mix(body, sky, fresnel) + sun;
 
   // Foam: shorelines, rocks in the current and the falls.
@@ -135,15 +138,13 @@ void main(void) {
   float rapids = smoothstep(2.4, 4.5, speed) * smoothstep(0.45, 0.8, foamNoise);
   float fallsFoam = falls * smoothstep(0.25, 0.65, foamNoise + 0.2);
   float foam = clamp(max(max(shore, rapids), fallsFoam), 0.0, 1.0);
-  vec3 foamCol = mix(vec3(0.85, 0.9, 0.92), sunColor * 0.9 + zenithColor * 0.4, 0.3) * light;
+  vec3 foamCol = vec3(0.95, 0.98, 1.0) * (ambientColor + sunColor * 0.8);
   col = mix(col, foamCol, foam * 0.85);
 
   float alpha = clamp(smoothstep(0.0, 0.9, d) * 0.85 + fresnel * 0.4 + foam * 0.6, 0.0, 0.97);
   alpha = max(alpha, falls * 0.9);
 
-  float dist = length(cameraPos - vPos);
-  float fog = exp(-pow(dist * fogDensity, 2.0));
-  col = mix(fogColor, col, fog);
+  col = kFog(col, vPos, cameraPos);
   gl_FragColor = vec4(col, alpha);
 }
 `;
@@ -168,13 +169,16 @@ export class Water {
   readonly material: ShaderMaterial;
   readonly meshes: Mesh[] = [];
   private params = new Vector4();
-  private deep = Color3.FromHexString('#0f3d4f').toLinearSpace();
-  private shallow = Color3.FromHexString('#3c8f8c').toLinearSpace();
+  private dir = new Vector3();
+  private sunC = new Color3();
+  private ambC = new Color3();
+  private deep = Color3.FromHexString('#14607e').toLinearSpace();
+  private shallow = Color3.FromHexString('#4fc6c2').toLinearSpace();
 
   constructor(private scene: Scene, heightTex: Texture, private atmosphere: Atmosphere) {
     const mat = new ShaderMaterial('water', scene, 'keliaWater', {
       attributes: ['position', 'uv', 'flowData'],
-      uniforms: ['viewProjection', 'params', 'cameraPos', 'sunDir', 'sunColor', 'zenithColor', 'horizonColor', 'fogColor', 'fogDensity', 'deepColor', 'shallowColor'],
+      uniforms: ['viewProjection', 'params', 'cameraPos', 'sunDir', 'sunColor', 'zenithColor', 'horizonColor', ...TOON_FOG_UNIFORMS, 'deepColor', 'shallowColor', 'ambientColor'],
       samplers: ['heightTex'],
       needAlphaBlending: true,
     });
@@ -278,13 +282,13 @@ export class Water {
     const m = this.material;
     m.setVector4('params', this.params.set(time, a.state.night, 0, 0));
     m.setVector3('cameraPos', cameraPos);
-    m.setVector3('sunDir', a.sunDir.y > -0.05 ? a.sunDir : a.moonDir);
-    m.setColor3('sunColor', a.sunDir.y > -0.05 ? a.state.sun.scale(Math.min(1.5, a.state.sunIntensity / 2.5)) : new Color3(0.5, 0.6, 0.8));
+    m.setVector3('sunDir', this.dir.set(toon.sunDir.x, toon.sunDir.y, toon.sunDir.z));
+    m.setColor3('sunColor', this.sunC.set(toon.sun.x, toon.sun.y, toon.sun.z));
+    m.setColor3('ambientColor', this.ambC.set(toon.sky.x * 0.9, toon.sky.y * 0.9, toon.sky.z * 0.9));
     m.setColor3('zenithColor', a.state.zenith);
     m.setColor3('horizonColor', a.state.horizon);
-    m.setColor3('fogColor', a.state.fog);
-    m.setFloat('fogDensity', this.scene.fogDensity);
     m.setColor3('deepColor', this.deep);
     m.setColor3('shallowColor', this.shallow);
+    bindToonFog(m);
   }
 }

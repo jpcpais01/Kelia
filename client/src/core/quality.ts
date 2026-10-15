@@ -8,43 +8,45 @@ export interface QualitySettings {
   renderScale: number; // 1 = native; <1 renders fewer pixels and upscales
   shadows: boolean;
   shadowMapSize: number;
-  shadowCascades: number;
+  /** Radius (m) around the player that gets real-time shadows. */
   shadowDistance: number;
-  ssao: boolean;
+  /** 0 = one hardware PCF tap, 1 = soft 3×3 PCF. */
+  shadowSoft: 0 | 1;
   bloom: boolean;
-  dof: boolean;
-  lightShafts: boolean;
-  fogQuality: 0 | 1 | 2; // 0 = distance fog, 1 = height fog, 2 = height fog + sun scattering
+  /** Sun shafts through trees, from the sky mask (no extra scene pass). */
+  sunShafts: boolean;
+  /** Ink outlines around characters and monsters. */
+  outlines: boolean;
   grassRadius: number; // metres around the camera with grass
   grassDensity: number; // blades per m² at full density
   treeDistance: number;
   viewDistance: number;
+  /** MSAA samples on the scene buffer (1 = off, FXAA in the final pass instead). */
   msaa: number;
   fxaa: boolean;
   ambientLife: number; // 0..1 multiplier for birds/butterflies/particles
-  waterReflections: boolean;
 }
 
 export const PRESETS: Record<QualityLevel, QualitySettings> = {
   low: {
-    level: 'low', renderScale: 0.75, shadows: true, shadowMapSize: 1024, shadowCascades: 2, shadowDistance: 60,
-    ssao: false, bloom: false, dof: false, lightShafts: false, fogQuality: 1, grassRadius: 38, grassDensity: 9,
-    treeDistance: 260, viewDistance: 700, msaa: 1, fxaa: true, ambientLife: 0.4, waterReflections: false,
+    level: 'low', renderScale: 0.8, shadows: true, shadowMapSize: 1024, shadowDistance: 38, shadowSoft: 0,
+    bloom: true, sunShafts: false, outlines: true, grassRadius: 40, grassDensity: 10,
+    treeDistance: 300, viewDistance: 700, msaa: 1, fxaa: true, ambientLife: 0.4,
   },
   medium: {
-    level: 'medium', renderScale: 0.9, shadows: true, shadowMapSize: 2048, shadowCascades: 3, shadowDistance: 110,
-    ssao: false, bloom: true, dof: false, lightShafts: true, fogQuality: 2, grassRadius: 55, grassDensity: 16,
-    treeDistance: 380, viewDistance: 900, msaa: 1, fxaa: true, ambientLife: 0.7, waterReflections: false,
+    level: 'medium', renderScale: 0.9, shadows: true, shadowMapSize: 2048, shadowDistance: 55, shadowSoft: 0,
+    bloom: true, sunShafts: true, outlines: true, grassRadius: 58, grassDensity: 18,
+    treeDistance: 420, viewDistance: 900, msaa: 1, fxaa: true, ambientLife: 0.7,
   },
   high: {
-    level: 'high', renderScale: 1, shadows: true, shadowMapSize: 2048, shadowCascades: 4, shadowDistance: 160,
-    ssao: true, bloom: true, dof: true, lightShafts: true, fogQuality: 2, grassRadius: 72, grassDensity: 26,
-    treeDistance: 520, viewDistance: 1200, msaa: 4, fxaa: false, ambientLife: 1, waterReflections: true,
+    level: 'high', renderScale: 1, shadows: true, shadowMapSize: 2048, shadowDistance: 70, shadowSoft: 1,
+    bloom: true, sunShafts: true, outlines: true, grassRadius: 75, grassDensity: 26,
+    treeDistance: 560, viewDistance: 1200, msaa: 4, fxaa: false, ambientLife: 1,
   },
   ultra: {
-    level: 'ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, shadowCascades: 4, shadowDistance: 220,
-    ssao: true, bloom: true, dof: true, lightShafts: true, fogQuality: 2, grassRadius: 95, grassDensity: 34,
-    treeDistance: 700, viewDistance: 1500, msaa: 4, fxaa: false, ambientLife: 1, waterReflections: true,
+    level: 'ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, shadowDistance: 95, shadowSoft: 1,
+    bloom: true, sunShafts: true, outlines: true, grassRadius: 95, grassDensity: 34,
+    treeDistance: 720, viewDistance: 1500, msaa: 4, fxaa: false, ambientLife: 1,
   },
 };
 
