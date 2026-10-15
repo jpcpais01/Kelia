@@ -73,6 +73,8 @@ under **Settings → Environment Variables**, then redeploy:
 | `VITE_FIREBASE_PROJECT_ID` | Your Firebase project id |
 | `VITE_FIREBASE_APP_ID` | From the Firebase web app config |
 
+The same four also work without the `VITE_` prefix (`FIREBASE_API_KEY`, …), which avoids Vercel's "public prefix" warning. These values are public by design; only the server's `FIREBASE_SERVICE_ACCOUNT` is secret, and it never goes on Vercel.
+
 Without the Firebase variables the login screen offers guest play only.
 
 ## Assets

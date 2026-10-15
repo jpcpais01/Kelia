@@ -16,13 +16,17 @@ const SNIPPET_KEY: Record<string, string> = {
  * understands the console's `apiKey: "..."` snippet pasted into any field.
  */
 function envVar(name: string): string {
+  return readVar(name) || (name.startsWith('VITE_FIREBASE_') ? readVar(name.slice(5)) : '');
+}
+
+function readVar(name: string): string {
   const values = Object.values(raw).filter((v): v is string => typeof v === 'string');
   for (const v of values) {
     if (!v.includes(name + '=')) continue;
     const m = v.match(new RegExp(`(?:^|\\s)${name}=\\s*["']?([^\\s"',;]+)`));
     if (m) return m[1];
   }
-  const snippet = SNIPPET_KEY[name];
+  const snippet = SNIPPET_KEY[name] ?? SNIPPET_KEY['VITE_' + name];
   if (snippet) {
     for (const v of values) {
       const m = v.match(new RegExp(`["']?\\b${snippet}["']?\\s*:\\s*["']([^"']+)["']`));
