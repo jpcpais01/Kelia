@@ -194,10 +194,7 @@ void main(void) {
   col += shaftC.rgb * q.a;
 
   // eye adaptation: pull the exposed scene's average toward the target, partly
-  // (a NaN or garbage value here would black out the whole frame: fall back to neutral)
-  float ad = texture2D(adaptSampler, vec2(0.5)).r;
-  if (!(ad > -20.0 && ad < 20.0)) ad = autoExp.x - log2(grade.x);
-  float la = ad + log2(grade.x);
+  float la = texture2D(adaptSampler, vec2(0.5)).r + log2(grade.x);
   col *= grade.x * exp2(clamp((autoExp.x - la) * autoExp.y, autoExp.z, autoExp.w));
   col = neutralTonemap(col);
   // anime grade: richer colour, cool lifted shadows, warm highlights
@@ -225,8 +222,6 @@ void main(void) {
   for (int j = -1; j <= 1; j++)
     for (int i = -1; i <= 1; i++) c += texture2D(textureSampler, vUV + vec2(float(i), float(j)) * span * 0.33).rgb;
   float l = dot(c / 9.0, vec3(0.2126, 0.7152, 0.0722));
-  // one NaN / Inf pixel must not poison the average (and the adapted value) forever
-  if (!(l >= 0.0 && l < 65000.0)) l = 0.18;
   // the sun disc and glints must not dominate the average
   gl_FragColor = vec4(log2(clamp(l, 0.002, 12.0)), 0.0, 0.0, 1.0);
 }
@@ -251,9 +246,7 @@ void main(void) {
     }
   }
   float target = s / w;
-  if (!(target > -20.0 && target < 20.0)) target = -2.5;
   float prev = texelFetch(prevSampler, ivec2(0, 0), 0).r;
-  if (!(prev > -20.0 && prev < 20.0)) prev = target;
   gl_FragColor = vec4(adaptP.y > 0.5 ? target : mix(prev, target, adaptP.x), 0.0, 0.0, 1.0);
 }
 `;

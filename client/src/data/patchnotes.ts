@@ -20,7 +20,7 @@ export const PATCH_NOTES: PatchNote[] = [
   {
     at: '2026-10-15T21:05:00Z',
     title: 'Light that fills the world',
-    lines: ['Light now behaves like it really bounces around the valley: tree crowns shade the forest floor and turn the light under them a soft green, even far beyond the real-time shadows, valleys, cliff bases and the foot of every wall gather gentle shade, and the ground tints the light it reflects. Your eyes adjust too, opening up as you walk into a dark wood and settling back down in the bright meadow, and hidden surfaces are now skipped before they are painted, which saves graphics work. Fixed right after: on some computers this eye adjustment could turn the whole world black (only the menus showed). It now ignores bad readings, so the valley always shows.'],
+    lines: ['Light now behaves like it really bounces around the valley: tree crowns shade the forest floor and turn the light under them a soft green, even far beyond the real-time shadows, valleys, cliff bases and the foot of every wall gather gentle shade, and the ground tints the light it reflects. Your eyes adjust too, opening up as you walk into a dark wood and settling back down in the bright meadow, and hidden surfaces are now skipped before they are painted, which saves graphics work.'],
   },
   {
     at: '2026-10-15T21:02:00Z',
