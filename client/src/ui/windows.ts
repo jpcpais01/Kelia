@@ -2,6 +2,7 @@
 import type { QualityLevel, UserSettings } from '../core/quality';
 import { groupedNotes } from '../data/patchnotes';
 import { h, icon, mount, unmount } from './dom';
+import { perfOverlay } from './perfOverlay';
 
 let open: HTMLElement | null = null;
 let closeHooks: (() => void)[] = [];
@@ -63,6 +64,8 @@ export function openHelp() {
       ...row(['/wave', '/cheer', '/dance', '/sit'], 'Emotes'),
       ...row(['/who', '/roll', '/stuck'], 'Who is online, roll dice, get unstuck'),
       ...row(['N'], 'Toggle name plates'),
+      ...row(['F3'], 'Performance overlay (full, compact, off)'),
+      ...row(['F4'], 'Measure the GPU cost of each part of the world'),
     ),
   );
 }
@@ -96,6 +99,7 @@ export function openSettings(cb: SettingsCallbacks) {
     toggle('Invert vertical look', s.invertY, (v) => { s.invertY = v; apply(); }),
     toggle('Camera shake', s.cameraShake, (v) => { s.cameraShake = v; apply(); }),
     toggle('Name plates', s.showNames, (v) => { s.showNames = v; apply(); }),
+    toggle('Performance overlay (F3)', perfOverlay.visible, (v) => perfOverlay.toggle(v)),
     h('div', { class: 'muted', style: 'font-size:12px' }, 'Renderer changes apply after a reload.'),
     h('button', { class: 'btn', onclick: () => { closeWindow(); cb.onLogout(); } }, icon('door', 16), 'Log out'),
   );

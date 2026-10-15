@@ -2,6 +2,7 @@
 // free tier (the server sleeps when idle and takes a little while to start).
 import { PROTOCOL_VERSION, type ClientMessage, type ServerMessage } from '@kelia/shared';
 import { SERVER_HTTP, SERVER_URL } from '../config';
+import { perf } from '../core/perf';
 
 type Handler<T extends ServerMessage['t']> = (msg: Extract<ServerMessage, { t: T }>) => void;
 
@@ -72,15 +73,13 @@ export class Net {
         this.startPing();
       };
       ws.onmessage = (ev) => {
-        let msg: ServerMessage;
+        perf.netMessage((ev.data as string).length);
+        perf.begin('network');
         try {
-          msg = JSON.parse(ev.data as string);
-        } catch {
-          return;
+          this.dispatch(ev.data as string);
+        } finally {
+          perf.end('network');
         }
-        if (msg.t === 'pong') this.onPong(msg);
-        const set = this.handlers.get(msg.t);
-        if (set) for (const fn of [...set]) fn(msg);
       };
       ws.onclose = () => {
         clearInterval(this.pingTimer);
@@ -91,6 +90,18 @@ export class Net {
         /* onclose follows */
       };
     });
+  }
+
+  private dispatch(data: string) {
+    let msg: ServerMessage;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      return;
+    }
+    if (msg.t === 'pong') this.onPong(msg);
+    const set = this.handlers.get(msg.t);
+    if (set) for (const fn of [...set]) fn(msg);
   }
 
   send(msg: ClientMessage) {
