@@ -24,7 +24,22 @@ import { MonsterModel } from '../char/monsterModel';
 import { Effects } from '../fx/fx';
 import type { RigLibrary } from '../char/library';
 import { perf } from '../core/perf';
-import { PRESETS, autoQuality, saveSettings, type UserSettings } from '../core/quality';
+import { PRESETS, autoQuality, saveSettings, type TimeOfDay, type UserSettings } from '../core/quality';
+
+/**
+ * Held times for the HUD time-of-day switch: the sun just over the horizon at
+ * sunrise and sunset, about 10 am by day (long, soft shadows), midnight by night.
+ * The cycle runs in clock order so every switch sweeps the sun forward.
+ */
+const PINNED_TIME: Record<TimeOfDay, number | null> = { auto: null, sunrise: 0.256, day: 0.42, sunset: 0.744, night: 0 };
+const NEXT_TIME: Record<TimeOfDay, TimeOfDay> = { auto: 'sunrise', sunrise: 'day', day: 'sunset', sunset: 'night', night: 'auto' };
+const TIME_TOAST: Record<TimeOfDay, string> = {
+  auto: 'Time of day follows the world clock',
+  sunrise: 'Always sunrise (only for you)',
+  day: 'Always day (only for you)',
+  sunset: 'Always sunset (only for you)',
+  night: 'Always night (only for you)',
+};
 import { Net } from '../net/net';
 import { signOut } from '../net/auth';
 import { CreatorScreen, type CreatorTab } from '../ui/creator';
@@ -313,6 +328,14 @@ export class Game {
         openMap: () => this.toggleMap(),
         travel: (poi) => this.travelTo(poi),
         travelNote: (poi) => this.travelNote(poi),
+        timeOfDay: () => this.settings.timeOfDay,
+        cycleTimeOfDay: () => {
+          const next = NEXT_TIME[this.settings.timeOfDay] ?? 'auto';
+          this.settings = { ...this.settings, timeOfDay: next };
+          saveSettings(this.settings);
+          this.hud?.toast(TIME_TOAST[next]);
+          return next;
+        },
       },
       this.world.data.heightmap,
       this.world.data.splat,
@@ -559,6 +582,7 @@ export class Game {
       settings: this.settings,
       renderSize: () => this.world.renderSize(),
       onChange: (s, reload) => {
+        s.timeOfDay = this.settings.timeOfDay; // the HUD button owns this one
         const qualityChanged = s.quality !== this.settings.quality;
         const scaleChanged = s.renderScale !== this.settings.renderScale;
         this.settings = s;
@@ -600,14 +624,19 @@ export class Game {
     const atm = this.world.atmosphere;
     const serverDay = dayTimeAt(this.net.connected ? this.net.serverNow() : Date.now());
     if (this.mode === 'playing' || this.mode === 'entering') {
-      // ease from the staged time of day to the real one
+      // Ease from the staged (or previous) time of day to the one this player
+      // wants to see: the world clock, or held at day or night. Small gaps
+      // close the short way; a big switch sweeps the sun forward through
+      // dusk or dawn so it reads as time passing, not a cut.
+      const pinned = PINNED_TIME[this.settings.timeOfDay];
+      const target = pinned ?? serverDay;
       if (this.dayOverride !== null) {
-        let d = serverDay - this.dayOverride;
-        if (d > 0.5) d -= 1;
-        if (d < -0.5) d += 1;
-        this.dayOverride = (this.dayOverride + d * Math.min(1, dt * 0.8) + 1) % 1;
-        if (Math.abs(d) < 0.002) this.dayOverride = null;
-      }
+        let d = (((target - this.dayOverride) % 1) + 1) % 1; // forward distance
+        if (d > 0.62) d -= 1;
+        const step = Math.min(Math.abs(d), dt * (0.03 + Math.abs(d) * 1.1));
+        this.dayOverride = (this.dayOverride + Math.sign(d) * step + 1) % 1;
+        if (Math.abs(d) - step < 0.0005) this.dayOverride = pinned;
+      } else if (pinned !== null) this.dayOverride = serverDay;
       atm.dayTime = this.dayOverride ?? serverDay;
     } else atm.dayTime = this.dayOverride ?? serverDay;
 

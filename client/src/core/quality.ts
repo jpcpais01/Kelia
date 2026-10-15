@@ -63,7 +63,11 @@ export interface UserSettings {
   masterVolume: number;
   musicVolume: number;
   ambienceVolume: number;
+  /** Your own view of the sky: follow the world clock, or hold it at sunrise, day, sunset or night. */
+  timeOfDay: TimeOfDay;
 }
+
+export type TimeOfDay = 'auto' | 'sunrise' | 'day' | 'sunset' | 'night';
 
 const DEFAULTS: UserSettings = {
   quality: 'auto',
@@ -77,6 +81,7 @@ const DEFAULTS: UserSettings = {
   masterVolume: 0.8,
   musicVolume: 0.5,
   ambienceVolume: 0.8,
+  timeOfDay: 'auto',
 };
 
 const KEY = 'kelia.settings.v1';
