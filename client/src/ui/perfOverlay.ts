@@ -102,11 +102,11 @@ class PerfOverlay {
       <div class="perf-more">
         <section>
           <h4>Where the time goes <span class="perf-probe" data-el="probe"></span></h4>
-          <div data-el="systems"></div>
+          <div data-el="systems" class="perf-table s"></div>
         </section>
-        <section><h4>GPU · render passes <span data-el="gpuNote"></span></h4><div data-el="gpuBar" class="perf-stack"></div><div data-el="gpu"></div></section>
-        <section><h4>CPU · game &amp; world update <span>avg · peak</span></h4><div data-el="update"></div></section>
-        <section><h4>CPU · rendering <span>avg · peak</span></h4><div data-el="render"></div></section>
+        <section><h4>GPU · render passes <span data-el="gpuNote"></span></h4><div data-el="gpuBar" class="perf-stack"></div><div data-el="gpu" class="perf-table g"></div></section>
+        <section><h4>CPU · game &amp; world update <span>avg · peak</span></h4><div data-el="update" class="perf-table c"></div></section>
+        <section><h4>CPU · rendering <span>avg · peak</span></h4><div data-el="render" class="perf-table c"></div></section>
         <section><h4>Scene</h4><div data-el="scene" class="perf-grid"></div></section>
         <div class="perf-foot">
           <button data-act="probe">Measure GPU per part <span class="kbd">F4</span></button>
@@ -116,9 +116,6 @@ class PerfOverlay {
       </div>`;
     root.querySelectorAll<HTMLElement>('[data-el]').forEach((el) => (this.els[el.dataset.el!] = el));
     this.canvas = root.querySelector('canvas')!;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    this.canvas.width = 356 * dpr;
-    this.canvas.height = 84 * dpr;
     root.querySelector('[data-act="probe"]')!.addEventListener('click', () => perf.startProbe());
     root.querySelector('[data-act="copy"]')!.addEventListener('click', (e) => {
       const btn = e.currentTarget as HTMLButtonElement;
@@ -143,10 +140,17 @@ class PerfOverlay {
 
   private drawGraph() {
     const c = this.canvas;
+    // the panel sizes itself to its content, so the graph follows its width
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cw = Math.round((c.clientWidth || 356) * dpr);
+    const ch = Math.round((c.clientHeight || 84) * dpr);
+    if (c.width !== cw || c.height !== ch) {
+      c.width = cw;
+      c.height = ch;
+    }
     const g = c.getContext('2d')!;
     const W = c.width;
     const H = c.height;
-    const dpr = W / 356;
     const h = perf.hist;
     const n = h.frame.length;
     let peak = 0;

@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T12:15:00Z',
+    title: 'Roomier performance overlay',
+    lines: ['The F3 performance overlay now widens to fit its contents, so every name and number shows in full.'],
+  },
+  {
     at: '2026-10-15T12:10:00Z',
     title: 'A brand new look',
     lines: [
