@@ -16,6 +16,7 @@ export const PATCH_NOTES: PatchNote[] = [
       'Kelia now has a hand-painted anime style: soft cel shading with cool tinted shadows, glowing rim light, inked outlines on heroes and monsters, a painted sky with fluffy clouds, and a warm haze that glows toward the sun.',
       'Shadows are crisp and stable (no more flicker as you move), and trees, rocks, heroes and buildings now cast them onto the grass.',
       'Much faster graphics: shadows and post-processing cost a fraction of what they did, trees draw far less, and WebGPU is now quicker than WebGL2 instead of slower.',
+      'Fixed distant flowers, grass tips and water glints glittering and flickering as you move.',
     ],
   },
   {

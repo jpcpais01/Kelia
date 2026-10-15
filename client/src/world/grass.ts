@@ -41,6 +41,7 @@ varying float vGust;
 varying vec4 vSplat;
 varying float vRand;
 varying float vPatch;
+varying float vFar;
 #ifdef GSHADOW
 uniform mat4 lightMatrix;
 varying vec4 vLightPos;
@@ -80,6 +81,10 @@ void main(void) {
   float fade = 1.0 - smoothstep(field.y * 0.6, field.y, dist);
   float inner = smoothstep(field.z - 2.0, field.z + 2.0, dist);
   float s = keep * fade * inner * (0.55 + 0.9 * grassInst.w);
+  // Past a few metres a blade or a flower is only a pixel or two wide: tone
+  // its detail down so it reads as a soft mass instead of glittering.
+  vFar = smoothstep(6.0, 28.0, dist);
+  if (shape.z > 0.5) s *= 1.0 - 0.35 * vFar;
   // taller, lusher grass in the forest edge, short near paths
   s *= mix(1.0, 1.35, sp.r) * (1.0 - sp.a * 0.5);
   // kept short in the village and around the shrine
@@ -136,6 +141,7 @@ varying float vGust;
 varying vec4 vSplat;
 varying float vRand;
 varying float vPatch;
+varying float vFar;
 uniform vec4 shape;
 uniform vec3 camPos;
 ${TOON_FOG_GLSL}
@@ -180,7 +186,10 @@ void main(void) {
   if (shape.z > 0.5) {
     // flowers: vertex colour alpha marks petals
     vec3 petal = flowerPalette(fract(vRand * 7.31));
-    col = mix(vec3(0.22, 0.42, 0.14), petal, vColor.a);
+    vec3 stem = vec3(0.22, 0.42, 0.14);
+    // distant flowers become soft dabs of colour, not bright pixel sparkles
+    petal = mix(petal, mix(stem, petal, 0.45), vFar);
+    col = mix(stem, petal, vColor.a);
     col = col * col; // to linear-ish
   } else {
     float dry = smoothstep(0.55, 0.95, fract(vRand * 3.7));
@@ -188,7 +197,9 @@ void main(void) {
     tip = mix(tip, forestColor * 1.4, vSplat.r * 0.8);
     vec3 bse = mix(baseColor, forestColor * 0.6, vSplat.r);
     col = mix(bse, tip, smoothstep(0.0, 1.0, h));
-    col *= 0.8 + 0.4 * fract(vRand * 13.7);
+    col *= 0.8 + 0.4 * fract(vRand * 13.7) * (1.0 - 0.6 * vFar);
+    // distant blades lean toward the field's average colour (less per-blade contrast)
+    col = mix(col, mix(bse, tip, 0.5), vFar * 0.5);
   }
   // Stylized lighting: blades are lit as a soft, bright mass (no harsh
   // per-blade shading), tips glow when the sun is behind them, and patches
@@ -196,14 +207,14 @@ void main(void) {
   col *= mix(0.86, 1.14, vPatch);
   float ndl = clamp(sunDir.y * 0.7 + 0.35, 0.0, 1.0);
   vec3 V = normalize(camPos - vPos);
-  float trans = pow(clamp(dot(-V, sunDir), 0.0, 1.0), 4.0) * h * 0.8;
-  float ao = mix(0.62, 1.0, h);
+  float trans = pow(clamp(dot(-V, sunDir), 0.0, 1.0), 4.0) * h * 0.8 * (1.0 - 0.75 * vFar);
+  float ao = mix(mix(0.62, 1.0, h), 0.85, vFar * 0.6);
   float sh = 1.0;
 #ifdef GSHADOW
   sh = grassShadow();
 #endif
   vec3 lit = col * (sunColor * (ndl * (0.62 + 0.38 * h) + trans) * sh * (1.0 - vSplat.r * 0.35) + ambientColor) * ao;
-  lit += col * vGust * 0.16 * sunColor * h * sh; // gusts catch the light
+  lit += col * vGust * 0.16 * sunColor * h * sh * (1.0 - 0.7 * vFar); // gusts catch the light
   gl_FragColor = vec4(kFog(lit, vPos, camPos), 1.0);
 }
 `;
