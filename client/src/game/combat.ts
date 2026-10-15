@@ -29,7 +29,8 @@ import {
   type Stats,
 } from '@kelia/shared';
 import type { CharacterModel } from '../char/model';
-import type { Effects } from '../fx/fx';
+import { C, D, type Effects } from '../fx/fx';
+import { CLASS_COLORS, playDodgeFx, playSkillFx, type FxWorld } from '../fx/skills';
 import type { Net } from '../net/net';
 import type { Hud } from '../ui/hud';
 import type { World } from '../world/world';
@@ -54,12 +55,6 @@ export interface CombatContext {
   canAct(): boolean;
 }
 
-const CLASS_COLORS: Record<ClassId, { main: string; hit: string }> = {
-  vanguard: { main: '#ffe1a0', hit: '#ffd27a' },
-  ranger: { main: '#b8ff9a', hit: '#d6ffb0' },
-  arcanist: { main: '#b49bff', hit: '#d4c4ff' },
-};
-
 interface Timer {
   t: number;
   fn: () => void;
@@ -81,10 +76,21 @@ export class CombatController {
   onInventory: (() => void) | null = null;
   maxHp: number;
 
+  private fxWorld: FxWorld;
+
   constructor(private c: CombatContext) {
     this.stats = statsFor(c.character.cls, c.character.level, c.character.equipment);
     this.maxHp = this.stats.maxHp;
     c.player.speedMul = this.stats.speed;
+    this.fxWorld = {
+      groundAt: (x, z) => c.world.groundAt(x, z),
+      monsterAt: (p, r) => {
+        const m = this.monsterAt(p, r);
+        return m ? { id: m.id, pos: m.pos, scale: m.def.scale } : null;
+      },
+      shake: (k) => c.follow.shake(k),
+      playerPos: () => c.player.pos,
+    };
   }
 
   private later(seconds: number, fn: () => void) {
@@ -152,7 +158,7 @@ export class CombatController {
     this.c.net.send({ t: 'use', id });
     const m = this.c.player.model;
     m.animator.play('Use_Item', { upper: true, speed: 1.6 });
-    this.later(0.35, () => this.c.fx.column(this.c.player.pos.clone(), '#7dff9a', { radius: 0.6, count: 40, dur: 0.4 }));
+    this.later(0.35, () => this.c.fx.column(this.c.player.pos.clone(), '#7dff9a', { radius: 0.6, count: 40, dur: 0.4, height: 2 }));
   }
 
   // ------------------------------------------------------------------ aiming
@@ -291,18 +297,16 @@ export class CombatController {
     const wish = player.wishDir(this.c.input, this.c.follow);
     const dist = skill.shape.kind === 'dash' ? skill.shape.distance : 5;
     let yaw = player.yaw;
+    const fx = this.c.fx;
     if (cls === 'arcanist') {
       const dir = wish ?? fwd;
-      const from = player.pos.add(new Vector3(0, 1, 0));
-      this.c.fx.flash(from, '#b49bff', 2.2, 0.25);
-      this.c.fx.burst(from, '#b49bff', { count: 26, speed: 4, size: 0.2, life: 0.45, gravity: 0 });
+      const from = player.pos.clone();
+      fx.afterimage(model.meshes, '#b49bff', { dur: 0.55, intensity: 2.6 });
       player.teleport(dir.x * dist, dir.z * dist);
       yaw = Math.atan2(dir.x, dir.z);
       player.face(yaw, 0.1);
       player.commit(skill.lockout, undefined, 0.3);
-      const to = player.pos.add(new Vector3(0, 1, 0));
-      this.c.fx.flash(to, '#d4c4ff', 2.6, 0.3);
-      this.c.fx.burst(to, '#b49bff', { count: 30, speed: 3, size: 0.22, life: 0.55, gravity: -1 });
+      playDodgeFx(fx, cls, from, player.pos.clone(), yaw);
       model.animator.play('Spellcast_Raise', { upper: true, speed: 2 });
     } else if (cls === 'ranger') {
       const dir = fwd.scale(-1);
@@ -310,14 +314,14 @@ export class CombatController {
       player.face(yaw, skill.lockout);
       player.commit(skill.lockout, dir.scale(dist / skill.lockout), 0, false);
       model.animator.play('Dodge_Backward', { upper: false, speed: skill.animSpeed ?? 1.3, fadeIn: 0.04 });
-      this.c.fx.dust(player.pos, 8);
+      playDodgeFx(fx, cls, player.pos.clone(), null, yaw);
     } else {
       const dir = wish ?? fwd;
       yaw = Math.atan2(dir.x, dir.z);
       player.commit(skill.lockout, dir.scale(dist / skill.lockout), 0, true);
       model.animator.play('Dodge_Forward', { upper: false, speed: skill.animSpeed ?? 1.25, fadeIn: 0.04 });
-      this.c.fx.dust(player.pos, 10);
-      this.later(skill.lockout * 0.8, () => this.c.fx.dust(player.pos, 6));
+      playDodgeFx(fx, cls, player.pos.clone(), null, yaw);
+      this.later(skill.lockout * 0.8, () => fx.dust(player.pos, 6));
     }
     this.c.hud.pulse(4);
     this.c.net.send({ t: 'act', k: 'd', i: 0, yaw: Math.round(yaw * 1000) / 1000, tx: 0, tz: 0 });
@@ -332,12 +336,13 @@ export class CombatController {
     if (!skill) return;
     const an = r.model.animator;
     if (m.k === 'd') {
+      const from = r.pos.clone();
       if (r.info.cls === 'arcanist') {
-        this.c.fx.flash(r.pos.add(new Vector3(0, 1, 0)), '#b49bff', 2.2, 0.25);
-        this.later(0.12, () => this.c.fx.flash(r.pos.add(new Vector3(0, 1, 0)), '#d4c4ff', 2.4, 0.3));
+        this.c.fx.afterimage(r.model.meshes, '#b49bff', { dur: 0.55, intensity: 2.6 });
+        this.later(0.12, () => playDodgeFx(this.c.fx, 'arcanist', from, r.pos.clone(), m.yaw));
       } else {
         an.play(r.info.cls === 'ranger' ? 'Dodge_Backward' : 'Dodge_Forward', { upper: false, speed: skill.animSpeed ?? 1.25, fadeIn: 0.04 });
-        this.c.fx.dust(r.pos, 8);
+        playDodgeFx(this.c.fx, r.info.cls, from, null, m.yaw);
       }
       return;
     }
@@ -345,15 +350,6 @@ export class CombatController {
     r.model.root.rotation.y = m.yaw;
     an.play(skill.anim, { speed: skill.animSpeed ?? 1, upper: melee ? false : undefined, fadeIn: 0.06 });
     this.skillFx(r.model, r.info.cls, skill, m.yaw, m.tx, m.tz, false);
-  }
-
-  private handPos(model: CharacterModel, slot: 'handslot.r' | 'handslot.l', fallbackY = 1.3) {
-    const n = model.node(slot);
-    if (n) {
-      n.computeWorldMatrix(true);
-      return n.getAbsolutePosition().clone();
-    }
-    return model.root.position.add(new Vector3(0, fallbackY, 0));
   }
 
   /** First live monster near point p (for missile visuals). */
@@ -369,146 +365,7 @@ export class CombatController {
   }
 
   private skillFx(model: CharacterModel, cls: ClassId, skill: SkillDef, yaw: number, tx: number, tz: number, local: boolean) {
-    const fx = this.c.fx;
-    const col = CLASS_COLORS[cls];
-    const at = () => model.root.position.clone();
-    const chest = () => at().add(new Vector3(0, 1.0, 0));
-    const fwd = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-    const near = () => Vector3.Distance(at(), this.c.player.pos) < 14;
-    const impact = Math.max(0, skill.impactAt - 0.07);
-    switch (skill.vfx) {
-      case 'slash':
-      case 'heavy': {
-        const heavy = skill.vfx === 'heavy';
-        const step = skill.id === 'combo2' ? 1 : 0;
-        this.later(impact, () => {
-          fx.slash(chest(), yaw, col.main, { radius: heavy ? 2.4 : 2.0, arc: heavy ? 2.6 : 2.2, tilt: heavy ? 0 : step ? -0.35 : 0.45, reverse: !!step, width: heavy ? 0.95 : 0.75, dur: heavy ? 0.3 : 0.22 });
-          if (heavy) {
-            fx.dust(at().add(fwd.scale(1.6)), 12);
-            if (local) this.c.follow.shake(0.18);
-          }
-        });
-        break;
-      }
-      case 'bash':
-        this.later(impact, () => {
-          const p = chest().add(fwd.scale(1.1));
-          fx.flash(p, '#ffe1a0', 2.4, 0.22);
-          fx.burst(p, '#ffd27a', { count: 26, speed: 6, size: 0.16, life: 0.4, stretch: true });
-          fx.ring(at().add(fwd.scale(1.2)), 0.3, 2.6, '#ffe1a0', 0.4);
-          if (local) this.c.follow.shake(0.25);
-        });
-        break;
-      case 'whirl':
-        this.later(impact - 0.15, () => {
-          fx.slash(chest(), yaw, col.main, { radius: 3.2, arc: 5.6, width: 1.2, dur: 0.42, spin: 6.2 });
-          fx.slash(at().add(new Vector3(0, 0.7, 0)), yaw + 2, '#fff2d0', { radius: 2.8, arc: 4.8, width: 0.9, dur: 0.38, spin: 5.5 });
-          fx.ring(at(), 0.6, 3.8, '#ffe1a0', 0.5);
-          fx.dust(at(), 16);
-          if (local) this.c.follow.shake(0.22);
-        });
-        break;
-      case 'rally':
-        this.later(impact, () => {
-          fx.ring(at(), 0.5, 10, '#ffd27a', 0.9);
-          fx.column(at(), '#ffd27a', { radius: 1.2, count: 80, dur: 0.7 });
-          fx.flash(chest().add(new Vector3(0, 0.6, 0)), '#ffe1a0', 3, 0.35);
-        });
-        break;
-      case 'arrow':
-      case 'arrow_heavy':
-      case 'arrow_pierce':
-      case 'snare': {
-        if (skill.shape.kind !== 'projectile') break;
-        const sh = skill.shape;
-        const tint = skill.vfx === 'arrow_pierce' ? '#8fd8ff' : skill.vfx === 'snare' ? '#7dff8a' : skill.vfx === 'arrow_heavy' ? '#fff2b0' : col.main;
-        this.later(skill.impactAt, () => {
-          const from = this.handPos(model, 'handslot.l');
-          const target = new Vector3(tx, this.c.world.groundAt(tx, tz) + 1.1, tz);
-          const flat = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
-          const dir = Vector3.Distance(target, from) > 2 ? target.subtract(from).normalize() : flat;
-          const hitIds = new Set<number>();
-          fx.missile(from, dir, sh.speed, sh.range, 'arrow', tint, (p) => {
-            const m = this.monsterAt(p, sh.radius);
-            if (!m || hitIds.has(m.id)) return false;
-            hitIds.add(m.id);
-            fx.burst(p, tint, { count: 14, speed: 4, size: 0.14, life: 0.35, stretch: true });
-            if (skill.vfx === 'snare') fx.ring(m.pos, 1.4, 0.6, '#7dff8a', 0.8);
-            return !sh.pierce;
-          });
-          if (skill.vfx === 'arrow_pierce') fx.flash(from, '#8fd8ff', 1.4, 0.2);
-        });
-        break;
-      }
-      case 'volley':
-        this.later(skill.impactAt * 0.4, () => {
-          const r = skill.shape.kind === 'aoe-target' ? skill.shape.radius : 4;
-          fx.telegraph(tx, tz, r, skill.impactAt * 0.6, '#9cff8a');
-          fx.volley(tx, tz, r, '#e8ffd0', 0);
-        });
-        break;
-      case 'bolt':
-      case 'bolt_big': {
-        if (skill.shape.kind !== 'projectile') break;
-        const sh = skill.shape;
-        const big = skill.vfx === 'bolt_big';
-        this.later(skill.impactAt, () => {
-          const from = this.handPos(model, 'handslot.r', 1.5).add(new Vector3(0, 0.3, 0));
-          const target = new Vector3(tx, this.c.world.groundAt(tx, tz) + 1.1, tz);
-          const dir = Vector3.Distance(target, from) > 2 ? target.subtract(from).normalize() : fwd;
-          fx.flash(from, col.main, big ? 1.6 : 1, 0.15);
-          fx.missile(
-            from,
-            dir,
-            sh.speed,
-            sh.range,
-            'bolt',
-            big ? '#d4c4ff' : col.main,
-            (p) => !!this.monsterAt(p, sh.radius),
-            (p, struck) => {
-              fx.burst(p, col.main, { count: big ? 30 : 16, speed: big ? 6 : 4, size: big ? 0.26 : 0.18, life: 0.4, gravity: 0 });
-              if (struck && big) fx.ring(new Vector3(p.x, this.c.world.groundAt(p.x, p.z), p.z), 0.3, 2, col.main, 0.4);
-            },
-          );
-        });
-        break;
-      }
-      case 'fireball': {
-        this.later(skill.impactAt * 0.55, () => {
-          const from = this.handPos(model, 'handslot.r', 1.6).add(new Vector3(0, 0.5, 0));
-          const target = new Vector3(tx, this.c.world.groundAt(tx, tz) + 0.2, tz);
-          const dist = Vector3.Distance(from, target);
-          const travel = Math.max(0.12, skill.impactAt * 0.45);
-          fx.missile(from, target.subtract(from).normalize(), dist / travel, dist, 'fire', '#ff8a2a', () => false, (p) => {
-            const g = new Vector3(p.x, this.c.world.groundAt(p.x, p.z), p.z);
-            fx.flash(g.add(new Vector3(0, 1, 0)), '#ffb04a', 5, 0.35);
-            fx.burst(g.add(new Vector3(0, 0.6, 0)), '#ff7a1a', { count: 60, speed: 8, size: 0.5, life: 0.7, color2: '#ffd24a', gravity: -2 });
-            fx.burst(g.add(new Vector3(0, 0.3, 0)), '#3a2a20', { count: 18, speed: 2.5, size: 1.2, life: 1.2, additive: false, gravity: -1.5 });
-            fx.ring(g, 0.5, skill.shape.kind === 'aoe-target' ? skill.shape.radius + 0.5 : 3.5, '#ff8a2a', 0.5);
-            if (Vector3.Distance(g, this.c.player.pos) < 16) this.c.follow.shake(0.3);
-          });
-        });
-        break;
-      }
-      case 'frost':
-        this.later(impact, () => {
-          const r = skill.shape.kind === 'aoe-self' ? skill.shape.radius : 6;
-          fx.ring(at(), 0.5, r, '#8fe8ff', 0.6, 2.6);
-          fx.ring(at(), 0.3, r * 0.7, '#ffffff', 0.45, 1.6);
-          fx.burst(at().add(new Vector3(0, 0.4, 0)), '#bff4ff', { count: 70, speed: 9, size: 0.2, life: 0.6, up: 0.1, gravity: 4, stretch: true });
-          if (local || near()) this.c.follow.shake(0.15);
-        });
-        break;
-      case 'heal':
-        this.later(impact, () => {
-          fx.ring(at(), 0.4, 10, '#ffe58a', 0.9);
-          fx.column(at(), '#ffe58a', { radius: 1, count: 70, dur: 0.6 });
-          fx.flash(chest().add(new Vector3(0, 0.9, 0)), '#fff2b0', 2.6, 0.4);
-        });
-        break;
-      default:
-        break;
-    }
+    playSkillFx(this.c.fx, this.fxWorld, model, cls, skill, yaw, tx, tz, local);
   }
 
   // ------------------------------------------------------------------ server events
@@ -519,9 +376,23 @@ export class CombatController {
     const a = e.def.attacks[m.a];
     if (!a) return;
     const fx = this.c.fx;
+    const magic = e.def.id === 'mage';
     if (a.telegraph) {
       const r = a.kind === 'spin' || a.kind === 'slam' ? a.radius ?? 3 : 1.6;
-      fx.telegraph(m.tx, m.tz, r, a.impactAt);
+      fx.telegraph(m.tx, m.tz, r, a.impactAt, magic ? '#b45cff' : '#ff3b2f', magic ? D.hex : D.telegraph);
+    }
+    if (a.kind === 'melee' || a.kind === 'spin') {
+      const hand = e.model?.node('handslot.r');
+      fx.weaponTrail(hand, a.kind === 'spin' ? '#ff6a4a' : '#ff7a5a', Math.max(0, a.impactAt - (a.kind === 'spin' ? 0.35 : 0.22)), a.kind === 'spin' ? 0.6 : 0.3, { intensity: 0.9 });
+    }
+    if (a.kind === 'projectile' || (a.kind === 'slam' && magic)) {
+      const hand = e.model?.node('handslot.r');
+      if (hand) {
+        hand.computeWorldMatrix(true);
+        fx.after(0.05, () => fx.gather(hand.getAbsolutePosition().add(new Vector3(0, 0.3, 0)), '#c47bff', Math.max(0.15, a.impactAt - 0.1), 12, 0.9));
+      }
+      const g = e.pos;
+      fx.magicCircle(new Vector3(g.x, this.c.world.groundAt(g.x, g.z), g.z), '#b45cff', { radius: 1.3 * e.def.scale, dur: a.impactAt + 0.3, cell: D.hex, spin: 1.5, intensity: 2 });
     }
     this.later(a.impactAt, () => {
       if (!e.model || !e.alive) return;
@@ -529,16 +400,14 @@ export class CombatController {
       const chest = base.add(new Vector3(0, 1.1 * e.def.scale, 0));
       const near = Vector3.Distance(base, this.c.player.pos);
       if (a.kind === 'melee') {
-        fx.slash(chest, e.yaw, '#ff9a8a', { radius: 1.6 * Math.max(1, e.def.scale * 0.8), arc: a.arc ?? 1.6, width: 0.6, dur: 0.2, tilt: 0.3 });
+        fx.slash(chest, e.yaw, '#ff6a4a', { radius: 1.6 * Math.max(1, e.def.scale * 0.8), arc: a.arc ?? 1.6, width: 0.65, dur: 0.24, tilt: 0.3, intensity: 0.9 });
+        if (e.def.boss) fx.dust(base.add(new Vector3(Math.sin(e.yaw), 0, Math.cos(e.yaw)).scale(1.6)), 8);
       } else if (a.kind === 'slam') {
         const g = new Vector3(m.tx, this.c.world.groundAt(m.tx, m.tz), m.tz);
-        fx.ring(g, 0.4, (a.radius ?? 3) + 0.4, '#ff6a4a', 0.5);
-        fx.dust(g, 24);
-        fx.burst(g.add(new Vector3(0, 0.3, 0)), e.def.id === 'mage' ? '#c47bff' : '#ffb27a', { count: 40, speed: 7, size: 0.25, life: 0.6, gravity: 8, up: 1.2 });
+        fx.slam(g, a.radius ?? 3, magic ? '#c47bff' : '#ff8a4a', !!e.def.boss);
         if (Vector3.Distance(g, this.c.player.pos) < 12) this.c.follow.shake(e.def.boss ? 0.55 : 0.25);
       } else if (a.kind === 'spin') {
-        fx.slash(chest, e.yaw, '#ff8a6a', { radius: a.radius ?? 4, arc: 6, width: 1.4, dur: 0.45, spin: 6 });
-        fx.dust(base, 20);
+        fx.whirlwind(base, e.yaw, '#ff5a3a', a.radius ?? 4);
         if (near < 10) this.c.follow.shake(0.35);
       } else if (a.kind === 'projectile') {
         const n = e.model.node('handslot.r');
@@ -546,7 +415,8 @@ export class CombatController {
         const from = n ? n.getAbsolutePosition().add(new Vector3(0, 0.4, 0)) : chest;
         const to = new Vector3(m.tx, this.c.world.groundAt(m.tx, m.tz) + 1.1, m.tz);
         const me = this.c.player;
-        fx.missile(from, to.subtract(from).normalize(), a.projSpeed ?? 15, a.range + 4, 'hex', '#c47bff', (p) => Vector3.DistanceSquared(p, me.pos.add(new Vector3(0, 1, 0))) < 0.8, (p) => fx.burst(p, '#c47bff', { count: 18, speed: 4, size: 0.2, life: 0.4, gravity: 0 }));
+        fx.flash(from, '#c47bff', 1.2, 0.18);
+        fx.missile(from, to.subtract(from).normalize(), a.projSpeed ?? 15, a.range + 4, 'hex', '#c47bff', (p) => Vector3.DistanceSquared(p, me.pos.add(new Vector3(0, 1, 0))) < 0.8, (p) => fx.arcaneBurst(p, '#c47bff', false, false));
       }
     });
   }
@@ -570,7 +440,7 @@ export class CombatController {
           const k = amt / this.maxHp;
           hud.hurt(k);
           this.c.follow.shake(Math.min(0.5, 0.12 + k * 1.2));
-          fx.burst(player.pos.add(new Vector3(0, 1.1, 0)), '#ff6b5e', { count: 10, speed: 3, size: 0.12, life: 0.3 });
+          fx.impact(player.pos.add(new Vector3(0, 1.1, 0)), '#ff4a3a', { scale: 0.7 + Math.min(0.6, k * 3) });
           const an = player.model.animator;
           if (!an.busy && !this.dead) an.play(Math.random() < 0.5 ? 'Hit_A' : 'Hit_B', { upper: true, speed: 1.3, fadeIn: 0.04 });
         } else {
@@ -584,7 +454,16 @@ export class CombatController {
       m.hit();
       m.lastHurt = performance.now();
       const top = m.pos.add(new Vector3(0, 2.0 * m.def.scale + 0.2, 0));
-      if (!(flags & HIT_DOT)) fx.burst(m.pos.add(new Vector3(0, 1.0 * m.def.scale, 0)), flags & HIT_CRIT ? '#ffe28a' : '#ffffff', { count: flags & HIT_CRIT ? 22 : 10, speed: flags & HIT_CRIT ? 7 : 4, size: 0.12, life: 0.3, stretch: true });
+      const body = m.pos.add(new Vector3(0, 1.0 * m.def.scale, 0));
+      if (flags & HIT_DOT) {
+        // burning: a lick of flame and a few embers
+        fx.sprite(body.add(new Vector3((Math.random() - 0.5) * 0.4, -0.2, (Math.random() - 0.5) * 0.4)), { v: new Vector3(0, 1.6, 0), dur: 0.5, size: 0.35 * m.def.scale, size1: 0.1, cell: 9, color: C('#ff8a2a', 2.8), mode: 3, hot: 1 });
+        fx.sparks(body, C('#ffb04a', 3.5), { n: 4, speed: 3, up: 0.9, gravity: -1, dur: 0.6, size: 0.03 });
+      } else {
+        const src0 = src === myId ? player.pos : this.c.remotes.get(src)?.pos;
+        const dir = src0 ? body.subtract(src0.add(new Vector3(0, 1, 0))).normalize() : undefined;
+        fx.impact(body, src0 && src === myId ? CLASS_COLORS[this.c.character.cls].hit : '#ffffff', { crit: !!(flags & HIT_CRIT), dir, scale: Math.max(0.9, m.def.scale * 0.85) });
+      }
       if (src === myId) {
         hud.floatText(world.engine, world.camera, top, String(amt), flags & HIT_CRIT ? 'crit' : flags & HIT_DOT ? 'dot' : 'dmg');
         if (flags & HIT_CRIT) this.c.follow.shake(0.12);
@@ -596,8 +475,7 @@ export class CombatController {
     const m = this.c.monsters.get(id);
     if (!m) return;
     this.later(0.25, () => {
-      this.c.fx.burst(m.pos.add(new Vector3(0, 0.8 * m.def.scale, 0)), '#cfc6b4', { count: m.def.boss ? 60 : 24, speed: 3, size: 0.5 * m.def.scale, life: 1.1, additive: false, gravity: -0.6, spread: 0.4 * m.def.scale });
-      this.c.fx.flash(m.pos.add(new Vector3(0, 1.4 * m.def.scale, 0)), m.def.eyeColor, 1.6 * m.def.scale, 0.4);
+      this.c.fx.soulRelease(m.pos.clone(), m.def.scale, m.def.eyeColor, m.model?.meshes);
     });
   }
 
@@ -647,14 +525,13 @@ export class CombatController {
       const passive = CLASSES[ch.cls].passives.find((p) => p.level === m.level);
       if (passive) this.later(2.2, () => this.c.hud.toast(`${passive.name}: ${passive.description}`));
       const at = this.c.player.pos.clone();
-      fx.column(at, '#ffd27a', { radius: 1, count: 120, height: 3.5, dur: 1 });
-      fx.ring(at, 0.5, 5, '#ffd27a', 1);
+      fx.levelUp(at);
     } else {
       const r = this.c.remotes.get(m.id);
       if (!r) return;
       r.info.level = m.level;
       this.c.hud.setPlateLevel(m.id, m.level);
-      fx.column(r.pos.clone(), '#ffd27a', { radius: 1, count: 80, dur: 0.8 });
+      fx.levelUp(r.pos.clone());
     }
   }
 
@@ -678,7 +555,8 @@ export class CombatController {
     p.face(m.yaw, 0.1);
     this.c.follow.yaw = m.yaw;
     this.c.hud.hideDeath();
-    this.c.fx.column(p.pos.clone(), '#fff2b0', { radius: 0.9, count: 70, dur: 0.8 });
+    this.c.fx.column(p.pos.clone(), '#fff2b0', { radius: 0.9, count: 70, dur: 0.8, height: 3 });
+    this.c.fx.magicCircle(p.pos.clone(), '#fff2b0', { radius: 1.6, dur: 1.6, cell: D.ascend, spin: 0.8, intensity: 2 });
   }
 
   onLoot(id: string, qty: number) {
@@ -687,8 +565,7 @@ export class CombatController {
     this.c.hud.lootToast(it.name, RARITY_COLORS[it.rarity], qty);
     if (it.rarity !== 'common') {
       const p = this.c.player.pos.clone();
-      this.c.fx.column(p, RARITY_COLORS[it.rarity], { radius: 0.5, count: it.rarity === 'epic' ? 140 : 70, height: 4, dur: it.rarity === 'epic' ? 1.4 : 0.8 });
-      if (it.rarity === 'epic') this.c.fx.ring(p, 0.3, 4, RARITY_COLORS.epic, 1.2);
+      this.c.fx.lootBeam(p, RARITY_COLORS[it.rarity], it.rarity === 'epic');
       if (it.kind !== 'consumable' && !this.bagHintShown) {
         this.bagHintShown = true;
         this.later(1, () => this.c.hud.toast('Press I to open your inventory.'));

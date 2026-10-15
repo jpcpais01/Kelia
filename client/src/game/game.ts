@@ -74,7 +74,7 @@ export class Game {
 
   constructor(private world: World, private lib: RigLibrary, private settings: UserSettings, private gpu: string, private monsterLib: RigLibrary) {
     this.input = new Input(world.engine.getRenderingCanvas()!);
-    this.fx = new Effects(world.scene);
+    this.fx = new Effects(world.scene, world.terrain.heightTexture);
     this.fx.groundAt = (x, z) => world.groundAt(x, z);
     this.follow = new FollowCamera(world.camera);
     this.follow.groundAt = (x, z) => world.groundAt(x, z);
