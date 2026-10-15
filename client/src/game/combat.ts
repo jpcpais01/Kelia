@@ -278,7 +278,7 @@ export class CombatController {
     if ((this.cooldowns.get(skill.id) ?? 0) > this.t) return;
     const player = this.c.player;
     const model = player.model;
-    if (!player.grounded && k !== 'd') return;
+    if (player.gliding || (!player.grounded && k !== 'd')) return;
     if (skill.cooldown > 0) this.cooldowns.set(skill.id, this.t + skill.cooldown * (k === 'd' ? 1 : 1 - this.stats.cdr));
     this.busyUntil = this.t + skill.lockout;
     if (k === 'c') {

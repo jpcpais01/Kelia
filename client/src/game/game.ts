@@ -49,6 +49,7 @@ import { Hud } from '../ui/hud';
 import { LoginScreen } from '../ui/login';
 import type { WorldMapState } from '../ui/worldMap';
 import { mixer } from '../audio/mixer';
+import { GlideAudio } from '../audio/glide';
 import { closeWindow, isWindowOpen, openHelp, openPatchNotes, openSettings } from '../ui/windows';
 import { isInventoryOpen, openInventory, renderInventory, type InventoryActions } from '../ui/inventory';
 import { LATEST_NOTE } from '../data/patchnotes';
@@ -98,6 +99,7 @@ export class Game {
   private channels = new Map<number, { poi: string; nextFx: number }>();
   private travelReadyAt = 0;
   private dayOverride: number | null = 0.72;
+  private glideAudio = new GlideAudio();
 
   constructor(private world: World, private lib: RigLibrary, private settings: UserSettings, private gpu: string, private monsterLib: RigLibrary) {
     this.input = new Input(world.engine.getRenderingCanvas()!);
@@ -310,6 +312,18 @@ export class Game {
       if (v > 9) this.follow.shake(Math.min(0.5, (v - 9) * 0.06));
       model!.animator.play('Jump_Land', { upper: false, speed: 1.5, fadeIn: 0.04, fadeOut: 0.15 });
     };
+    player.onGlide = (open) => {
+      this.gliderPuff(player.pos, open);
+      if (open) {
+        this.glideAudio.open();
+        // the canopy catching the fall
+        this.follow.punch(new Vector3(0, -1, 0), 0.25);
+        this.glideHint();
+      } else {
+        this.glideAudio.fold();
+        if (player.pos.y - this.world.groundAt(player.pos.x, player.pos.z) < 1.2) this.fx.dust(player.pos, 8, 0.5);
+      }
+    };
     this.player = player;
     this.follow.yaw = c.yaw;
     this.follow.pitch = 0.28;
@@ -455,6 +469,7 @@ export class Game {
     model.groundAt = (x, z) => this.world.groundAt(x, z);
     model.setShadowCaster((m) => this.world.atmosphere.addShadowCaster(m, false));
     const r = new RemotePlayer(p, model);
+    r.onGlide = (open) => this.gliderPuff(r.pos, open);
     this.remotes.set(p.id, r);
     this.hud?.plate(p.id, p.name, p.level);
   }
@@ -557,6 +572,27 @@ export class Game {
       zone: zone && (!zone.hidden || discovered.includes(zone.id)) ? zone.name : 'Kelia',
     };
   }
+
+  /** A soft puff of air where a glider snaps open or folds away. */
+  private gliderPuff(pos: Vector3, open: boolean) {
+    const p = pos.add(new Vector3(0, 1.7, 0));
+    this.fx.smoke(p, [0.95, 0.95, 0.92], { n: open ? 7 : 4, size: open ? 0.9 : 0.6, dur: open ? 0.7 : 0.45, spread: open ? 1.1 : 0.6, rise: 0.1, speed: open ? 2.4 : 1.4, alpha: open ? 0.32 : 0.22 });
+  }
+
+  /** The first time someone glides, tell them how to fly. */
+  private glideHint() {
+    let seen = true;
+    try {
+      seen = localStorage.getItem('kelia.glideHint') === '1';
+      localStorage.setItem('kelia.glideHint', '1');
+    } catch {
+      seen = false;
+    }
+    if (seen || this.glideHinted) return;
+    this.glideHinted = true;
+    this.hud?.toast('Gliding! Steer with the mouse · W faster · S brake · Shift dive · Space folds the glider');
+  }
+  private glideHinted = false;
 
   private focusPoint() {
     const p = this.player!.pos;
@@ -723,7 +759,8 @@ export class Game {
 
     // camera (blend in from the previous shot when entering)
     perf.begin('camera');
-    this.follow.update(dt, this.focusPoint(), player.vel, player.sprinting);
+    this.follow.update(dt, this.focusPoint(), player.vel, player.sprinting, player.gliding, player.diving);
+    this.glideAudio.update(dt, { gliding: player.gliding, speed: Math.hypot(player.vel.x, player.vel.z), diving: player.diving, lift: player.lift });
     if (this.camBlend < 1) {
       this.camBlend = Math.min(1, this.camBlend + dt / 2.2);
       const e = this.camBlend * this.camBlend * (3 - 2 * this.camBlend);

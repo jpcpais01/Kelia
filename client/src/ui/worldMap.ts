@@ -1,7 +1,7 @@
 // The big world map (M, or click the minimap): a full-screen, north-up chart of
 // Kelia painted from the live terrain, with every named place, the heroes
 // around you, nearby monsters and a marker you can drop to plan a route.
-import { FOREST, HILLS, LAKE, PLAYABLE_HALF, POINTS_OF_INTEREST, RIVER_POINTS, WORLD_HALF, type PointOfInterest } from '@kelia/shared';
+import { FOREST, HILLS, LAKE, PLAYABLE_HALF, POINTS_OF_INTEREST, RIVER_POINTS, UPDRAFTS, WORLD_HALF, type PointOfInterest } from '@kelia/shared';
 import { h, icon } from './dom';
 import { closeWindow, openOverlay } from './windows';
 
@@ -114,6 +114,7 @@ export class WorldMap {
           legendRow('lg-ally', 'Heroes'),
           legendRow('lg-foe', 'Monsters'),
           legendRow('lg-place', 'Places'),
+          legendRow('lg-wind', 'Updrafts'),
           legendRow('lg-pin', 'Your marker'),
         ),
         this.scaleEl,
@@ -392,6 +393,30 @@ export class WorldMap {
       const dist = Math.hypot(this.marker.x - s.px, this.marker.z - s.pz);
       this.label(`${Math.round(dist)} m`, mx, my + 16, `600 11px ${SANS}`, '#ffe3a6');
       ctx.restore();
+    }
+
+    // updrafts: a little turning swirl, named when you hover it
+    for (const u of UPDRAFTS) {
+      const [x, y] = this.toScreen(u.pos[0], u.pos[1]);
+      if (x < -40 || y < -40 || x > this.w + 40 || y > this.hgt + 40) continue;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(-t * 1.5);
+      ctx.strokeStyle = 'rgba(214, 240, 255, 0.95)';
+      ctx.lineWidth = 1.8;
+      ctx.lineCap = 'round';
+      for (let arm = 0; arm < 3; arm++) {
+        ctx.beginPath();
+        for (let i = 0; i <= 12; i++) {
+          const a = (arm / 3) * Math.PI * 2 + i * 0.32;
+          const r = 1.5 + i * 0.6;
+          if (i === 0) ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+          else ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+      if (this.hover && Math.hypot(this.hover.x - x, this.hover.y - y) < 14) this.label(u.name, x, y - 16, `600 11px ${SANS}`, '#d6f0ff');
     }
 
     // places

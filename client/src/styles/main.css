@@ -438,6 +438,7 @@ button { font-family: inherit; }
 .wm-legend .lg-ally { background: #7fd7ff; clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%); border-radius: 0; width: 11px; height: 12px; }
 .wm-legend .lg-foe { background: #ff6b5e; width: 8px; height: 8px; margin: 0 1px; }
 .wm-legend .lg-place { border: 1.5px solid var(--gold); background: rgba(22, 20, 16, 0.9); }
+.wm-legend .lg-wind { border: 1.5px dashed rgba(214, 240, 255, 0.95); background: transparent; }
 .wm-legend .lg-pin { background: #ffcf6e; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); }
 .wm-scale { position: absolute; right: 22px; bottom: 22px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 11px; color: var(--ink-2); pointer-events: none; z-index: 2; text-shadow: 0 1px 4px #000; }
 .wm-scale i { display: block; height: 6px; border: 1.5px solid var(--gold-2); border-top: 0; }

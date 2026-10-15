@@ -144,7 +144,7 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
     // &hg=1 / &hg=0 forces every headgear on or off
     if (params.has('hg')) look.appearance.headgear = params.get('hg') === '1';
     const c = new CharacterModel(world.scene, lib, look, 'c' + i);
-    const x = ox + (i - 2.5) * 1.6;
+    const x = ox + (i - 2.5) * (params.has('glide') ? 4.4 : 1.6);
     c.root.position.set(x, world.groundAt(x, oz), oz);
     c.root.rotation.y = Math.PI;
     c.groundAt = (x, z) => world.groundAt(x, z);
@@ -160,8 +160,17 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
     (window as unknown as { chars: unknown }).chars = chars;
     return;
   }
+  // &glide=<height>: everyone hangs from an open glider that high up (&bank= rolls them, &dive=1 dives)
+  const glideH = Number(params.get('glide') ?? 0);
+  if (glideH) for (const { c } of chars) c.root.position.y += glideH;
+  const bank = Number(params.get('bank') ?? 0);
   world.onUpdate((dt) => {
     for (const { c, a } of chars) {
+      if (glideH) {
+        c.glide(true, bank, params.has('dive'));
+        c.update(dt, new Vector3(0, 0, -6.2), 0, true);
+        continue;
+      }
       const v = a === 'walk' ? new Vector3(0, 0, -2.1) : a === 'run' ? new Vector3(0, 0, -5.4) : Vector3.Zero();
       c.update(dt, v, 0, false);
     }

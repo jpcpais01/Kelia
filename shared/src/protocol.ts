@@ -16,6 +16,7 @@ export enum MoveState {
   Dead = 6,
   Sit = 7,
   Wade = 8,
+  Glide = 9,
 }
 
 // ---------------------------------------------------------------- client -> server

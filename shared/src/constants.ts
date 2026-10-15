@@ -11,6 +11,26 @@ export const SPRINT_SPEED = 8.0;
 export const JUMP_VELOCITY = 6.6;
 export const GRAVITY = 20;
 export const MAX_WADE_DEPTH = 1.25; // deeper water pushes you back to shore
+// Gliding: the glider opens by itself once a fall would be longer than
+// GLIDE_FALL_HEIGHT, or by hand (Space) anywhere at least GLIDE_MIN_CLEARANCE up.
+export const GLIDE_FALL_HEIGHT = 5;
+export const GLIDE_MIN_CLEARANCE = 1.6;
+/** Forward speed with no input, holding W, holding S (air brake) and diving (Shift). */
+export const GLIDE_SPEED = 6.2;
+export const GLIDE_FAST_SPEED = 7.8;
+export const GLIDE_SLOW_SPEED = 3.6;
+export const GLIDE_DIVE_SPEED = 10.2;
+/** Sideways slip from A/D while gliding. */
+export const GLIDE_STRAFE_SPEED = 3.2;
+/** Sink rates (m/s) for the same four cases. */
+export const GLIDE_SINK = 2.0;
+export const GLIDE_FAST_SINK = 2.4;
+export const GLIDE_SLOW_SINK = 1.5;
+export const GLIDE_DIVE_SINK = 7.5;
+/** Updrafts lift a glider this fast (m/s), easing off near the top of the column. */
+export const UPDRAFT_LIFT = 8;
+/** Over deep water the glider skims this high above the surface instead of landing in it. */
+export const GLIDE_SKIM_HEIGHT = 0.9;
 /** Generous upper bound the server accepts, including dodges and lag spikes. */
 export const MAX_ACCEPTED_SPEED = SPRINT_SPEED * 1.35;
 

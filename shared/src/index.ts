@@ -11,4 +11,5 @@ export * from './data/monsters';
 export * from './world/layout';
 export * from './world/terrain';
 export * from './world/heightmap';
+export * from './world/wind';
 export * from './combat';

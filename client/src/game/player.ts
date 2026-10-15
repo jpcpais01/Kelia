@@ -1,8 +1,26 @@
 // The local player's movement: mouse-aimed WASD (the character faces where the
 // camera looks; W runs that way, A/D strafe, S backpedals) with acceleration, run/walk/sprint, jumping with coyote time, terrain and
-// obstacle collision, wading, and 20 Hz position reports to the server.
+// obstacle collision, wading, gliding, and 20 Hz position reports to the server.
+//
+// Gliding: the glider opens by itself when a fall would be longer than
+// GLIDE_FALL_HEIGHT (stepping off a cliff, leaping from a ledge), or with
+// Space anywhere high enough; Space again folds it. It always carries you
+// forward: the mouse steers, W speeds up, S brakes, A/D slip sideways and
+// Shift dives. Updrafts lift it, and over deep water it skims the surface.
 import { Vector3 } from '@babylonjs/core';
 import {
+  GLIDE_DIVE_SINK,
+  GLIDE_DIVE_SPEED,
+  GLIDE_FALL_HEIGHT,
+  GLIDE_FAST_SINK,
+  GLIDE_FAST_SPEED,
+  GLIDE_MIN_CLEARANCE,
+  GLIDE_SINK,
+  GLIDE_SKIM_HEIGHT,
+  GLIDE_SLOW_SINK,
+  GLIDE_SLOW_SPEED,
+  GLIDE_SPEED,
+  GLIDE_STRAFE_SPEED,
   GRAVITY,
   JUMP_VELOCITY,
   MAX_WADE_DEPTH,
@@ -10,9 +28,12 @@ import {
   RUN_SPEED,
   SPRINT_SPEED,
   TICK_MS,
+  UPDRAFT_LIFT,
   WALK_SPEED,
   WORLD_HALF,
   q,
+  updraftAt,
+  updraftStrength,
   waterAt,
   type ClientMessage,
 } from '@kelia/shared';
@@ -63,6 +84,19 @@ export class LocalPlayer {
   speedMul = 1;
   onLand: ((fallSpeed: number) => void) | null = null;
   onJump: (() => void) | null = null;
+  /** The glider opened (true) or folded (false). */
+  onGlide: ((open: boolean) => void) | null = null;
+  gliding = false;
+  /** Diving (Shift while gliding). */
+  diving = false;
+  /** Banking into a turn or slip, radians (right wing down positive). */
+  bank = 0;
+  /** 0..1 how hard an updraft is lifting right now. */
+  lift = 0;
+  /** Seconds since leaving the ground. */
+  private airT = 0;
+  /** Folded by hand: don't reopen by itself until the next landing. */
+  private noAutoGlide = false;
 
   constructor(readonly model: CharacterModel, private env: PlayerEnv) {}
 
@@ -72,7 +106,30 @@ export class LocalPlayer {
     this.lastYaw = yaw;
     this.vel.setAll(0);
     this.vy = 0;
+    if (this.gliding) this.setGlide(false);
     this.syncModel();
+  }
+
+  /** Open or fold the glider. */
+  setGlide(open: boolean) {
+    if (open === this.gliding) return;
+    this.gliding = open;
+    if (!open) this.diving = false;
+    this.onGlide?.(open);
+  }
+
+  /**
+   * What a glide would come down on below us: the ground (and a little ahead,
+   * so it folds before a slope rather than into it), or the skimming height
+   * over water too deep to wade.
+   */
+  private floorBelow(): { y: number; deep: boolean } {
+    const { x, z } = this.pos;
+    const g = this.env.groundAt(x, z);
+    const ahead = this.env.groundAt(x + this.vel.x * 0.35, z + this.vel.z * 0.35);
+    const w = waterAt(x, z);
+    const deep = w > -Infinity && w - g > MAX_WADE_DEPTH;
+    return { y: Math.max(g, ahead, deep ? w + GLIDE_SKIM_HEIGHT : -Infinity), deep };
   }
 
   /** Server says we're somewhere else. */
@@ -153,6 +210,31 @@ export class LocalPlayer {
     const env = this.env;
     if (input.pressedKey('KeyZ') || input.pressedKey('NumpadDivide')) this.walkMode = !this.walkMode;
 
+    // ---- glider: opens on a long fall or with Space in the air; folds on landing or with Space
+    const space = !this.frozen && input.pressedKey('Space');
+    let spaceUsed = false;
+    this.airT = this.grounded ? 0 : this.airT + dt;
+    if (this.grounded) this.noAutoGlide = false;
+    const floor = this.floorBelow();
+    const clear = this.pos.y - floor.y;
+    const updraft = updraftAt(this.pos.x, this.pos.z);
+    if (this.gliding) {
+      if (this.frozen || this.grounded) this.setGlide(false);
+      else if (space && !floor.deep) {
+        this.setGlide(false);
+        this.noAutoGlide = true;
+        spaceUsed = true;
+      } else if (clear < 0.45 && !floor.deep && !updraft) this.setGlide(false);
+    } else if (!this.grounded && !this.frozen) {
+      const byHand = space && this.coyote <= 0 && clear > GLIDE_MIN_CLEARANCE;
+      const longFall = !this.noAutoGlide && this.lockT <= 0 && this.airT > 0.12 && this.vy < -1 && clear >= GLIDE_FALL_HEIGHT;
+      const caught = updraft !== null && !this.noAutoGlide && this.airT > 0.05;
+      if (byHand || longFall || caught || floor.deep) {
+        this.setGlide(true);
+        spaceUsed = byHand;
+      }
+    }
+
     // ---- desired horizontal velocity
     let ix = 0;
     let iz = 0;
@@ -171,7 +253,8 @@ export class LocalPlayer {
     if (wishLen > 1e-3) wish.scaleInPlace(1 / wishLen);
     // Facing follows the camera, so anything with a backward component is a backpedal.
     const backpedal = iz < 0;
-    this.sprinting = !this.walkMode && iz > 0 && wishLen > 0 && (input.key('ShiftLeft') || input.key('ShiftRight'));
+    const shift = input.key('ShiftLeft') || input.key('ShiftRight');
+    this.sprinting = !this.gliding && !this.walkMode && iz > 0 && wishLen > 0 && shift;
     let speed = this.walkMode ? WALK_SPEED : this.sprinting ? SPRINT_SPEED : RUN_SPEED;
     if (backpedal) speed = Math.min(speed, WALK_SPEED * 1.25);
 
@@ -192,7 +275,22 @@ export class LocalPlayer {
     } else this.dash = null;
     if (this.sprinting && this.lockT > 0) this.sprinting = false;
 
-    const accel = this.grounded ? (wishLen > 0 ? 14 : 18) : 3.5;
+    if (this.gliding) {
+      // always carried forward along the body's heading (which follows the mouse)
+      this.diving = shift && iz >= 0 && !this.frozen;
+      const hf = new Vector3(Math.sin(this.yaw), 0, Math.cos(this.yaw));
+      let fwdSpeed = this.diving ? GLIDE_DIVE_SPEED : iz > 0 ? GLIDE_FAST_SPEED : iz < 0 ? GLIDE_SLOW_SPEED : GLIDE_SPEED;
+      const slip = ix * GLIDE_STRAFE_SPEED * (this.diving ? 0.5 : 1);
+      // rising air holds a glider: it drifts slowly, drawn in towards the middle, until W carries it out
+      const hold = updraft && iz <= 0 && !this.diving ? 1 : 0;
+      fwdSpeed *= 1 - 0.75 * hold;
+      target.set(hf.x * fwdSpeed + hf.z * slip, 0, hf.z * fwdSpeed - hf.x * slip);
+      if (updraft && hold) {
+        target.x += (updraft.pos[0] - this.pos.x) * 0.8;
+        target.z += (updraft.pos[1] - this.pos.z) * 0.8;
+      }
+    }
+    const accel = this.gliding ? (this.diving ? 1.8 : 1.4) : this.grounded ? (wishLen > 0 ? 14 : 18) : 3.5;
     const k = 1 - Math.exp(-dt * (this.dash ? 30 : accel));
     this.vel.x += (target.x - this.vel.x) * k;
     this.vel.z += (target.z - this.vel.z) * k;
@@ -209,16 +307,17 @@ export class LocalPlayer {
     if (this.faceT > 0) wantYaw = this.faceYaw;
     else if (this.dash && this.faceDash) wantYaw = Math.atan2(this.dash.x, this.dash.z);
     else if (this.frozen || (this.lockT > 0 && this.moveScale === 0)) wantYaw = this.yaw;
-    else if (this.idleTurn) wantYaw = camYaw;
+    else if (this.idleTurn || this.gliding) wantYaw = camYaw;
     const dy = wrap(wantYaw - this.yaw);
-    const turnK = 1 - Math.exp(-dt * (this.faceT > 0 ? 30 : wishLen > 0 ? (this.grounded ? 16 : 8) : 7));
+    // a glider swings round in a lazy arc rather than snapping to the camera
+    const turnK = 1 - Math.exp(-dt * (this.faceT > 0 ? 30 : this.gliding ? (this.diving ? 1.6 : 2.4) : wishLen > 0 ? (this.grounded ? 16 : 8) : 7));
     this.yaw = wrap(this.yaw + dy * turnK);
     this.turnRate = wrap(this.yaw - this.lastYaw) / Math.max(dt, 1e-4);
     this.lastYaw = this.yaw;
 
     // ---- jump & gravity
     this.coyote = this.grounded ? 0.12 : Math.max(0, this.coyote - dt);
-    this.jumpBuffer = input.pressedKey('Space') ? 0.15 : Math.max(0, this.jumpBuffer - dt);
+    this.jumpBuffer = input.pressedKey('Space') && !spaceUsed && !this.gliding ? 0.15 : Math.max(0, this.jumpBuffer - dt);
     if (this.jumpBuffer > 0 && this.coyote > 0 && this.lockT <= 0 && !this.frozen) {
       this.vy = JUMP_VELOCITY;
       this.grounded = false;
@@ -226,7 +325,21 @@ export class LocalPlayer {
       this.jumpBuffer = 0;
       this.onJump?.();
     }
-    this.vy -= GRAVITY * dt;
+    this.lift = 0;
+    if (this.gliding) {
+      const sink = this.diving ? GLIDE_DIVE_SINK : iz > 0 ? GLIDE_FAST_SINK : iz < 0 ? GLIDE_SLOW_SINK : GLIDE_SINK;
+      let want = -sink;
+      if (updraft) {
+        // rising air: full lift low in the column, settling into a bob at its top
+        this.lift = updraftStrength(updraft, this.pos.y);
+        want = -sink + (UPDRAFT_LIFT + sink) * this.lift;
+      }
+      // over deep water: ease down onto the skimming height and hold it
+      if (floor.deep) want = Math.max(want, -clear * 2);
+      // a fall is caught hard (the canopy fills with a jolt); lift builds gently
+      const kv = 1 - Math.exp(-dt * (this.vy < want ? 3.4 : 1.6));
+      this.vy += (want - this.vy) * kv;
+    } else this.vy -= GRAVITY * dt;
 
     // ---- integrate with collision
     let sx = 0;
@@ -242,6 +355,8 @@ export class LocalPlayer {
     const next = new Vector3(nx, this.pos.y + this.vy * dt, nz);
     // obstacles: push out of circles
     for (const c of env.colliders(next.x, next.z, this.tmpCol)) {
+      // high above trees and roofs
+      if (!this.grounded && next.y - env.groundAt(c.x, c.z) > (c.r > 2.5 ? 9 : 4.5)) continue;
       const dx = next.x - c.x;
       const dz = next.z - c.z;
       const r = c.r + CHAR_RADIUS;
@@ -261,9 +376,9 @@ export class LocalPlayer {
       next.z = this.pos.z;
       g1 = g0;
     }
-    // deep water: back to the shore
+    // deep water: back to the shore (gliders and long drops sail on over it)
     const wn = waterAt(next.x, next.z);
-    if (wn > -Infinity && wn - g1 > MAX_WADE_DEPTH) {
+    if (wn > -Infinity && wn - g1 > MAX_WADE_DEPTH && !this.gliding && next.y < wn + GLIDE_MIN_CLEARANCE) {
       next.x = this.pos.x;
       next.z = this.pos.z;
       g1 = g0;
@@ -278,8 +393,8 @@ export class LocalPlayer {
       next.y = g1;
       this.vy = 0;
       this.grounded = true;
-    } else if (wasGrounded && next.y - g1 < 0.45 && this.vy <= 0) {
-      // stick to the ground going downhill
+    } else if (wasGrounded && next.y - g1 < 0.45 && this.vy <= 0 && next.y - g1 < run * 1.4 + 0.02) {
+      // stick to the ground going downhill (but step off cliffs: anything steeper than ~55 degrees)
       next.y = g1;
       this.vy = 0;
     } else {
@@ -295,7 +410,7 @@ export class LocalPlayer {
 
     // ---- state for the network / animation
     const sp = Math.hypot(this.vel.x, this.vel.z);
-    if (!this.grounded) this.state = MoveState.Air;
+    if (!this.grounded) this.state = this.gliding ? MoveState.Glide : MoveState.Air;
     else if (this.dash && this.lockT > 0) this.state = MoveState.Dodge;
     else if (wading && sp > 0.3) this.state = MoveState.Wade;
     else if (sp < 0.3) this.state = MoveState.Idle;
@@ -303,7 +418,12 @@ export class LocalPlayer {
     else if (sp < 6.5) this.state = MoveState.Run;
     else this.state = MoveState.Sprint;
 
+    // bank into turns and slips
+    const wantBank = this.gliding ? Math.max(-0.6, Math.min(0.6, this.turnRate * 0.32 + ix * 0.32)) : 0;
+    this.bank += (wantBank - this.bank) * (1 - Math.exp(-dt * 3));
+
     this.syncModel();
+    this.model.glide(this.gliding, this.bank, this.diving);
     this.model.update(dt, this.vel, this.turnRate, !this.grounded);
 
     // ---- network

@@ -6,7 +6,6 @@ import {
   CHAT_RATE_PER_10S,
   EMOTES,
   Heightmap,
-  MAX_ACCEPTED_SPEED,
   MAX_PLAYERS,
   MAX_WADE_DEPTH,
   MoveState,
@@ -38,6 +37,7 @@ import {
   type Stats,
 } from '@kelia/shared';
 import { verifyToken, type AuthResult } from './auth';
+import { judgeMove, newAirState } from './movement';
 import { config } from './config';
 import { Combat, PlayerCombat, type Fighter } from './combat';
 import { travelSpot } from './travel';
@@ -76,6 +76,8 @@ export class Player {
   /** A teleport being channelled: where to, when it began, and where/how healthy the player stood. */
   travel: { poi: string; at: number; x: number; z: number; hp: number } | null = null;
   travelReadyAt = 0;
+  /** Flight tracking for movement validation (gliding, updrafts). */
+  air = newAirState();
 
   constructor(readonly id: number, readonly session: Session, public character: CharacterData) {
     [this.x, this.y, this.z] = character.pos;
@@ -326,16 +328,12 @@ export class World {
     if (p.combat.dead) return;
     const now = Date.now();
     const dt = Math.min(1.0, Math.max(0.05, (now - p.lastMoveAt) / 1000));
-    const horiz = Math.hypot(x - p.x, z - p.z);
-    const allowed = MAX_ACCEPTED_SPEED * dt + 1.2 + (now < p.combat.dashUntil ? p.combat.dashDistance : 0);
-    const ground = this.heightmap.sample(x, z);
-    const outOfBounds = Math.abs(x) > WORLD_HALF - 6 || Math.abs(z) > WORLD_HALF - 6;
-    const underground = y < ground - 1.2;
-    const flying = y > Math.max(ground + 5, p.y + 2.2);
-    if (horiz > allowed || outOfBounds || underground || flying || this.tooDeep(x, z)) {
+    const extra = now < p.combat.dashUntil ? p.combat.dashDistance : 0;
+    const v = judgeMove(this.heightmap, p, { x, y, z }, dt, extra, now, p.air);
+    p.lastMoveAt = now;
+    if (!v.ok && v.why !== 'hover') {
       p.corrections++;
       s.send({ t: 'correct', x: q(p.x), y: q(p.y), z: q(p.z) });
-      p.lastMoveAt = now;
       return;
     }
     p.x = x;
@@ -343,7 +341,12 @@ export class World {
     p.z = z;
     p.yaw = yaw;
     p.state = (msg.st | 0) as MoveState;
-    p.lastMoveAt = now;
+    if (!v.ok) {
+      // hanging in the air longer than any glider could: pull them down to what's possible
+      p.corrections++;
+      p.y = v.y;
+      s.send({ t: 'correct', x: q(p.x), y: q(p.y), z: q(p.z) });
+    }
     this.discover(p);
   }
 
