@@ -10,6 +10,13 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-15T04:40:00Z',
+    title: 'A valley that breathes',
+    lines: [
+      'Torches flicker, chimneys smoke, mist rises from Silverfall, birds and butterflies fill the day and fireflies the night, and leaves drift through the Whisperwood. Seek out the Fairy Ring, Lantern Isle, the Old Watchtower and the Hidden Grotto.',
+    ],
+  },
+  {
     at: '2026-10-15T04:30:00Z',
     title: 'Spoils of war',
     lines: [
@@ -22,8 +29,7 @@ export const PATCH_NOTES: PatchNote[] = [
     title: 'The dead walk',
     lines: [
       'Combat is here: every fighting style has a three-hit combo, three skills (unlocking at levels 1, 3 and 5), a dodge and passives.',
-      'Risen skeletons roam the meadows, the forest edge and the ruins, and Bonelord Varrok waits in the ruined hall. Watch for red circles on the ground.',
-      'Earn XP from every kill (everyone who helps gets the full reward), climb to level 10, and return to Hearthmere if you fall.',
+      'Risen skeletons roam the meadows, forest edge and ruins, and Bonelord Varrok waits in the ruined hall. Every kill gives XP to all who helped, up to level 10.',
     ],
   },
   {
