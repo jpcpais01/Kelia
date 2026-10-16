@@ -143,13 +143,17 @@ function leafCards(
   rnd: () => number,
   sway: number,
   accent?: { color: C3; share: number },
-  o: { shell?: number; local?: number } = {},
+  o: { shell?: number; local?: number; calm?: number } = {},
 ) {
   const { center, radius } = crown;
   const lw = o.local ?? 0.38;
+  // Far crowns show the bold clump painting, where card-to-card brightness
+  // jumps read as hard outlines: calm them down (shading still comes from the
+  // normals, so the crown keeps its lit tops and shaded undersides).
+  const calm = o.calm ?? 0;
   for (const cl of crown.clumps) {
     const cs = cl.s ?? sway;
-    const tint = 0.9 + rnd() * 0.2;
+    const tint = 1 + (rnd() - 0.5) * 0.2 * (1 - calm);
     const sh = clumpShape(cl.c);
     // bigger clumps get more cards, so every mass is equally dense
     let cnt = o.local !== undefined ? Math.max(2, Math.round(per * Math.pow(cl.r / 1.3, 2))) : per;
@@ -184,7 +188,7 @@ function leafCards(
       const h = Math.min(1, Math.max(0, (p[1] - (center[1] - radius[1])) / (radius[1] * 2)));
       let col = mix3(pal.low, pal.high, Math.pow(h, 0.85));
       // the outer shell catches more light than the inner leaves
-      col = scale3(col, tint * (0.82 + 0.25 * (d / cl.r)));
+      col = scale3(col, tint * (0.82 + 0.25 * (d / cl.r) + (0.15 - 0.25 * (d / cl.r)) * calm * 0.6));
       if (accent && rnd() < accent.share) col = scale3(accent.color, 0.9 + rnd() * 0.2);
       b.card(p, cl.r * grow * sh.leaf * (0.8 + rnd() * 0.4), n, col, cs, cell, rnd() * Math.PI * 2);
     }
@@ -455,8 +459,11 @@ function shadowBlob(b: MeshBuilder2, cl: { c: C3; r: number }, sy: number, col: 
 /** Small inner foliage volumes per clump: the crown stays solid where it should be, open between masses. */
 function clumpCores(b: MeshBuilder2, crown: Crown, pal: Palette, lod: number, shrink = 0.5) {
   // deep inner shade: glimpsed through the leaves, never a lit ball of its own
-  const lo = scale3(pal.core, 0.85);
-  const hi = mix3(pal.core, pal.low, 0.7);
+  // (farther out the bold cards close the crown, so the cores only fill gaps:
+  // smaller and closer to the leaf shade, or their facets read as dark slabs)
+  const lo = lod === 0 ? scale3(pal.core, 0.85) : mix3(pal.core, pal.low, 0.45);
+  const hi = lod === 0 ? mix3(pal.core, pal.low, 0.7) : pal.low;
+  if (lod > 0) shrink *= 0.82;
   // only the big masses at the limb ends get one; small clumps stay airy
   for (const cl of crown.clumps) {
     if (!cl.main) continue;
@@ -536,7 +543,7 @@ export function broadleaf(lod: number, variant: number): Built {
     return done(b);
   }
   clumpCores(b, crown, pal, lod);
-  leafCards(b, crown, pal, [10, 4, 2][lod], [1.3, 1.65, 2.1][lod], 'broad', leafRnd, 0.75, undefined, { shell: [0.1, 0.12, 0.2][lod], local: 0.5 });
+  leafCards(b, crown, pal, [10, 4, 2][lod], [1.3, 1.65, 2.1][lod], 'broad', leafRnd, 0.75, undefined, { shell: [0.1, 0.12, 0.2][lod], local: 0.5, calm: lod ? 1 : 0 });
   return done(b);
 }
 
@@ -579,7 +586,7 @@ export function blossom(lod: number, variant: number): Built {
     return done(b);
   }
   clumpCores(b, crown, kind.pal, lod, 0.4);
-  leafCards(b, crown, kind.pal, [12, 4, 2][lod], [1.25, 1.65, 2.1][lod], 'round', leafRnd, 0.8, { color: kind.accent, share: 0.14 }, { shell: [0.1, 0.12, 0.2][lod], local: 0.5 });
+  leafCards(b, crown, kind.pal, [12, 4, 2][lod], [1.25, 1.65, 2.1][lod], 'round', leafRnd, 0.8, { color: kind.accent, share: 0.14 }, { shell: [0.1, 0.12, 0.2][lod], local: 0.5, calm: lod ? 1 : 0 });
   return done(b);
 }
 
@@ -729,7 +736,7 @@ export function birch(lod: number, variant: number): Built {
     b.blob(crown.center, [crown.radius[0] * 0.8, crown.radius[1] * 0.85, crown.radius[2] * 0.8], 1, noise, 0.3, pal.core, pal.core, crown.center, 0.7);
     return done(b);
   }
-  leafCards(b, crown, pal, [9, 4, 2][lod], [1.3, 1.7, 2.3][lod], 'round', leafRnd, 0.9, undefined, { shell: [0.12, 0.15, 0.3][lod], local: 0.5 });
+  leafCards(b, crown, pal, [9, 4, 2][lod], [1.3, 1.7, 2.3][lod], 'round', leafRnd, 0.9, undefined, { shell: [0.12, 0.15, 0.3][lod], local: 0.5, calm: lod ? 1 : 0 });
   return done(b);
 }
 
