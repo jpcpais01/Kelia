@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T02:15:00Z',
+    title: 'Finer grass and real wildflowers',
+    lines: ['Meadows are woven from far finer grass: close to you every patch is a thick carpet of slim blades, five or so to a clump, that grow out of the colour of the soil, thin out and shorten softly where the meadow meets sand or a path, and stay delicate all the way to the horizon. The wildflowers are rebuilt too: smaller, rounder daisies with a raised heart, buttercups and poppies that open as real cups, bellflowers that hang in little clusters with a shadowed inside, and lupins packed with folded florets. Petals now catch the sun and glow when it shines through them, and flowers grow in drifts that are densest at their hearts and fade out at the edges, with their colours carrying on through the grass into the distance.'],
+  },
+  {
     at: '2026-10-15T22:40:00Z',
     title: 'Bounced light is back',
     lines: ['The light that fills the world returns, now tested on every kind of graphics card: soft shade under tree crowns and at the foot of cliffs and walls, ground-tinted bounce light, and eyes that adjust as you walk from a dark wood into a sunny meadow.'],
