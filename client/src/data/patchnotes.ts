@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T02:50:00Z',
+    title: 'Anime heroes',
+    lines: ["Heroes are no longer chunky little figures. Every adventurer is rebuilt with anime proportions: a slim, tall body, a smaller head with a painted face (big shining eyes, lashes, brows and a blush), hair made of real locks that fall around the face, and outfits remade to fit, from the Squire's tabard to the Arcanist's robe and hat. Every creator option carries over, there's a new Graceful build, the hair styles are now Tousled, Long Braid, Side Part, High Tail and Buzz Cut, weapons are sized for the new heroes, and the creator's face view now frames the face. All the animations, gliding and combat work as before."],
+  },
+  {
     at: '2026-10-16T02:25:00Z',
     title: 'Deeper light and shade',
     lines: ["Shade now looks like shade: the side turned away from the sun sits a clear, cool step darker, lit only by the blue sky, and faces that barely catch the sun fall off gently instead of all glowing the same. Heroes and monsters finally stand on the ground: a soft contact shadow pools under their feet, darkens the grass around them and falls on anyone standing close. Walls, fences, crates, rocks and tree trunks get a fine dark crease where they meet the earth. The distant haze is thinner and bluer, so far mountains turn blue with distance instead of washing out to grey, and keep their sunlit and shaded sides; sunsets keep their warm glow."],

@@ -235,7 +235,7 @@ export class CharacterModel {
   constructor(private scene: Scene, private lib: RigLibrary, look: Look, name = 'character') {
     this.root = new TransformNode(name, scene);
     perf.tag(this.root, 'characters');
-    trackContact(this.root, 0.42, CHARACTER_HEIGHT);
+    trackContact(this.root, 0.3, CHARACTER_HEIGHT);
     this.body = new TransformNode(name + '_body', scene);
     this.body.parent = this.root;
     this.setLook(look);
