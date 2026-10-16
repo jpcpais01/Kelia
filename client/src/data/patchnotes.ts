@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T05:50:00Z',
+    title: 'Capes and hair that move',
+    lines: ["Capes and long hair now move with real physics instead of hanging stiff. A cape streams out behind you when you run, billows round when you turn, ripples in the wind and settles back when you stop, and it hangs down when you bend forward. Braids, long hair and ponytails swing and bounce with every step, and the locks framing the face sway when you turn your head. Both keep clear of your body: a cape rides over your legs and arms instead of passing through them, and long hair stays outside your shoulders. Other players' heroes move the same way."],
+  },
+  {
     at: '2026-10-16T04:45:00Z',
     title: 'Heroes walk like people',
     lines: ["Heroes' legs are now driven by a real walking system instead of tiny looped steps, so feet no longer skate. Each foot plants on the ground and stays put while it carries your weight. It rolls from heel to toe and swings through in an arc to the next footfall, on slopes too. Hips dip and sway over the standing leg, the chest twists against the hips and the arms swing against the legs: loose when you walk, pumping with bent elbows when you run. You lean into a sprint and rock back when you stop, the first step comes at once, stopping brings your feet together, and turning on the spot shuffles your feet round. Side-steps turn the hips into the run while you keep facing ahead. Also fixed: some animations pushed the heroes' hips and shoulders out of place."],
