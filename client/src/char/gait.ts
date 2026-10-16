@@ -54,6 +54,14 @@ export interface GaitInput {
    * turns, then step to catch up.
    */
   lock?: boolean;
+  /**
+   * 0..1 how much to square up the idle clip: it stands bladed, hips and
+   * chest turned well off to one side, which reads as a twist. Squared, the
+   * body faces ahead over feet set side by side.
+   */
+  square?: number;
+  /** What the right hand carries, so the gait can hold it sensibly on the move. */
+  grip?: 'blade' | 'staff' | null;
 }
 
 interface Leg {
@@ -102,6 +110,7 @@ export class Gait {
   private spine: TransformNode | null;
   private chest: TransformNode | null;
   private hipsRest: Quaternion;
+  private slot: TransformNode | null;
   private ready = false;
   /** Measured once from the rig. */
   private thigh = 0.43;
@@ -131,8 +140,9 @@ export class Gait {
   private stepT = [-1, -1];
   private stepFrom = [new Vector3(), new Vector3()];
   private stepLift = [0, 0];
+  /** Seconds since each foot last stepped (footwork). */
+  private sinceStep = [9, 9];
   private prevRoot: Vector3 | null = null;
-  private prevYaw = 0;
   private armW = 0;
   /** Per-frame trace for tests (set to [] to record). */
   debug: unknown[] | null = null;
@@ -141,6 +151,7 @@ export class Gait {
     this.hips = nodes.get('hips')!;
     this.spine = nodes.get('spine') ?? null;
     this.chest = nodes.get('chest') ?? null;
+    this.slot = nodes.get('handslot.r') ?? null;
     this.hipsRest = (this.hips.rotationQuaternion ?? Quaternion.FromEulerVector(this.hips.rotation)).clone();
     for (const side of ['l', 'r'] as const) {
       const upper = nodes.get(`upperleg.${side}`);
@@ -248,7 +259,10 @@ export class Gait {
     for (const l of this.legs) refreshChain(l.toes ?? l.foot);
     for (const a of this.arms) refreshChain(a.wrist);
     if (!this.ready) this.measure(yaw);
-    else if (o.calm && !this.active) this.learnIdle(yaw, 1 - Math.exp(-dt * 2));
+    else {
+      this.squareUp(Math.min(1, o.square ?? 0), yaw, F, R, rootY);
+      if (o.calm && !this.active) this.learnIdle(yaw, 1 - Math.exp(-dt * 2));
+    }
     const ls = this.ls;
     // ground under a point, ignoring terrain far below or above us (bridges, floors)
     const gnd = (x: number, z: number) => {
@@ -310,7 +324,7 @@ export class Gait {
     const idleAnkles = clipAnkles.map((p, i) => p.add(new Vector3(0, offsets[i], 0)));
     const W = this.active ? this.w : 0;
 
-    const lift = this.footwork(dt, !!o.lock && W <= 0.002, clipAnkles, yaw, ls);
+    const lift = this.footwork(dt, !!o.lock && W <= 0.002, clipAnkles, ls);
     if (W <= 0.002) {
       this.moveHips(Hc, new Vector3(Hc.x, Hc.y + this.idleDrop, Hc.z));
       for (let i = 0; i < 2; i++) {
@@ -498,7 +512,71 @@ export class Gait {
     const armT = o.detail ? o.arms : 0;
     this.armW += (armT - this.armW) * (1 - Math.exp(-dt * 10));
     const aw = this.armW * W * smooth(0.05, 0.7, vn + (moving ? 0.3 : 0));
-    if (aw > 0.01) this.swingArms(aw, F, R, run, sprint, gaitOn, o.armScale);
+    if (aw > 0.01) this.swingArms(aw, F, R, run, sprint, gaitOn, o.armScale, o.grip ?? null);
+  }
+
+  /**
+   * Square up the idle clip (weight `k`): turn the hips to face ahead and the
+   * shoulders over them, centre the hips over feet set side by side (toes a
+   * little out, one a touch ahead), and stand a little taller than the
+   * clip's crouch. Done on the clip's pose before anything reads it, so the
+   * rest of the gait (and its learned idle stance) sees the squared stance.
+   */
+  private squareUp(k: number, yaw: number, F: Vector3, R: Vector3, rootY: number) {
+    if (k < 0.01) return;
+    const left = this.legs[0].sign < 0 ? this.legs[0] : this.legs[1];
+    const right = left === this.legs[0] ? this.legs[1] : this.legs[0];
+    const side = yaw + Math.PI / 2;
+    const heading = (a: Vector3, b: Vector3) => Math.atan2(b.x - a.x, b.z - a.z);
+    // hips face ahead
+    refreshChain(right.upper);
+    refreshChain(left.upper);
+    rotateWorld(this.hips, UP, -angleDiff(heading(left.upper.absolutePosition, right.upper.absolutePosition), side) * k);
+    refreshChain(left.upper);
+    refreshChain(right.upper);
+    // the feet: side by side under the hip joints, toes a little out
+    const jl = left.upper.absolutePosition.clone();
+    const jr = right.upper.absolutePosition.clone();
+    const ls = this.ls;
+    const half = Math.max(0.085 * ls, Math.min(0.12 * ls, Vector3.Distance(jl, jr) / 2 + 0.02 * ls));
+    const root = this.root.position;
+    const stance = (l: Leg, z: number) => root.add(R.scale(l.sign * half)).add(F.scale(z * ls));
+    const tgt = [stance(left, 0.035), stance(right, -0.025)];
+    // the hips over them, high enough that the knees are only softly bent
+    const mid = jl.add(jr).scale(0.5);
+    const centre = tgt[0].add(tgt[1]).scale(0.5);
+    const L = (this.thigh + this.shin) * 0.97;
+    let top = Infinity;
+    for (const [i, j] of [jl, jr].entries()) {
+      const h = Math.hypot(j.x - mid.x + centre.x - tgt[i].x, j.z - mid.z + centre.z - tgt[i].z);
+      top = Math.min(top, Math.sqrt(Math.max(0, L * L - h * h)));
+    }
+    const wantY = rootY + this.ankleH + top;
+    const d = new Vector3(centre.x - mid.x, Math.max(-0.04, Math.min(0.1 * ls, wantY - mid.y)), centre.z - mid.z).scale(k);
+    const hp = this.hips.absolutePosition.clone();
+    this.moveHips(hp, hp.add(d));
+    // the shoulders over the hips (spine and chest share the turn)
+    const shoulders = () => {
+      const a = this.arms.map((x) => (refreshChain(x.upper), x.upper.absolutePosition.clone()));
+      if (a.length < 2) return 0;
+      const [p, q] = Vector3.Dot(a[1].subtract(a[0]), R) >= 0 ? [a[0], a[1]] : [a[1], a[0]];
+      return angleDiff(heading(p, q), side);
+    };
+    if (this.spine) rotateWorld(this.spine, UP, -shoulders() * 0.4 * k);
+    if (this.chest) {
+      refreshChain(this.chest);
+      rotateWorld(this.chest, UP, -shoulders() * k);
+    }
+    // the legs down to the feet, knees ahead
+    for (const [i, l] of [left, right].entries()) {
+      refreshChain(l.foot);
+      const t = tgt[i];
+      t.y = rootY + this.ankleH;
+      const target = Vector3.Lerp(l.foot.absolutePosition, t, k);
+      const fy = yaw + l.sign * 0.16;
+      const pole = new Vector3(Math.sin(fy), 0, Math.cos(fy)).add(R.scale(l.sign * 0.1));
+      this.solveLeg(l, target, pole, k, { heading: fy, pitch: 0 });
+    }
   }
 
   /** Lateral offset of a walking foot from the body's line: the idle stance width, within reason. */
@@ -536,33 +614,36 @@ export class Gait {
 
   /**
    * Attack footwork. While `on`, each foot keeps its place in the world as
-   * the body lunges or turns under it (its offset from the clip's foot grows);
-   * once a foot is pulled too far it steps to catch up, the leading one
-   * first, so a lunge reads as a step into the blow and a turn as a pivot.
-   * Off, any offset left steps home. Returns each foot's lift.
+   * the body lunges under it (its offset from the clip's foot grows); once a
+   * foot is pulled too far it steps to catch up, the leading one first, so a
+   * lunge reads as a step into the blow. Turns (an attack snaps the body to
+   * its aim) pivot the feet with the body: planted against a big snap they
+   * wrung the legs round each other. Off, any offset left steps home.
+   * Returns each foot's lift.
    */
-  private footwork(dt: number, on: boolean, clip: Vector3[], yaw: number, ls: number) {
+  private footwork(dt: number, on: boolean, clip: Vector3[], ls: number) {
     const r = this.root.position;
     const prev = this.prevRoot;
     const lifts = [0, 0];
+    for (let i = 0; i < 2; i++) this.sinceStep[i] += dt;
     if (on && prev) {
-      const c0 = Math.cos(yaw - this.prevYaw);
-      const s0 = Math.sin(yaw - this.prevYaw);
       for (let i = 0; i < 2; i++) {
         if (this.stepT[i] >= 0) continue;
-        // where this foot would be had the body not moved (or turned) since last frame
-        const dx = clip[i].x - r.x;
-        const dz = clip[i].z - r.z;
-        const bx = prev.x + dx * c0 - dz * s0;
-        const bz = prev.z + dx * s0 + dz * c0;
-        this.plantO[i].x -= clip[i].x - bx;
-        this.plantO[i].z -= clip[i].z - bz;
+        const o = this.plantO[i];
+        o.x -= r.x - prev.x;
+        o.z -= r.z - prev.z;
+        // a foot that has just stepped drags rather than pattering again,
+        // and no foot is left far behind (no splits)
+        const d = o.length();
+        if (d > 0.12 * ls && this.sinceStep[i] < 0.32) o.scaleInPlace(Math.exp(-dt * 7));
+        if (d > 0.32 * ls) o.scaleInPlace((0.32 * ls) / d);
       }
     }
     const step = (i: number) => {
       this.stepT[i] = 0;
+      this.sinceStep[i] = 0;
       this.stepFrom[i].copyFrom(this.plantO[i]);
-      this.stepLift[i] = Math.min(0.09, 0.03 + this.plantO[i].length() * 0.25) * ls;
+      this.stepLift[i] = Math.min(0.07, 0.025 + this.plantO[i].length() * 0.2) * ls;
     };
     if (this.stepT[0] < 0 && this.stepT[1] < 0) {
       // the foot pulled furthest steps, favouring the one leading the way the body went
@@ -570,7 +651,7 @@ export class Gait {
       let best = 0;
       for (let i = 0; i < 2; i++) {
         const d = this.plantO[i].length();
-        if (d < (on ? 0.1 * ls : 0.02)) continue;
+        if (d < (on ? 0.14 * ls : 0.02) || (on && this.sinceStep[i] < 0.32)) continue;
         const lead = d > 1e-6 ? -((clip[i].x - r.x) * this.plantO[i].x + (clip[i].z - r.z) * this.plantO[i].z) / d : 0;
         const score = d + 0.6 * lead;
         if (pick < 0 || score > best) {
@@ -586,7 +667,7 @@ export class Gait {
         if (!on) this.plantO[i].scaleInPlace(Math.exp(-dt * 20));
         continue;
       }
-      this.stepT[i] = Math.min(1, this.stepT[i] + dt / 0.15);
+      this.stepT[i] = Math.min(1, this.stepT[i] + dt / 0.17);
       const u = this.stepT[i];
       const e = u * u * (3 - 2 * u);
       this.plantO[i].copyFrom(this.stepFrom[i]).scaleInPlace(1 - e);
@@ -597,7 +678,6 @@ export class Gait {
       }
     }
     this.prevRoot = r.clone();
-    this.prevYaw = yaw;
     return lifts;
   }
 
@@ -615,7 +695,7 @@ export class Gait {
   }
 
   /** Two-bone IK to an ankle target, the knee toward `pole`; then the foot's pitch. */
-  private solveLeg(l: Leg, target: Vector3, pole: Vector3 | null, w: number) {
+  private solveLeg(l: Leg, target: Vector3, pole: Vector3 | null, w: number, pose?: { heading: number; pitch: number }) {
     refreshChain(l.foot);
     const A = l.upper.absolutePosition.clone();
     const B = l.lower.absolutePosition.clone();
@@ -644,14 +724,15 @@ export class Gait {
     if (w < 0.01 || !l.toes) return;
     // foot pitch: aim the ball of the foot, then keep the toes on the ground
     refreshChain(l.toes);
-    const th = l.pitch + (l.swing ? 0 : l.slope);
-    const f = new Vector3(Math.sin(l.heading), 0, Math.cos(l.heading));
+    const th = pose ? pose.pitch : l.pitch + (l.swing ? 0 : l.slope);
+    const hd = pose ? pose.heading : l.heading;
+    const f = new Vector3(Math.sin(hd), 0, Math.cos(hd));
     const fwd = this.ballFwd;
     const down = this.ballDown;
     const ball = l.foot.absolutePosition.add(f.scale(fwd * Math.cos(th) + down * Math.sin(th))).add(UP.scale(fwd * Math.sin(th) - down * Math.cos(th)));
     const now = l.toes.absolutePosition;
     aimBone(l.foot, l.toes, Vector3.Lerp(now, ball, w));
-    if (l.pitch < -0.02 && !l.swing) {
+    if (!pose && l.pitch < -0.02 && !l.swing) {
       refreshChain(l.toes);
       const side = Vector3.Cross(UP, f).normalize();
       rotateWorld(l.toes, side, -l.pitch * 0.85 * w);
@@ -659,7 +740,7 @@ export class Gait {
   }
 
   /** Arms swing against the legs: relaxed walking, pumped with bent elbows running. */
-  private swingArms(w: number, F: Vector3, R: Vector3, run: number, sprint: number, on: number, scale: { l: number; r: number }) {
+  private swingArms(w: number, F: Vector3, R: Vector3, run: number, sprint: number, on: number, scale: { l: number; r: number }, grip: 'blade' | 'staff' | null) {
     const lag = 0.04;
     for (const a of this.arms) {
       refreshChain(a.wrist);
@@ -689,7 +770,48 @@ export class Gait {
       const Ew = a.lower.absolutePosition.clone();
       const dir = Vector3.Lerp(W0.subtract(E0).normalize(), df, w).normalize();
       aimBone(a.lower, a.wrist, Ew.add(dir.scale(this.foreArm)));
+      if (grip && a.side === 'r') this.holdWeapon(a, grip, w, F, out, run);
     }
+  }
+
+  /**
+   * Turn the weapon hand so what it holds is carried, not waved: a blade
+   * points ahead and down from the fist walking and trails low behind
+   * running; a staff stands upright. (The clips hold weapons up for a fight,
+   * which on the swinging arm stuck the sword out behind like a tail.)
+   */
+  private holdWeapon(a: Arm, grip: 'blade' | 'staff', w: number, F: Vector3, out: Vector3, run: number) {
+    const slot = this.slot;
+    if (!slot) return;
+    refreshChain(slot);
+    const fa = a.wrist.absolutePosition.subtract(a.lower.absolutePosition).normalize();
+    let D: Vector3;
+    if (grip === 'staff') D = UP.scale(0.93).add(F.scale(0.3)).add(out.scale(0.06)).normalize();
+    else {
+      const f = F.subtract(fa.scale(Vector3.Dot(F, fa)));
+      if (f.lengthSquared() < 1e-4) f.copyFrom(F);
+      f.normalize();
+      const carry = f.scale(0.65).add(fa.scale(0.75)).add(out.scale(0.15)).normalize();
+      const trail = F.scale(-0.75).add(UP.scale(-0.4)).add(out.scale(0.55)).normalize();
+      D = Vector3.Lerp(carry, trail, smooth(0.2, 0.8, run)).normalize();
+    }
+    // point the tip (the slot's +Y)
+    const m = slot.getWorldMatrix();
+    const Y = Vector3.TransformNormal(Vector3.Up(), m).normalize();
+    const axis = Vector3.Cross(Y, D);
+    const s = axis.length();
+    if (s > 1e-5) rotateWorld(a.wrist, axis.scaleInPlace(1 / s), Math.atan2(s, Vector3.Dot(Y, D)) * w * AIM_SIGN);
+    refreshChain(slot);
+    // edge down, flat to the side: the guard (the slot's X) upright, whichever way is nearer
+    const X = Vector3.TransformNormal(Vector3.Right(), slot.getWorldMatrix());
+    const Xp = X.subtract(D.scale(Vector3.Dot(X, D)));
+    const Xd = UP.subtract(D.scale(Vector3.Dot(UP, D)));
+    if (Xp.lengthSquared() < 1e-6 || Xd.lengthSquared() < 1e-6) return;
+    Xp.normalize();
+    Xd.normalize();
+    if (Vector3.Dot(Xp, Xd) < 0) Xd.scaleInPlace(-1);
+    const roll = Math.atan2(Vector3.Dot(Vector3.Cross(Xp, Xd), D), Vector3.Dot(Xp, Xd));
+    rotateWorld(a.wrist, D, roll * w * AIM_SIGN);
   }
 }
 
@@ -830,7 +952,7 @@ export function aimBone(bone: TransformNode, child: TransformNode, target: Vecto
 }
 
 /** Which way Matrix.RotationAxis turns about a cross product (handedness), found once. */
-const AIM_SIGN = (() => {
+export const AIM_SIGN = (() => {
   const from = new Vector3(1, 0, 0);
   const to = new Vector3(0, 1, 0);
   const r = Vector3.TransformNormal(from, Matrix.RotationAxis(Vector3.Cross(from, to).normalize(), Math.PI / 2));
