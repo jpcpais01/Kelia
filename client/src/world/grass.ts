@@ -31,6 +31,7 @@ import { drawFirst } from './drawOrder';
 import { TOON_FOG_GLSL, TOON_FOG_UNIFORMS, bindToonFog, toon } from './toon';
 import { PLAZA } from './village';
 import { WORLD_LIGHT_GLSL, worldLight } from './worldLight';
+import { CONTACT_FUNCS_GLSL, CONTACT_GLSL, CONTACT_UNIFORMS, CONTACT_VALUES } from './contact';
 
 type RGB = [number, number, number];
 interface Colourway {
@@ -161,9 +162,12 @@ varying vec3 vN;
 varying vec4 vTint;
 uniform sampler2D kLightMap;
 uniform sampler2D kBounceMap;
+uniform sampler2D kDetailMap;
 uniform vec4 toonGI;
 uniform vec4 toonGIShadow;
 ${WORLD_LIGHT_GLSL}
+${CONTACT_GLSL}
+${CONTACT_FUNCS_GLSL}
 #ifdef GSHADOW
 uniform mat4 lightMatrix;
 varying vec4 vLightPos;
@@ -356,6 +360,9 @@ void main(void) {
   vRoot = groundGrass(wp, sp);
   // baked sky visibility and canopy at the tuft (blades sit within a few cm of the ground)
   vGI = kWorldLight(wpos);
+  // characters standing in the grass shade the blades around their feet
+  float cOcc = 1.0 - kContact(wpos, vec3(0.0, 1.0, 0.0));
+  vGI.xy *= vec2(1.0 - toonOccK.x * cOcc, 1.0 - toonOccK.y * cOcc);
 #ifdef GSHADOW
   vLightPos = lightMatrix * vec4(wpos, 1.0);
 #endif
@@ -1060,8 +1067,8 @@ export class Grass {
     const sg = this.atmosphere.shadows;
     const mat = new ShaderMaterial(name + 'Mat', this.scene, 'keliaGrass', {
       attributes: ['position', 'normal', 'uv', 'color', 'grassInst'],
-      uniforms: ['viewProjection', 'field', 'shape', 'look', 'camPos', 'pxScale', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo', 'toonGI', 'toonGIShadow'],
-      samplers: ['heightTex', 'splatTex', 'detailTex', 'bloomA', 'bloomB', 'shadowTex', 'kLightMap', 'kBounceMap'],
+      uniforms: ['viewProjection', 'field', 'shape', 'look', 'camPos', 'pxScale', 'wind', 'pushers', 'sunDir', 'sunColor', 'ambientColor', ...TOON_FOG_UNIFORMS, 'tipColor', 'dryColor', 'grassA', 'grassB', 'grassDry', 'forestCol', 'lightMatrix', 'shadowInfo', 'toonGI', 'toonGIShadow', ...CONTACT_UNIFORMS],
+      samplers: ['heightTex', 'splatTex', 'detailTex', 'bloomA', 'bloomB', 'shadowTex', 'kLightMap', 'kBounceMap', 'kDetailMap'],
       defines: sg ? ['GSHADOW'] : [],
     });
     if (sg) {
@@ -1081,6 +1088,7 @@ export class Grass {
     mat.setTexture('bloomB', this.bloomB);
     if (worldLight.map) mat.setTexture('kLightMap', worldLight.map);
     if (worldLight.bounce) mat.setTexture('kBounceMap', worldLight.bounce);
+    if (worldLight.detail) mat.setTexture('kDetailMap', worldLight.detail);
     mat.setColor3('tipColor', Color3.FromHexString('#c4e46a').toLinearSpace());
     mat.setColor3('dryColor', Color3.FromHexString('#e2d77a').toLinearSpace());
     for (const k of ['grassA', 'grassB', 'grassDry', 'forestCol'] as const) mat.setColor3(k, Color3.FromArray(GROUND[k]));
@@ -1139,6 +1147,7 @@ export class Grass {
       bindToonFog(m);
       m.setVector4('toonGI', worldLight.strength);
       m.setVector4('toonGIShadow', worldLight.shadow);
+      for (const k of CONTACT_UNIFORMS) m.setVector4(k, CONTACT_VALUES[k]);
       if (sg) {
         m.setMatrix('lightMatrix', sg.getTransformMatrix());
         m.setVector4('shadowInfo', this.shadowV.set(toon.sunDir.w, sg.frustumEdgeFalloff, 0, 0));

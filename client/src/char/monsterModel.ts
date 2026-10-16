@@ -30,6 +30,7 @@ import { Animator, measureStride } from './animator';
 import type { RigLibrary } from './library';
 import { spring, stepSpring } from './spring';
 import { CHARACTER_HEIGHT } from './model';
+import { trackContact } from '../world/contact';
 
 const LOCO = { idle: 'Idle', walk: 'Walking_D_Skeletons', run: 'Running_A' };
 const strideCache = new WeakMap<RigLibrary, Record<string, number>>();
@@ -83,6 +84,7 @@ export class MonsterModel {
   constructor(scene: Scene, lib: RigLibrary, readonly def: MonsterDef, name: string) {
     this.root = new TransformNode(name, scene);
     perf.tag(this.root, 'characters');
+    trackContact(this.root, def.radius * 0.85, CHARACTER_HEIGHT * def.scale);
     this.body = new TransformNode(name + '_body', scene);
     this.body.parent = this.root;
     const wanted = new Set(def.parts);

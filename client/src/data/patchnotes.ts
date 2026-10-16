@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T02:25:00Z',
+    title: 'Deeper light and shade',
+    lines: ["Shade now looks like shade: the side turned away from the sun sits a clear, cool step darker, lit only by the blue sky, and faces that barely catch the sun fall off gently instead of all glowing the same. Heroes and monsters finally stand on the ground: a soft contact shadow pools under their feet, darkens the grass around them and falls on anyone standing close. Walls, fences, crates, rocks and tree trunks get a fine dark crease where they meet the earth. The distant haze is thinner and bluer, so far mountains turn blue with distance instead of washing out to grey, and keep their sunlit and shaded sides; sunsets keep their warm glow."],
+  },
+  {
     at: '2026-10-16T02:20:00Z',
     title: 'Finer grass and real wildflowers',
     lines: ['Meadows are woven from far finer grass: close to you every patch is a thick carpet of slim blades, five or so to a clump, that grow out of the colour of the soil, thin out and shorten softly where the meadow meets sand or a path, and stay delicate all the way to the horizon. The wildflowers are rebuilt too: smaller, rounder daisies with a raised heart, buttercups and poppies that open as real cups, bellflowers that hang in little clusters with a shadowed inside, and lupins packed with folded florets. Petals now catch the sun and glow when it shines through them, and flowers grow in drifts that are densest at their hearts and fade out at the edges, with their colours carrying on through the grass into the distance.'],
