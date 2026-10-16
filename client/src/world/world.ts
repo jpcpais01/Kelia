@@ -23,6 +23,7 @@ import { registerToon, toonOf } from './toon';
 const AUTO_KEY_DAY = -1.55;
 const AUTO_KEY_NIGHT = -5.2;
 import { bakeWorldLight, createWorldLight, worldLight } from './worldLight';
+import { updateContacts } from './contact';
 import { WORLD_HALF } from '@kelia/shared';
 import { setOutlines } from '../char/style';
 
@@ -147,7 +148,9 @@ export class World {
       // inside the world, not tiny (lamp glows), not the far mountain ranges
       return Math.max(w.x, w.y, w.z) > 0.6 && w.y < 60 && Math.abs(b.centerWorld.x) < WORLD_HALF && Math.abs(b.centerWorld.z) < WORLD_HALF;
     });
-    bakeWorldLight(this.data.heightmap, this.data.splat, solids, this.foliage.occluders());
+    // trunks and other narrow standing things (tree colliders), for the fine contact creases
+    const posts = this.foliage.colliders.map((c) => ({ x: c.x, z: c.z, r: c.r * 0.7, h: 2.2 }));
+    bakeWorldLight(this.data.heightmap, this.data.splat, solids, this.foliage.occluders(), posts);
     console.info(`[kelia] world light baked in ${(performance.now() - t0).toFixed(0)} ms (${solids.length} solid meshes)`);
   }
 
@@ -170,6 +173,7 @@ export class World {
     const lead = this.quality.shadowDistance * 0.25;
     this.atmosphere.shadowFocus.set(focus.x + fwd.x * lead, focus.y, focus.z + fwd.z * lead);
     this.atmosphere.update(dt, this.camera);
+    updateContacts(cam);
     perf.end('sky');
     perf.begin('terrain');
     this.terrain.update(cam);

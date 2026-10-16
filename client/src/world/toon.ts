@@ -23,6 +23,7 @@ import {
   type ShaderMaterial,
   type UniformBuffer,
 } from '@babylonjs/core';
+import { CONTACT_FUNCS_GLSL, CONTACT_FUNCS_WGSL, CONTACT_UNIFORMS, CONTACT_VALUES } from './contact';
 import { WORLD_LIGHT_GLSL, WORLD_LIGHT_WGSL, worldLight } from './worldLight';
 
 /** Lighting state for the whole frame, written by Atmosphere.update(). */
@@ -43,12 +44,13 @@ export const toon = {
   fog2: new Vector4(0.012, 0, 0.8, 0.96),
   /** rgb = fog colour looking toward the sun. */
   fogSun: new Vector4(1, 0.9, 0.7, 0),
-  /** xyz = sun direction used for the fog glow. */
+  /** xyz = sun direction used for the fog glow, w = how blue distance turns (0..1). */
   fogDir: new Vector4(0, 1, 0, 0),
 };
 
-const UNIFORMS = ['toonSunDir', 'toonSun', 'toonSky', 'toonGround', 'toonShade', 'toonFog', 'toonFog2', 'toonFogSun', 'toonFogDir', 'toonGI', 'toonGIShadow'] as const;
+const UNIFORMS = ['toonSunDir', 'toonSun', 'toonSky', 'toonGround', 'toonShade', 'toonFog', 'toonFog2', 'toonFogSun', 'toonFogDir', 'toonGI', 'toonGIShadow', ...CONTACT_UNIFORMS] as const;
 const VALUES: Record<(typeof UNIFORMS)[number], Vector4> = {
+  ...CONTACT_VALUES,
   toonSunDir: toon.sunDir,
   toonSun: toon.sun,
   toonSky: toon.sky,
@@ -61,20 +63,27 @@ const VALUES: Record<(typeof UNIFORMS)[number], Vector4> = {
   toonGI: worldLight.strength,
   toonGIShadow: worldLight.shadow,
 };
-const SAMPLERS = ['kLightMap', 'kBounceMap'];
+const SAMPLERS = ['kLightMap', 'kBounceMap', 'kDetailMap'];
 
 const FUNCS_GLSL = /* glsl */ `
 ${WORLD_LIGHT_GLSL}
+${CONTACT_FUNCS_GLSL}
+// The lit side keeps a little form: faces turned only slightly toward the sun
+// sit a step darker than those facing it, so cliffs and rocks don't go flat.
+float kRamp(float ndl) {
+  return 1.0 + 0.12 * smoothstep(0.5, 0.7, ndl) - 0.2 * (1.0 - smoothstep(0.0, 0.45, ndl));
+}
 vec3 kToon(vec3 albedo, vec3 N, vec3 V, float sh, vec3 emis, vec3 P) {
   vec3 L = toonSunDir.xyz;
   float ndl = dot(N, L);
   float soft = toonShade.w;
   vec3 gi = kWorldLight(P);
-  float lit = smoothstep(-soft, soft, ndl) * mix(1.0, sh, toonSunDir.w) * gi.y;
+  float cv = 1.0 - kContact(P, N);
+  float lit = smoothstep(-soft, soft, ndl) * mix(1.0, sh, toonSunDir.w) * gi.y * (1.0 - toonOccK.y * cv);
   float up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 amb = mix(toonGround.rgb * kBounce, toonSky.rgb, up) * gi.x * mix(vec3(1.0), vec3(0.82, 1.04, 0.78), gi.z);
+  vec3 amb = mix(toonGround.rgb * kBounce, toonSky.rgb, up) * gi.x * mix(vec3(1.0), vec3(0.82, 1.04, 0.78), gi.z) * (1.0 - toonOccK.x * cv);
   vec3 dark = amb * toonShade.rgb;
-  vec3 light = dark + toonSun.rgb * lit * (1.0 + 0.12 * smoothstep(0.5, 0.7, ndl));
+  vec3 light = dark + toonSun.rgb * lit * kRamp(ndl);
   vec3 col = albedo * light;
   float nv = clamp(dot(N, V), 0.0, 1.0);
   float rim = smoothstep(0.6, 0.95, 1.0 - nv) * toonSky.w * toonMat.y;
@@ -110,10 +119,11 @@ vec3 kToonChar(vec3 albedo, vec3 N0, vec3 V, float sh, vec3 emis, vec3 P) {
   float ndl = dot(N, L);
   float soft = toonShade.w + skin * 0.2 + bone * 0.05;
   vec3 gi = kWorldLight(P);
-  float shd = mix(1.0, sh, toonSunDir.w * (1.0 - 0.45 * skin)) * gi.y;
+  float cv = 1.0 - kContact(P, N0);
+  float shd = mix(1.0, sh, toonSunDir.w * (1.0 - 0.45 * skin)) * gi.y * (1.0 - toonOccK.y * cv);
   float lit = smoothstep(-soft, soft, ndl + skin * 0.2) * shd;
   float up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 amb = mix(toonGround.rgb * kBounce, toonSky.rgb, up) * gi.x * mix(vec3(1.0), vec3(0.86, 1.03, 0.82), gi.z);
+  vec3 amb = mix(toonGround.rgb * kBounce, toonSky.rgb, up) * gi.x * mix(vec3(1.0), vec3(0.86, 1.03, 0.82), gi.z) * (1.0 - toonOccK.x * cv);
   // skin shadows are rosy, bone shadows cold
   vec3 tint = toonShade.rgb;
   tint *= mix(vec3(1.0), vec3(1.25, 0.95, 0.9), skin);
@@ -175,7 +185,10 @@ vec3 kFog(vec3 col, vec3 P, vec3 E) {
   float dy = d.y * k;
   float integ = abs(dy) > 0.0005 ? (1.0 - exp(-dy)) / dy : 1.0;
   float od = toonFog.w * dist * exp(-k * max(E.y - toonFog2.y, -40.0)) * integ;
-  float amt = min(1.0 - exp(-max(od, 0.0)), toonFog2.w);
+  // aerial perspective: blue light scatters most, so distance first turns
+  // things blue and only much later washes them out (toonFogDir.w = how blue)
+  vec3 ext = vec3(1.0) - vec3(0.42, 0.2, 0.0) * toonFogDir.w;
+  vec3 amt = min(vec3(1.0) - exp(-max(od, 0.0) * ext), vec3(toonFog2.w));
   float sunA = pow(max(dot(dir, toonFogDir.xyz), 0.0), 6.0);
   vec3 fc = mix(toonFog.rgb, toonFogSun.rgb, sunA * toonFog2.z);
   return mix(col, fc, amt);
@@ -184,16 +197,21 @@ vec3 kFog(vec3 col, vec3 P, vec3 E) {
 
 const FUNCS_WGSL = /* wgsl */ `
 ${WORLD_LIGHT_WGSL}
+${CONTACT_FUNCS_WGSL}
+fn kRamp(ndl: f32) -> f32 {
+  return 1.0 + 0.12 * smoothstep(0.5, 0.7, ndl) - 0.2 * (1.0 - smoothstep(0.0, 0.45, ndl));
+}
 fn kToon(albedo: vec3f, N: vec3f, V: vec3f, sh: f32, emis: vec3f, P: vec3f) -> vec3f {
   let L = uniforms.toonSunDir.xyz;
   let ndl = dot(N, L);
   let soft = uniforms.toonShade.w;
   let gi = kWorldLight(P);
-  let lit = smoothstep(-soft, soft, ndl) * mix(1.0, sh, uniforms.toonSunDir.w) * gi.y;
+  let cv = 1.0 - kContact(P, N);
+  let lit = smoothstep(-soft, soft, ndl) * mix(1.0, sh, uniforms.toonSunDir.w) * gi.y * (1.0 - uniforms.toonOccK.y * cv);
   let up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  let amb = mix(uniforms.toonGround.rgb * kBounce, uniforms.toonSky.rgb, up) * gi.x * mix(vec3f(1.0), vec3f(0.82, 1.04, 0.78), gi.z);
+  let amb = mix(uniforms.toonGround.rgb * kBounce, uniforms.toonSky.rgb, up) * gi.x * mix(vec3f(1.0), vec3f(0.82, 1.04, 0.78), gi.z) * (1.0 - uniforms.toonOccK.x * cv);
   let dark = amb * uniforms.toonShade.rgb;
-  let light = dark + uniforms.toonSun.rgb * lit * (1.0 + 0.12 * smoothstep(0.5, 0.7, ndl));
+  let light = dark + uniforms.toonSun.rgb * lit * kRamp(ndl);
   var col = albedo * light;
   let nv = clamp(dot(N, V), 0.0, 1.0);
   let rim = smoothstep(0.6, 0.95, 1.0 - nv) * uniforms.toonSky.w * uniforms.toonMat.y;
@@ -225,10 +243,11 @@ fn kToonChar(albedo: vec3f, N0: vec3f, V: vec3f, sh: f32, emis: vec3f, P: vec3f)
   let ndl = dot(N, L);
   let soft = uniforms.toonShade.w + skin * 0.2 + bone * 0.05;
   let gi = kWorldLight(P);
-  let shd = mix(1.0, sh, uniforms.toonSunDir.w * (1.0 - 0.45 * skin)) * gi.y;
+  let cv = 1.0 - kContact(P, N0);
+  let shd = mix(1.0, sh, uniforms.toonSunDir.w * (1.0 - 0.45 * skin)) * gi.y * (1.0 - uniforms.toonOccK.y * cv);
   let lit = smoothstep(-soft, soft, ndl + skin * 0.2) * shd;
   let up = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
-  let amb = mix(uniforms.toonGround.rgb * kBounce, uniforms.toonSky.rgb, up) * gi.x * mix(vec3f(1.0), vec3f(0.86, 1.03, 0.82), gi.z);
+  let amb = mix(uniforms.toonGround.rgb * kBounce, uniforms.toonSky.rgb, up) * gi.x * mix(vec3f(1.0), vec3f(0.86, 1.03, 0.82), gi.z) * (1.0 - uniforms.toonOccK.x * cv);
   var tint = uniforms.toonShade.rgb;
   tint *= mix(vec3f(1.0), vec3f(1.25, 0.95, 0.9), skin);
   tint *= mix(vec3f(1.0), vec3f(0.8, 0.88, 1.15), bone);
@@ -280,7 +299,8 @@ fn kFog(col: vec3f, P: vec3f, E: vec3f) -> vec3f {
   var integ = 1.0;
   if (abs(dy) > 0.0005) { integ = (1.0 - exp(-dy)) / dy; }
   let od = uniforms.toonFog.w * dist * exp(-k * max(E.y - uniforms.toonFog2.y, -40.0)) * integ;
-  let amt = min(1.0 - exp(-max(od, 0.0)), uniforms.toonFog2.w);
+  let ext = vec3f(1.0) - vec3f(0.42, 0.2, 0.0) * uniforms.toonFogDir.w;
+  let amt = min(vec3f(1.0) - exp(-max(od, 0.0) * ext), vec3f(uniforms.toonFog2.w));
   let sunA = pow(max(dot(dir, uniforms.toonFogDir.xyz), 0.0), 6.0);
   let fc = mix(uniforms.toonFog.rgb, uniforms.toonFogSun.rgb, sunA * uniforms.toonFog2.z);
   return mix(col, fc, amt);
@@ -390,6 +410,7 @@ export class ToonPlugin extends MaterialPluginBase {
     ubo.updateFloat4('toonMat', this.translucency, this.rim, this.spec, this.metal);
     if (worldLight.map) ubo.setTexture('kLightMap', worldLight.map);
     if (worldLight.bounce) ubo.setTexture('kBounceMap', worldLight.bounce);
+    if (worldLight.detail) ubo.setTexture('kDetailMap', worldLight.detail);
   }
 
   getCustomCode(shaderType: string, lang?: ShaderLanguage): Record<string, string> | null {
