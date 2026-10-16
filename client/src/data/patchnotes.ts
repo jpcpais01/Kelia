@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T08:40:00Z',
+    title: 'Smoother walking and swings',
+    lines: ["Fixed heroes looking glitchy when walking and fighting. Standing still, your hero no longer stands twisted to one side: they face forward, upright, with both feet planted side by side. Walking, the sword is carried pointing ahead and down instead of sticking out behind you, and a staff is held upright. Swings no longer fold the body in half or flip it sideways at the end of a slash. When an attack turns you to face your aim, your feet turn with you instead of twisting your legs round each other. A lunge now takes a step or two instead of a flurry of tiny ones."],
+  },
+  {
     at: '2026-10-16T08:20:00Z',
     title: 'Outfits with real detail',
     lines: ["Outfits get a detail pass. The Northman's mantle is now layered fur, with dark under-fur, shaggy tufts over the shoulders and a fur collar, and fur boots get shaggy cuffs. Skirts, robes and capes have deeper folds that catch the light, with shadow in the hollows. Metal plates and pauldrons shine toward the top. Belts have proper buckles and leather pouches with flaps. The Wanderer's scarf is wrapped twice and knotted, with its ends hanging over the chest, and their tunic has a buttoned placket."],

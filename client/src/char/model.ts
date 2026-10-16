@@ -42,7 +42,7 @@ import { setToon } from '../world/toon';
 import { trackContact } from '../world/contact';
 import { INK, InkScaler, inkCharacter, inkFor } from './style';
 import { spring, stepSpring } from './spring';
-import { Gait } from './gait';
+import { AIM_SIGN, Gait, refreshChain, rotateWorld } from './gait';
 import { SecondaryMotion } from './secondary';
 
 export interface Look {
@@ -548,9 +548,11 @@ export class CharacterModel {
       const t = ph.t;
       const lerp = (a: number, b: number, k: number) => a + (b - a) * Math.max(0, Math.min(1, k));
       // [wind-up lean, strike lean, plant] per style
-      const [back, through, plant] = ph.style === 'strike' ? [-0.09, 0.22, 0.1] : ph.style === 'release' ? [0.05, -0.1, 0.035] : [-0.05, 0.12, 0.05];
-      const coil = ph.style === 'strike' ? 0.28 : 0.15;
-      const drive = ph.style === 'strike' ? 0.42 : 0.2;
+      // (kept small: on the tall hero the clips already bend a long way, and
+      // more on top folded the body in half)
+      const [back, through, plant] = ph.style === 'strike' ? [-0.05, 0.12, 0.05] : ph.style === 'release' ? [0.03, -0.06, 0.02] : [-0.03, 0.07, 0.03];
+      const coil = ph.style === 'strike' ? 0.1 : 0.06;
+      const drive = ph.style === 'strike' ? 0.16 : 0.08;
       if (t < ph.strikeAt) {
         const k = smoothstep(t / Math.max(1e-3, ph.strikeAt));
         gain = coil * k;
@@ -598,15 +600,33 @@ export class CharacterModel {
     }
     const pitch = this.pitch.x;
     const twist = this.twist.x;
-    if (Math.abs(pitch) < 1e-3 && Math.abs(twist) < 1e-3) return;
     const ry = this.root.rotation.y;
     const right = new Vector3(Math.cos(ry), 0, -Math.sin(ry));
     const up = Vector3.Up();
-    spine.rotate(right, pitch * 0.45, Space.WORLD);
-    chest.rotate(right, pitch * 0.55, Space.WORLD);
+    if (Math.abs(pitch) > 1e-3) {
+      spine.rotate(right, pitch * 0.45, Space.WORLD);
+      chest.rotate(right, pitch * 0.55, Space.WORLD);
+    }
     if (Math.abs(twist) > 1e-3) {
       spine.rotate(up, twist * 0.4, Space.WORLD);
       chest.rotate(up, twist * 0.6, Space.WORLD);
+    }
+    // never fold over: the attack clips bend a long way, and on the tall hero
+    // a swing's follow-through bowed the head down past the hips
+    // (measured chest to neck: the clips fold at the chest, not the waist)
+    const head = this.nodes.get('head');
+    if (!head || this.animator.actionLevel < 0.01) return;
+    const k = Math.min(1, this.animator.actionLevel * 1.5);
+    const MAX = 0.55;
+    for (const [n, share] of [[spine, 0.4], [chest, 1]] as const) {
+      refreshChain(head);
+      const d = head.getAbsolutePosition().subtract(chest.getAbsolutePosition());
+      const len = d.length();
+      const tilt = len > 1e-4 ? Math.acos(Math.max(-1, Math.min(1, d.y / len))) : 0;
+      if (tilt <= MAX) return;
+      const axis = Vector3.Cross(d, up);
+      if (axis.lengthSquared() < 1e-8) return;
+      rotateWorld(n, axis.normalize(), (tilt - MAX) * share * k * AIM_SIGN);
     }
   }
 
@@ -710,6 +730,8 @@ export class CharacterModel {
       armScale: { l: bow ? 0.55 : this.look.offhand ? 0.8 : 1, r: hasWeapon && !bow ? 0.75 : 1 },
       detail: near,
       lock: !air && !this.glideOn && an.fullLevel > 0.5 && !!an.phase(),
+      square: air || this.glideOn ? 0 : (an.locoGroup('idle')?.weight ?? 0),
+      grip: !hasWeapon || bow ? null : ITEMS[this.look.weapon!]?.mesh === 'w_staff' ? 'staff' : 'blade',
     });
   }
 
