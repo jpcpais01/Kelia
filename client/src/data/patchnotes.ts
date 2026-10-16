@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T02:06:00Z',
+    title: 'Softer, fuller tree crowns',
+    lines: ["Tree crowns no longer break up into a jagged speckle against the sky. On High and Ultra their edges are now smoothed by the graphics card itself, so they stay clean and still as you move, and trees farther than a stone's throw away swap their tiny painted leaves for bolder, fuller clumps with leafy edges, the way a painter simplifies a far-off wood. Oaks, birches, blossoms, pines and bushes all keep their own shapes. Also fixed: on Low and Medium the world could turn black in some browsers."],
+  },
+  {
     at: '2026-10-15T22:40:00Z',
     title: 'Bounced light is back',
     lines: ['The light that fills the world returns, now tested on every kind of graphics card: soft shade under tree crowns and at the foot of cliffs and walls, ground-tinted bounce light, and eyes that adjust as you walk from a dark wood into a sunny meadow.'],
