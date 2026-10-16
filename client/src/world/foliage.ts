@@ -29,7 +29,7 @@ import {
 } from '@kelia/shared';
 import type { QualitySettings } from '../core/quality';
 import type { Atmosphere } from './atmosphere';
-import { LEAF_CUTOFF, getLeafAtlas } from './leafAtlas';
+import { FAR_CELL_SHIFT, LEAF_CUTOFF, getLeafAtlas } from './leafAtlas';
 import { CARD_CORNER_KIND } from './meshgen';
 import { birch, blossom, broadleaf, buildHorizon, bush, pine, rock, type Built } from './trees';
 import { createShaderPlugin, type ShaderPlugin } from './shaderPlugin';
@@ -106,10 +106,35 @@ attribute cardCorner: vec2f;
 #endif
 `;
 
+// A leaf card that is small on screen shows its clump's bold painting (a
+// solid, softly shaded mass with a leafy rim) instead of the fine one, which
+// would only alias into speckle and holes. Each card picks its own switch
+// point (hashed from its centre), so a crown changes over gradually.
+const FAR = {
+  // card half-diagonal ÷ distance: switch somewhere between these (an oak's near cards turn bold from about 20 m to 30 m)
+  lo: '0.045',
+  hi: '0.075',
+  row0: FAR_CELL_SHIFT.row0.toFixed(5),
+  row1: FAR_CELL_SHIFT.row1.toFixed(5),
+  needleU: FAR_CELL_SHIFT.needleU.toFixed(5),
+  dv0: FAR_CELL_SHIFT.dv0.toFixed(5),
+  nu: FAR_CELL_SHIFT.needle[0].toFixed(5),
+  nv: FAR_CELL_SHIFT.needle[1].toFixed(5),
+};
+
 const WIND_GLSL = /* glsl */ `
+  float kSoft = 0.0;
 #ifdef KCARDS
   {
     float kS = length(finalWorld[0].xyz);
+    float kCL = length(cardCorner);
+    if (kCL > 0.0) {
+      vec3 kQ = fract(worldPos.xyz * vec3(0.1031, 0.1030, 0.0973) + 0.37);
+      kQ += dot(kQ, kQ.yzx + 33.33);
+      float kN = fract((kQ.x + kQ.y) * kQ.z);
+      float kAng = kCL * kS / max(distance(worldPos.xyz, vEyePosition.xyz), 0.5);
+      kSoft = step(kAng, mix(${FAR.lo}, ${FAR.hi}, kN));
+    }
     vec3 kRight = vec3(view[0][0], view[1][0], view[2][0]);
     vec3 kUp = vec3(view[0][1], view[1][1], view[2][1]);
     worldPos.xyz += (kRight * cardCorner.x + kUp * cardCorner.y) * kS;
@@ -141,6 +166,10 @@ const TINT_GLSL = /* glsl */ `
     if (uv.x > 0.5) kTint = mix(vec3(1.1, 1.0, 0.88), vec3(0.88, 0.93, 1.04), kH3.x) * (0.8 + 0.34 * kH3.y);
     else kTint = mix(vec3(1.07, 1.03, 0.84), vec3(0.9, 1.0, 1.07), kH3.x) * (0.88 + 0.22 * kH3.z);
     vColor.rgb *= kTint;
+    if (kSoft > 0.5) {
+      if (uv.y < ${FAR.row0}) vMainUV1.y += ${FAR.dv0};
+      else if (uv.y < ${FAR.row1} && uv.x < ${FAR.needleU}) vMainUV1 += vec2(${FAR.nu}, ${FAR.nv});
+    }
   }
 #endif
 `;
@@ -154,14 +183,27 @@ const TINT_WGSL = /* wgsl */ `
     if (vertexInputs.uv.x > 0.5) { kTint = mix(vec3f(1.1, 1.0, 0.88), vec3f(0.88, 0.93, 1.04), kH3.x) * (0.8 + 0.34 * kH3.y); }
     else { kTint = mix(vec3f(1.07, 1.03, 0.84), vec3f(0.9, 1.0, 1.07), kH3.x) * (0.88 + 0.22 * kH3.z); }
     vertexOutputs.vColor = vec4f(vertexOutputs.vColor.rgb * kTint, vertexOutputs.vColor.a);
+    if (kSoft > 0.5) {
+      if (vertexInputs.uv.y < ${FAR.row0}) { vertexOutputs.vMainUV1.y += ${FAR.dv0}; }
+      else if (vertexInputs.uv.y < ${FAR.row1} && vertexInputs.uv.x < ${FAR.needleU}) { vertexOutputs.vMainUV1 += vec2f(${FAR.nu}, ${FAR.nv}); }
+    }
   }
 #endif
 `;
 
 const WIND_WGSL = /* wgsl */ `
+  var kSoft: f32 = 0.0;
 #ifdef KCARDS
   {
     let kS = length(finalWorld[0].xyz);
+    let kCL = length(vertexInputs.cardCorner);
+    if (kCL > 0.0) {
+      var kQ = fract(worldPos.xyz * vec3f(0.1031, 0.1030, 0.0973) + vec3f(0.37));
+      kQ += dot(kQ, kQ.yzx + vec3f(33.33));
+      let kN = fract((kQ.x + kQ.y) * kQ.z);
+      let kAng = kCL * kS / max(distance(worldPos.xyz, scene.vEyePosition.xyz), 0.5);
+      kSoft = step(kAng, mix(${FAR.lo}, ${FAR.hi}, kN));
+    }
     let kRight = vec3f(scene.view[0][0], scene.view[1][0], scene.view[2][0]);
     let kUp = vec3f(scene.view[0][1], scene.view[1][1], scene.view[2][1]);
     worldPos = vec4f(worldPos.xyz + (kRight * vertexInputs.cardCorner.x + kUp * vertexInputs.cardCorner.y) * kS, worldPos.w);
@@ -179,6 +221,37 @@ const WIND_WGSL = /* wgsl */ `
   worldPos = vec4f(worldPos.x + kDisp.x * kSway * min(kH * 0.12, 1.2) * uniforms.windStrength, worldPos.y, worldPos.z + kDisp.y * kSway * min(kH * 0.12, 1.2) * uniforms.windStrength, worldPos.w);
   vertexOutputs.vPositionW = worldPos.xyz;
 `;
+
+// Leaf edges. With MSAA on (High/Ultra) the cards use alpha-to-coverage: the
+// atlas alpha is sharpened to a one-pixel ramp around the cutoff, and that
+// ramp becomes partial sample coverage, so crowns get smooth, stable edges
+// against the sky instead of stair-stepped, crawling ones. Without MSAA the
+// same cutoff is a plain alpha test. The material's own alpha test only drops
+// the clearly empty texels (so the ramp survives); the real cut happens here,
+// after the derivatives (WGSL wants them in uniform control flow).
+const CUT = LEAF_CUTOFF.toFixed(3);
+const EDGE_GLSL = /* glsl */ `
+#ifdef KCARDS
+  {
+    float kA = albedoTexture.a;
+    float kCov = clamp((kA - ${CUT}) / max(fwidth(kA), 0.0001) + 0.5, 0.0, 1.0);
+    if (foliageA2C < 0.5 && kA < ${CUT}) discard;
+    finalColor.a = mix(1.0, kCov, foliageA2C);
+  }
+#endif
+`;
+const EDGE_WGSL = /* wgsl */ `
+#ifdef KCARDS
+  {
+    let kA = albedoTexture.a;
+    let kCov = clamp((kA - ${CUT}) / max(fwidth(kA), 0.0001) + 0.5, 0.0, 1.0);
+    if (uniforms.foliageA2C < 0.5 && kA < ${CUT}) { discard; }
+    finalColor = vec4f(finalColor.rgb, mix(1.0, kCov, uniforms.foliageA2C));
+  }
+#endif
+`;
+/** The material's own alpha test: only texels no edge ramp can reach. */
+const PRE_CUT = 0.08;
 
 /** One drawable set: a source mesh whose thin-instance buffer never changes size. */
 interface Slot {
@@ -204,6 +277,8 @@ export class Foliage {
   private sources: { lods: Slot[]; shadow: Slot | null; mat: PBRMaterial; plugin: ShaderPlugin }[] = [];
   private totals: number[] = [];
   private q!: QualitySettings;
+  /** Leaf edges use alpha-to-coverage (MSAA is on). */
+  private a2c = false;
   private near: Chunk[] = [];
   private mid: Chunk[] = [];
   private far: Chunk[] = [];
@@ -282,18 +357,24 @@ export class Foliage {
         mat.albedoTexture = atlas;
         mat.useAlphaFromAlbedoTexture = true;
         mat.transparencyMode = PBRMaterial.PBRMATERIAL_ALPHATEST;
-        mat.alphaCutOff = LEAF_CUTOFF;
+        mat.alphaCutOff = PRE_CUT;
         mat.backFaceCulling = false;
       } else mat.backFaceCulling = true;
       // leaves glow when the sun is behind them; rocks get a crisp rim
       setToon(mat, t.cards ? { rim: 0.55, translucency: 0.6 } : { rim: 0.55, translucency: 0, spec: 0.15 });
       const plugin = createShaderPlugin(mat, {
         name: 'FoliageWind',
-        uniforms: { windParams: 'vec4', windStrength: 'float' },
+        uniforms: { windParams: 'vec4', windStrength: 'float', foliageA2C: 'float' },
         attributes: t.cards ? [CARD_CORNER_KIND] : [],
         defines: t.cards ? { KCARDS: true } : {},
-        glsl: { vertex: { CUSTOM_VERTEX_DEFINITIONS: CARD_DEFS_GLSL, CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_GLSL, CUSTOM_VERTEX_MAIN_END: TINT_GLSL } },
-        wgsl: { vertex: { CUSTOM_VERTEX_DEFINITIONS: CARD_DEFS_WGSL, CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_WGSL, CUSTOM_VERTEX_MAIN_END: TINT_WGSL } },
+        glsl: {
+          vertex: { CUSTOM_VERTEX_DEFINITIONS: CARD_DEFS_GLSL, CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_GLSL, CUSTOM_VERTEX_MAIN_END: TINT_GLSL },
+          fragment: { CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: EDGE_GLSL },
+        },
+        wgsl: {
+          vertex: { CUSTOM_VERTEX_DEFINITIONS: CARD_DEFS_WGSL, CUSTOM_VERTEX_UPDATE_WORLDPOS: WIND_WGSL, CUSTOM_VERTEX_MAIN_END: TINT_WGSL },
+          fragment: { CUSTOM_FRAGMENT_BEFORE_FRAGCOLOR: EDGE_WGSL },
+        },
       });
       plugin.values.windStrength = t.wind;
       freezeStatic(mat);
@@ -315,6 +396,12 @@ export class Foliage {
         m.thinInstanceSetBuffer('matrix', buf, 16, false);
         m.thinInstanceCount = 0;
         m.isVisible = false;
+        // leaf cards draw with alpha-to-coverage while MSAA is on (engine state, so on for these draws only)
+        if (t.cards && lod < 3) {
+          const engine = this.scene.getEngine() as unknown as { setAlphaToCoverage?: (on: boolean) => void };
+          m.onBeforeDrawObservable.add(() => engine.setAlphaToCoverage?.(this.a2c));
+          m.onAfterRenderObservable.add(() => engine.setAlphaToCoverage?.(false));
+        }
         return { mesh: m, buf, count: 0 };
       };
       const lods = [mk(0, `${t.id}_L0`), mk(1, `${t.id}_L1`), mk(2, `${t.id}_L2`)];
@@ -476,6 +563,8 @@ export class Foliage {
 
   applyQuality(q: QualitySettings) {
     this.q = q;
+    this.a2c = q.msaa > 1;
+    for (const src of this.sources) src.plugin.values.foliageA2C = this.a2c ? 1 : 0;
     this.lastKey = '';
     this.lastShadowCell = '';
   }

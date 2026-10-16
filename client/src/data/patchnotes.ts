@@ -10,6 +10,16 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T02:15:00Z',
+    title: 'Beaches, trails and mountains with real detail',
+    lines: ["The ground is no longer a flat colour. Sand along Mirror Lake and the Silverrun turns dark and wet at the water's edge, with a pale dried line and a broken line of washed-up weed above it, and the dry beach carries wind ripples, grains and the odd pebble. Trails are trodden pale down the middle with two worn ruts, gravel and stones kicked to the sides, scree gathers below the cliffs and fallen leaves litter the forest floor. The mountains now split into clear sunlit and shaded masses, with ridges catching the light and gullies falling into shade, so the peaks keep their shape through the haze even at noon."],
+  },
+  {
+    at: '2026-10-16T02:06:00Z',
+    title: 'Softer, fuller tree crowns',
+    lines: ["Tree crowns no longer break up into a jagged speckle against the sky. On High and Ultra their edges are now smoothed by the graphics card itself, so they stay clean and still as you move, and trees farther than a stone's throw away swap their tiny painted leaves for bolder, fuller clumps with leafy edges, the way a painter simplifies a far-off wood. Oaks, birches, blossoms, pines and bushes all keep their own shapes. Also fixed: on Low and Medium the world could turn black in some browsers."],
+  },
+  {
     at: '2026-10-15T22:40:00Z',
     title: 'Bounced light is back',
     lines: ['The light that fills the world returns, now tested on every kind of graphics card: soft shade under tree crowns and at the foot of cliffs and walls, ground-tinted bounce light, and eyes that adjust as you walk from a dark wood into a sunny meadow.'],

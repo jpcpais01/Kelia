@@ -30,7 +30,8 @@ const lin = (hex: string): [number, number, number] => {
 export const ROCK_COLOURS = {
   rockWarm: lin('#978a74'),
   rockCool: lin('#7c8796'),
-  snowCol: lin('#f2f6ff'),
+  // a touch below white so sunlit snow keeps its shading instead of clipping
+  snowCol: lin('#e6edf7'),
   mossCol: lin('#5f9a42'),
 };
 
@@ -54,10 +55,12 @@ ${ROCK_GLSL}
   vec3 kCol = mix(kRockCol, kGreenCol, kGreen);
   normalW = normalize(mix(kRockN, kNr, kGreen * 0.6));
   kCol = mix(kCol, snowCol * (0.95 + 0.06 * kD.r), kSnow);
-  // painterly distance: far ranges turn blue and soft-shaded before the fog
-  float kFar = smoothstep(700.0, 1700.0, distance(kP, vEyePosition.xyz)) * (1.0 - kSnow * 0.6);
-  kCol = mix(kCol, hazeCol * (0.9 + 0.2 * kCol), kFar * 0.55);
-  normalW = normalize(mix(normalW, vec3(0.0, 1.0, 0.0), kFar * 0.35));
+  // light and shadow masses (rock.ts) keep every buttress readable through the haze
+  kCol *= mix(vec3(1.0), kRockSun, 1.0 - kGreen * 0.5);
+  // painterly distance: the farthest ranges cool toward blue before the fog,
+  // keeping their chiselled faces so they still read as forms
+  float kFar = smoothstep(800.0, 1700.0, distance(kP, vEyePosition.xyz)) * (1.0 - kSnow * 0.6);
+  kCol = mix(kCol, hazeCol * (0.9 + 0.2 * kCol), kFar * 0.3);
   surfaceAlbedo = kCol;
 `;
 
@@ -74,9 +77,9 @@ ${ROCK_WGSL}
   var kCol = mix(kRockCol, kGreenCol, kGreen);
   normalW = normalize(mix(kRockN, kNr, kGreen * 0.6));
   kCol = mix(kCol, uniforms.snowCol * (0.95 + 0.06 * kD.r), kSnow);
-  let kFar = smoothstep(700.0, 1700.0, distance(kP, scene.vEyePosition.xyz)) * (1.0 - kSnow * 0.6);
-  kCol = mix(kCol, uniforms.hazeCol * (vec3f(0.9) + 0.2 * kCol), kFar * 0.55);
-  normalW = normalize(mix(normalW, vec3f(0.0, 1.0, 0.0), kFar * 0.35));
+  kCol = kCol * mix(vec3f(1.0), kRockSun, 1.0 - kGreen * 0.5);
+  let kFar = smoothstep(800.0, 1700.0, distance(kP, scene.vEyePosition.xyz)) * (1.0 - kSnow * 0.6);
+  kCol = mix(kCol, uniforms.hazeCol * (vec3f(0.9) + 0.2 * kCol), kFar * 0.3);
   surfaceAlbedo = kCol;
 `;
 
