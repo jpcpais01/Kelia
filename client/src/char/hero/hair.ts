@@ -8,12 +8,14 @@ import { Vector3 } from '@babylonjs/core';
 import { blend, Geo, lerp, one, smooth, type Weights } from './geo';
 import { CHIN_Y } from './face';
 import { chainWeights, type ChainJoints, type ChainName } from './chains';
-import { SW, uvOf, type Swatch } from './palette';
+import { SW, uvAlong, uvOf, type Swatch } from './palette';
 
 /** The scalp the hair sits on (an ellipsoid just outside the skull). */
 const C = new Vector3(0, 1.688, -0.012);
 const R = new Vector3(0.091, 0.122, 0.106);
 const DEG = Math.PI / 180;
+/** How far locks stand off the head at their tips (metres). */
+const VOLUME = 0.012;
 
 /** Point on the scalp: phi round the head (0 = front, + = the hero's left), theta up from the equator, off = extra radius. */
 export function scalp(phi: number, theta: number, off = 0): Vector3 {
@@ -65,7 +67,15 @@ function dynW(h: HairBuild, c: ChainName | undefined, p: Vector3, fade = 0.5): W
 function lock(h: HairBuild, pts: Vector3[], o: LockOpts) {
   if (h.skip.has(o.region)) return;
   const peak = o.peak ?? 0.25;
-  const sharp = o.sharp ?? 0.75;
+  const sharp = o.sharp ?? 0.95;
+  // volume: each lock lifts off the head more toward its tip (on the head it
+  // puffs out from the scalp, hanging below it out from the body's axis)
+  pts = pts.map((p, k) => {
+    const u = k / Math.max(1, pts.length - 1);
+    const d = p.y > 1.56 ? p.subtract(C).multiplyByFloats(1 / R.x, 1 / R.y, 1 / R.z) : new Vector3(p.x, 0, p.z - C.z);
+    if (d.lengthSquared() < 1e-8) return p;
+    return p.add(d.normalize().scale(VOLUME * Math.pow(u, 0.6) * (o.region === 'bang' ? 0.6 : 1)));
+  });
   const th = o.thick ?? 0.0085;
   h.g.ribbon(pts, {
     samples: 6,
@@ -74,7 +84,7 @@ function lock(h: HairBuild, pts: Vector3[], o: LockOpts) {
     thick: (s) => th * (s < peak ? 1 : lerp(1, 0.35, (s - peak) / (1 - peak))),
     normal: (_s, p) => p.subtract(C).multiplyByFloats(1 / R.x, 1 / R.y, 1 / R.z).normalize(),
     w: (_s, p) => dynW(h, o.dyn, p, o.fade),
-    uv: () => uvOf(o.color ?? SW.hair),
+    uv: (s) => uvAlong(o.color ?? SW.hair, s),
     cup: (s) => -(o.cup ?? 0.006) * Math.min(1, s * 4) * (1 - s * 0.5),
     n: 2.2,
   });
@@ -111,6 +121,20 @@ const hairlineOf = (front: number, side: number, back: number) => (phi: number) 
 
 /** A fan of locks: bangs over the forehead. */
 function bangs(h: HairBuild, list: { phi: number; len: number; curl?: number; w?: number }[], o: Partial<LockOpts> = {}) {
+  // a shadowed under-layer between the bangs, so they read as separate locks with depth
+  for (let i = 0; i + 1 < list.length; i++) {
+    const a = list[i];
+    const b = list[i + 1];
+    const phi = (a.phi + b.phi) / 2;
+    const len = Math.min(a.len, b.len) * 0.92;
+    const curl = ((a.curl ?? 0) + (b.curl ?? 0)) / 2;
+    const tipTh = lerp(26, -7, len);
+    lock(
+      h,
+      [scalp(phi * 0.5, 70, 0.0), scalp(phi * 0.85, 50, 0.05), scalp(phi + curl * 0.5, 30, 0.08), scalp(phi + curl, tipTh + 6, 0.09), scalp(phi + curl * 1.4, tipTh, 0.08)],
+      { width: 0.024, region: 'bang', peak: 0.4, sharp: 1.1, color: SW.hairDark, ...o },
+    );
+  }
   for (const b of list) {
     const tipTh = lerp(26, -7, b.len);
     const curl = b.curl ?? 0;
@@ -143,26 +167,37 @@ function sideLocks(h: HairBuild, endY: number, o: Partial<LockOpts> = {}, out = 
 /** Locks down the back of the head to `endY`, fanned from φ = 100° to 260°. */
 function backLocks(h: HairBuild, endY: number, count: number, o: Partial<LockOpts> = {}, flare = 0.12) {
   backChain(h, endY);
-  for (let i = 0; i < count; i++) {
-    const t = (i + 0.5) / count;
-    const phi = lerp(102, 258, t);
-    const pp = phi > 180 ? phi - 360 : phi;
-    const jitter = Math.sin(i * 12.9898) * 0.5;
-    const len = endY;
-    const pts = [scalp(pp, 70, 0.02), scalp(pp, 30, 0.07), scalp(pp, -10, 0.1)];
-    const nape = scalp(pp, -38 + jitter * 6, flare + 0.02);
+  const long = endY < scalp(180, -38, flare + 0.02).y - 0.04;
+  /** One lock's path at φ = `pp`, `inset` metres under the outer layer. */
+  const path = (pp: number, jitter: number, inset: number) => {
+    const k = 1 - inset;
+    const pts = [scalp(pp, 70, 0.02 - inset), scalp(pp, 30, 0.07 - inset), scalp(pp, -10, 0.1 - inset)];
+    const nape = scalp(pp, -38 + jitter * 6, flare + 0.02 - inset);
     pts.push(nape);
-    if (len < nape.y - 0.04) {
+    if (long) {
       // long hair: down the back, clear of the shoulders
       const s = Math.sin(pp * DEG);
       const xs = s * 0.11;
-      pts.push(new Vector3(xs * 1.15, lerp(nape.y, len, 0.35), -0.13 - Math.abs(s) * 0.02), new Vector3(xs * 1.25, lerp(nape.y, len, 0.7), -0.135), new Vector3(xs * 1.35 + jitter * 0.01, len, -0.13));
+      pts.push(
+        new Vector3(xs * 1.15, lerp(nape.y, endY, 0.35), (-0.13 - Math.abs(s) * 0.02) * k),
+        new Vector3(xs * 1.25, lerp(nape.y, endY, 0.7), -0.135 * k),
+        new Vector3(xs * 1.35 + jitter * 0.01, endY + inset, -0.13 * k),
+      );
     } else {
-      const tipTh = Math.asin(Math.max(-1, Math.min(1, (len - C.y) / R.y))) / DEG;
-      pts.push(scalp(pp, tipTh, flare + 0.06));
+      const tipTh = Math.asin(Math.max(-1, Math.min(1, (endY - C.y) / R.y))) / DEG;
+      pts.push(scalp(pp, tipTh + inset * 200, flare + 0.06 - inset));
     }
-    const long = len < nape.y - 0.04;
-    lock(h, pts, { width: long ? 0.046 : 0.04, region: long ? 'long' : 'back', peak: long ? 0.6 : 0.4, color: i % 3 === 1 ? SW.hairDark : SW.hair, dyn: 'hair.back', ...o });
+    return pts;
+  };
+  const phiOf = (t: number) => {
+    const phi = lerp(102, 258, t);
+    return phi > 180 ? phi - 360 : phi;
+  };
+  for (let i = 0; i < count; i++) {
+    const jitter = Math.sin(i * 12.9898) * 0.5;
+    lock(h, path(phiOf((i + 0.5) / count), jitter, 0), { width: long ? 0.046 : 0.04, region: long ? 'long' : 'back', peak: long ? 0.6 : 0.4, color: i % 3 === 1 ? SW.hairDark : SW.hair, dyn: 'hair.back', ...o });
+    // and a shadowed lock tucked under the seam to the next one
+    if (i + 1 < count) lock(h, path(phiOf((i + 1) / count), -jitter, 0.012), { width: long ? 0.036 : 0.03, region: long ? 'long' : 'back', peak: 0.45, color: SW.hairDark, dyn: 'hair.back', thick: 0.006, ...o });
   }
 }
 
@@ -265,8 +300,8 @@ export function buildHair(g: Geo, style: number, skip: LockRegion[] = [], soft =
         { phi: 56, len: 0.45, curl: 8 },
       ]);
       sideLocks(h, soft ? CHIN_Y + 0.0 : CHIN_Y + 0.045);
-      backLocks(h, soft ? 1.53 : 1.585, 9);
-      crown(h, 9, 0.04);
+      backLocks(h, soft ? 1.53 : 1.585, 11);
+      crown(h, 13, 0.05);
       break;
     }
     case 1: {

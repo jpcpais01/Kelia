@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T07:40:00Z',
+    title: 'Fuller hair, swinging skirts',
+    lines: ["Hair is fuller and layered: locks stand out from the head toward their tips, darker locks tucked between them give the hair depth, and every lock shades from deep roots to sunlit tips. Tousled hair has more spikes. Skirts, tunics and robes now hang from the hips and swing with your walk, sway as your hips turn, flare when you stop, and get pushed aside by your legs instead of moving stiffly with them."],
+  },
+  {
     at: '2026-10-16T06:55:00Z',
     title: 'Skeletons walk the walk',
     lines: ["The risen skeletons now use the heroes' new walking system: their feet plant on the ground and keep pace with how fast they move instead of sliding, they step up and down slopes, they shuffle round when they turn, and their feet stay put as they lunge into a swing. Their arms keep their own menacing pose."],

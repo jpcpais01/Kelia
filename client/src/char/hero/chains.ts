@@ -14,12 +14,19 @@ export const CHAINS = {
   'cape.l': { parent: 'chest', bones: 4, kind: 'cloth' },
   'cape.c': { parent: 'chest', bones: 4, kind: 'cloth' },
   'cape.r': { parent: 'chest', bones: 4, kind: 'cloth' },
+  'skirt.l': { parent: 'hips', bones: 3, kind: 'skirt' },
+  'skirt.f': { parent: 'hips', bones: 3, kind: 'skirt' },
+  'skirt.r': { parent: 'hips', bones: 3, kind: 'skirt' },
+  'skirt.b': { parent: 'hips', bones: 3, kind: 'skirt' },
 } as const;
 
 export type ChainName = keyof typeof CHAINS;
 
-/** Chains laid side by side as one sheet (held together across). */
-export const SHEETS: ChainName[][] = [['cape.l', 'cape.c', 'cape.r']];
+/** Chains laid side by side as one sheet (held together across; `wrap` closes it into a ring). */
+export const SHEETS: { chains: ChainName[]; wrap: boolean }[] = [
+  { chains: ['cape.l', 'cape.c', 'cape.r'], wrap: false },
+  { chains: ['skirt.l', 'skirt.f', 'skirt.r', 'skirt.b'], wrap: true },
+];
 
 /** Joint positions (rig space, one more than the chain has bones) per chain a look uses. */
 export type ChainJoints = Partial<Record<ChainName, Vector3[]>>;
@@ -79,10 +86,19 @@ export function chainWeights(c: ChainName, joints: Vector3[], p: Vector3, base: 
  * Weights on a sheet of chains: `col` runs 0..chains-1 across, `u` down (in
  * bones); the top edge (u below `pin`) stays on `base`.
  */
-export function sheetWeights(chains: ChainName[], col: number, u: number, base: Weights, pin = 0.3): Weights {
-  const cc = Math.max(0, Math.min(chains.length - 1, col));
-  const k = Math.min(chains.length - 2, Math.floor(cc));
-  const f = clamp01(cc - k);
-  const w = blend(tents(chains[k], u), tents(chains[k + 1], u), f);
+export function sheetWeights(chains: ChainName[], col: number, u: number, base: Weights, pin = 0.3, wrap = false): Weights {
+  const n = chains.length;
+  let k: number;
+  let f: number;
+  if (wrap) {
+    const cc = ((col % n) + n) % n;
+    k = Math.floor(cc);
+    f = cc - k;
+  } else {
+    const cc = Math.max(0, Math.min(n - 1, col));
+    k = Math.min(n - 2, Math.floor(cc));
+    f = clamp01(cc - k);
+  }
+  const w = blend(tents(chains[k], u), tents(chains[(k + 1) % n], u), f);
   return blend(base, w, smooth(0, pin, u));
 }

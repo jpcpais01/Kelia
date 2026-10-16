@@ -37,6 +37,14 @@ export function uvOf(s: Swatch): [number, number] {
   return [(s[1] + 0.5) / 16, 1 - (s[0] + 0.5) / 8];
 }
 
+/**
+ * Texture coordinates across a swatch, `t` 0..1 left to right (hair swatches
+ * are painted as a gradient: shadowed roots to sunlit tips).
+ */
+export function uvAlong(s: Swatch, t: number): [number, number] {
+  return [(s[1] + 0.14 + 0.72 * Math.max(0, Math.min(1, t))) / 16, 1 - (s[0] + 0.5) / 8];
+}
+
 /** Texture coordinates for a point of the face region (0..1 across, 0..1 down). */
 export function faceUV(fx: number, fy: number): [number, number] {
   return [0.5 + 0.5 * Math.max(0, Math.min(1, fx)), 1 - Math.max(0, Math.min(1, fy))];
@@ -94,9 +102,19 @@ export class HeroAtlas {
     };
     put(SW.skin, c.skin);
     put(SW.lips, shade(c.skin, 0.86));
-    put(SW.hair, c.hair);
-    put(SW.hairDark, shade(c.hair, 0.62));
-    put(SW.hairLight, shade(c.hair, 1.25, 18));
+    // hair: each swatch shades from the roots (left) to the tips (right); its centre is the plain colour
+    const ramp = (s: Swatch, k: number, add = 0) => {
+      const x = s[1] * CELL;
+      const g = ctx.createLinearGradient(x + CELL * 0.14, 0, x + CELL * 0.86, 0);
+      g.addColorStop(0, shade(c.hair, k * 0.7, add * 0.5));
+      g.addColorStop(0.5, shade(c.hair, k, add));
+      g.addColorStop(1, shade(c.hair, k * 1.13, add + 12));
+      ctx.fillStyle = g;
+      ctx.fillRect(x, s[0] * CELL, CELL, CELL);
+    };
+    ramp(SW.hair, 1);
+    ramp(SW.hairDark, 0.62);
+    ramp(SW.hairLight, 1.25, 18);
     put(SW.ink, '#1d1520');
     put(SW.white, '#f4f0ea');
     put(SW.fur, '#d9cdb8');
