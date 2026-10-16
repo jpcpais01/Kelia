@@ -26,7 +26,7 @@ import {
 } from '@babylonjs/core';
 import { BODY_TYPES, CLASSES, EYE_COLORS, HAIR_COLORS, ITEMS, SKIN_TONES, type Appearance, type ClassId } from '@kelia/shared';
 import { perf } from '../core/perf';
-import { Animator, measureStride } from './animator';
+import { Animator, measureStride, measureContactPhase } from './animator';
 import { createBow } from './bow';
 import { Glider, type GliderFit } from './glider';
 import { BUILDS } from './hero/body';
@@ -41,6 +41,7 @@ import { setToon } from '../world/toon';
 import { trackContact } from '../world/contact';
 import { INK, InkScaler, inkCharacter, inkFor } from './style';
 import { spring, stepSpring } from './spring';
+import { Gait } from './gait';
 
 export interface Look {
   appearance: Appearance;
@@ -196,7 +197,6 @@ export class CharacterModel {
   private lookYaw = 0;
   private lookPitch = 0;
   private lean = 0;
-  private hipDrop = 0;
   /** Rest rotations of the spine and chest (the base their motion is exaggerated from). */
   private torsoRest: [Quaternion | null, Quaternion | null] = [null, null];
   /** Body layer springs: forward lean and twist (radians), crouch (metres). */
@@ -206,7 +206,6 @@ export class CharacterModel {
   /** How much the clip's own torso motion is exaggerated right now (0 = as authored). */
   private torsoGain = 0;
   /** Running average of each thigh's animated rotation: the centre the stride swings around. */
-  private thighMean: [Quaternion | null, Quaternion | null] = [null, null];
   /** World-space point to look at (null = straight ahead). */
   lookTarget: Vector3 | null = null;
   /** Ground height sampler for foot IK (null disables IK). */
@@ -392,7 +391,7 @@ export class CharacterModel {
     this.animator = new Animator(groups, LOCO);
     this.animator.scale = s * bt.height;
     this.animator.cadence = CADENCE;
-    this.thighMean = [null, null];
+    this.gait = new Gait(this.nodes, this.root);
     this.applyStrides();
     if (prevAction) this.animator.play(prevAction, { loop: true });
     inkCharacter(this.meshes, { rim: this.showcase ? 2.1 : 1.3 });
@@ -447,6 +446,8 @@ export class CharacterModel {
           const g = this.animator.locoGroup(key);
           if (g) cache[key] = measureStride(g, fl, fr, rootNode);
         }
+        const walk = this.animator.locoGroup('walk');
+        if (walk) cache.contact = measureContactPhase(walk, fl, rootNode);
         // restart loops in phase
         for (const key of Object.keys(LOCO) as (keyof typeof LOCO)[]) {
           const g = this.animator.locoGroup(key);
@@ -455,7 +456,8 @@ export class CharacterModel {
       }
       strideCache.set(this.lib, cache);
     }
-    for (const [k, v] of Object.entries(cache)) this.animator.setStride(k as 'walk', v);
+    for (const [k, v] of Object.entries(cache)) if (k !== 'contact') this.animator.setStride(k as 'walk', v);
+    this.animator.contactPhase = cache.contact ?? 0;
   }
 
   setVisible(v: boolean) {
@@ -520,6 +522,9 @@ export class CharacterModel {
     this.body.rotation.z = this.lean;
     this.dt = dt;
     this.airspeed = speed;
+    this.vel.copyFrom(vel);
+    this.turnRate = turnRate;
+    this.animator.gaitPhase = this.gait?.cycle ?? null;
     this.updateGlide(dt);
     this.updateBodyLayer(dt);
     this.swayCape(dt, Math.max(0, localZ), Math.abs(localX));
@@ -573,6 +578,13 @@ export class CharacterModel {
   }
 
   private dt = 0.016;
+  private vel = new Vector3();
+  private turnRate = 0;
+  private gait: Gait | null = null;
+  /** The gait layer (tests read its trace). */
+  get gaitLayer() {
+    return this.gait;
+  }
 
   /**
    * Knock the body layer: `pitch` leans forward (negative: back), `twist`
@@ -682,10 +694,10 @@ export class CharacterModel {
     // layered pose: layering again would bend the torso a bit more every frame
     if (this.animator.posing) {
       this.applyArmDrop();
+      if (this.ikEnabled && this.groundAt && this.glideW < 0.5) this.applyGait();
       this.applyBodyLayer();
       this.applyLookAt();
       if (this.glideW > 0.001) this.applyGlidePose();
-      if (this.ikEnabled && this.groundAt && this.glideW < 0.5) this.applyFootIK();
     }
     if (this.glider) {
       const cam = this.scene.activeCamera;
@@ -742,6 +754,29 @@ export class CharacterModel {
     }
   }
 
+  /** Planted feet, hips, chest and arms while moving (see gait.ts); feet on the ground standing. */
+  private applyGait() {
+    const g = this.gait;
+    if (!g) return;
+    const an = this.animator;
+    const air = this.animator.airborne;
+    const cam = this.scene.activeCamera;
+    const near = !cam || Vector3.DistanceSquared(cam.globalPosition, this.root.position) < 45 * 45;
+    const hasWeapon = !!this.look.weapon;
+    const bow = !!this.look.weapon && ITEMS[this.look.weapon]?.mesh?.startsWith('bow:');
+    g.apply(this.dt, {
+      vel: this.vel,
+      ground: this.groundAt!,
+      allow: air || this.glideOn ? 0 : 1 - an.fullLevel,
+      arms: (1 - an.upperLevel) * (1 - an.fullLevel),
+      crouch: this.crouch.x,
+      calm: !air && this.airspeed < 0.05 && an.actionLevel < 0.02,
+      turnRate: this.turnRate,
+      armScale: { l: bow ? 0.55 : this.look.offhand ? 0.8 : 1, r: hasWeapon && !bow ? 0.75 : 1 },
+      detail: near,
+    });
+  }
+
   private applyLookAt() {
     const head = this.nodes.get('head');
     if (!head || !this.headRest) return;
@@ -782,92 +817,6 @@ export class CharacterModel {
     head.rotate(right, this.lookPitch, Space.WORLD);
     const chest = this.nodes.get('chest');
     if (chest) chest.rotate(up, this.lookYaw * 0.25, Space.WORLD);
-  }
-
-  private applyFootIK() {
-    const ground = this.groundAt!;
-    const rootY = this.root.position.y;
-    const legs: [string, string, string][] = [
-      ['upperleg.l', 'lowerleg.l', 'foot.l'],
-      ['upperleg.r', 'lowerleg.r', 'foot.r'],
-    ];
-    const rise = this.warpStride(legs);
-    const offsets: number[] = [];
-    const feet: Vector3[] = [];
-    for (const [, , f] of legs) {
-      const foot = this.nodes.get(f);
-      if (!foot) return;
-      foot.computeWorldMatrix(true);
-      const p = foot.getAbsolutePosition().clone();
-      feet.push(p);
-      const h = ground(p.x, p.z);
-      offsets.push(Math.max(-0.45, Math.min(0.45, h - rootY)));
-    }
-    // Lower the hips so the lower foot can reach its ground.
-    // (and to take back the height a longer stride lifts the planted foot by)
-    const drop = Math.min(0, offsets[0], offsets[1]) - rise - Math.max(-0.03, Math.min(0.16, this.crouch.x));
-    this.hipDrop += (drop - this.hipDrop) * (1 - Math.exp(-this.dt * 12));
-    const hips = this.nodes.get('hips');
-    if (hips && Math.abs(this.hipDrop) > 0.002) {
-      hips.computeWorldMatrix(true);
-      // hips local space is in model units under the scaled body
-      hips.position.y += this.hipDrop / this.body.scaling.y;
-    }
-    for (let i = 0; i < 2; i++) {
-      const target = feet[i].clone();
-      target.y += offsets[i] - rise;
-      if (Math.abs(offsets[i] - rise - this.hipDrop) < 0.01) continue;
-      this.solveLeg(legs[i], target);
-    }
-  }
-
-  /**
-   * Lengthen the stride by swinging each thigh further around its average
-   * pose, so a natural cadence still covers the ground. Returns how far that
-   * lifted the lower foot (metres), for the hips to sink back down.
-   */
-  private warpStride(legs: [string, string, string][]): number {
-    const gain = this.animator.strideGain;
-    const k = 1 - Math.exp(-this.dt / 0.45);
-    const before = this.lowestFoot(legs);
-    let warped = false;
-    for (let i = 0; i < 2; i++) {
-      const thigh = this.nodes.get(legs[i][0]);
-      const q = thigh?.rotationQuaternion;
-      if (!thigh || !q) continue;
-      let mean = this.thighMean[i];
-      if (!mean) mean = this.thighMean[i] = q.clone();
-      else Quaternion.SlerpToRef(mean, q, k, mean);
-      if (gain < 1.005) continue;
-      // delta = mean⁻¹·q, scaled in angle, re-applied on the mean
-      const delta = Quaternion.Inverse(mean).multiply(q);
-      if (delta.w < 0) delta.scaleInPlace(-1);
-      const half = Math.acos(Math.min(1, delta.w));
-      const sinHalf = Math.sin(half);
-      if (sinHalf < 1e-5) continue;
-      const nh = Math.min(half * gain, 1.2);
-      const f = Math.sin(nh) / sinHalf;
-      const scaled = new Quaternion(delta.x * f, delta.y * f, delta.z * f, Math.cos(nh));
-      mean.multiplyToRef(scaled, q);
-      warped = true;
-    }
-    if (!warped || before === null) return 0;
-    const after = this.lowestFoot(legs);
-    return after === null ? 0 : Math.max(0, Math.min(0.08, after - before));
-  }
-
-  /** World height of the lower foot, with its whole parent chain refreshed. */
-  private lowestFoot(legs: [string, string, string][]): number | null {
-    let low = Infinity;
-    for (const [, , f] of legs) {
-      const foot = this.nodes.get(f);
-      if (!foot) return null;
-      const chain: TransformNode[] = [];
-      for (let n: Node | null = foot; n; n = n.parent) if (n instanceof TransformNode) chain.push(n);
-      for (let j = chain.length - 1; j >= 0; j--) chain[j].computeWorldMatrix(true);
-      low = Math.min(low, foot.getAbsolutePosition().y);
-    }
-    return low;
   }
 
   /** Analytic two-bone IK in world space, bending in the leg's current plane. */

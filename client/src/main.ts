@@ -164,8 +164,27 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
   const glideH = Number(params.get('glide') ?? 0);
   if (glideH) for (const { c } of chars) c.root.position.y += glideH;
   const bank = Number(params.get('bank') ?? 0);
+  // &move=1 walks them for real (wrapping round after 14 m); window.charDrive(i, t)
+  // can script velocity and heading instead, for starts, stops and turns
+  const move = params.has('move');
+  let clock = 0;
+  const home = chars.map(({ c }) => c.root.position.clone());
   world.onUpdate((dt) => {
-    for (const { c, a } of chars) {
+    clock += dt;
+    const drive = (window as unknown as { charDrive?: (i: number, t: number) => { x: number; z: number; yaw?: number } | null }).charDrive;
+    for (const [i, { c, a }] of chars.entries()) {
+      if (!glideH && (move || drive)) {
+        const d = drive?.(i, clock);
+        const v = d ? new Vector3(d.x, 0, d.z) : a === 'walk' ? new Vector3(0, 0, -2.1) : a === 'run' ? new Vector3(0, 0, -5.4) : Vector3.Zero();
+        const prevYaw = c.root.rotation.y;
+        if (d?.yaw !== undefined) c.root.rotation.y = d.yaw;
+        c.root.position.x += v.x * dt;
+        c.root.position.z += v.z * dt;
+        if (Vector3.Distance(c.root.position, home[i]) > 14) c.root.position.copyFrom(home[i]);
+        c.root.position.y = world.groundAt(c.root.position.x, c.root.position.z);
+        c.update(dt, v, dt > 0 ? (c.root.rotation.y - prevYaw) / dt : 0, false);
+        continue;
+      }
       if (glideH) {
         c.glide(true, bank, params.has('dive'));
         c.update(dt, new Vector3(0, 0, -6.2), 0, true);
