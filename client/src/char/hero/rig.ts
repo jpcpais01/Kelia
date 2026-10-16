@@ -2,7 +2,7 @@
 // only key bone rotations (and the hips' position), so stretching the bones
 // keeps every animation, while the body goes from a chibi (head half the
 // height) to a ~7-head figure. Built in metres: the hero needs no scaling.
-import { Matrix, Quaternion, Vector3, type AssetContainer, type Skeleton, type TransformNode } from '@babylonjs/core';
+import { Matrix, Quaternion, Vector3, type Animation, type AnimationGroup, type AssetContainer, type Skeleton, type TransformNode } from '@babylonjs/core';
 
 /** Hips rest height in the KayKit clips, and the hip joint's height above the ground there. */
 const KAY_HIPS = 0.4056634306907654;
@@ -54,6 +54,8 @@ export interface HeroRest {
 export function stretchRig(c: AssetContainer, skeleton: Skeleton): HeroRest {
   const nodes = new Map<string, TransformNode>();
   for (const n of c.transformNodes) nodes.set(n.name, n);
+  const oldPos = new Map<string, Vector3>();
+  for (const [name, n] of nodes) oldPos.set(name, n.position.clone());
   for (const [name, b] of Object.entries(BONES)) {
     const n = nodes.get(name);
     if (!n) continue;
@@ -68,17 +70,46 @@ export function stretchRig(c: AssetContainer, skeleton: Skeleton): HeroRest {
 
   // the clips' hips track: same motion about the new rest, scaled to the longer legs
   const k = HERO_LEG / KAY_LEG;
+  const drop: [AnimationGroup, Animation][] = [];
   for (const g of c.animationGroups) {
     for (const ta of g.targetedAnimations) {
-      if ((ta.target as TransformNode)?.name !== 'hips' || ta.animation.targetProperty !== 'position') continue;
-      for (const key of ta.animation.getKeys()) {
+      const name = (ta.target as TransformNode)?.name;
+      if (ta.animation.targetProperty !== 'position' || !name) continue;
+      if (name === 'hips') {
+        for (const key of ta.animation.getKeys()) {
+          const v = key.value as Vector3;
+          key.value = new Vector3(v.x * k, HERO_HIPS + (v.y - KAY_HIPS) * k, v.z * k);
+        }
+        continue;
+      }
+      // Some clips also key where the limbs hang, mostly a constant chibi
+      // offset (a hip joint 10 cm forward and the like). Constant tracks go
+      // (they would pull the stretched joints out of place); moving ones keep
+      // their motion about the stretched joint.
+      const from = oldPos.get(name);
+      const to = nodes.get(name)?.position;
+      if (!from || !to) continue;
+      const keys = ta.animation.getKeys();
+      let spread = 0;
+      for (const key of keys) spread = Math.max(spread, Vector3.Distance(key.value as Vector3, keys[0].value as Vector3));
+      // (locomotion's limb shifts stand in for hips the chibi can't turn: the gait does that now)
+      if (spread < 0.01 || /^(Walking|Running)/.test(g.name)) {
+        drop.push([g, ta.animation]);
+        continue;
+      }
+      for (const key of keys) {
         const v = key.value as Vector3;
-        key.value = new Vector3(v.x * k, HERO_HIPS + (v.y - KAY_HIPS) * k, v.z * k);
+        key.value = to.add(v.subtract(from).scale(k));
       }
     }
   }
 
   // new bind pose = the stretched rest pose (parents come before children in bones[])
+  for (const [g, a] of drop) {
+    const i = g.targetedAnimations.findIndex((ta) => ta.animation === a);
+    if (i >= 0) g.targetedAnimations.splice(i, 1);
+  }
+
   const local = new Matrix();
   for (const bone of skeleton.bones) {
     const n = bone.getTransformNode();

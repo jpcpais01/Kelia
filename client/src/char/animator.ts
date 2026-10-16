@@ -114,6 +114,18 @@ export class Animator {
   private fading: Action[] = [];
   /** How much any action (full-body or upper) shapes the pose right now, 0..1. */
   actionLevel = 0;
+  /** How much a full-body action holds locomotion off, 0..1. */
+  fullLevel = 0;
+  /** How much an upper-body action owns the arms, 0..1. */
+  upperLevel = 0;
+  /**
+   * The procedural gait's cycle (0..1, left foot down at 0) while it walks
+   * the legs: the clips follow it so the upper body keeps step. Null: the
+   * clips keep their own clock.
+   */
+  gaitPhase: number | null = null;
+  /** Clip phase at which the left foot comes down (measured). */
+  contactPhase = 0;
   /** Smoothed planar speed (m/s) and local direction (x right, z forward). */
   private speed = 0;
   private dirX = 0;
@@ -404,8 +416,14 @@ export class Animator {
     // (below 1 in total, Babylon blends toward the rig's T-pose).
     const rest = 1 - actionFull;
     let level = this.action ? this.action.weight : 0;
-    for (const f of this.fading) level = Math.max(level, f.weight);
+    let upper = this.action?.upper ? this.action.weight : 0;
+    for (const f of this.fading) {
+      level = Math.max(level, f.weight);
+      if (f.upper) upper = Math.max(upper, f.weight);
+    }
     this.actionLevel = Math.max(0, Math.min(1, level));
+    this.upperLevel = Math.max(0, Math.min(1, upper));
+    this.fullLevel = Math.max(0, Math.min(1, actionFull));
     for (const [k, g] of this.loco) {
       const cur = this.locoW.get(k) ?? 0;
       const nw = cur + ((w[k] ?? 0) - cur) * (1 - Math.exp(-dt * 9));
@@ -420,6 +438,10 @@ export class Animator {
         const fps = g.targetedAnimations[0]?.animation.framePerSecond || 30;
         const dur = (g.to - g.from) / fps;
         g.speedRatio = cyclesPerSec * dur;
+        if (this.gaitPhase !== null && g.isPlaying) {
+          const ph = this.gaitPhase + this.contactPhase;
+          g.goToFrame(g.from + (ph - Math.floor(ph)) * (g.to - g.from));
+        }
       }
       // A clip with no weight left is paused instead of being sampled and
       // blended at 0.0001 every frame (most of a character's animation cost).
@@ -528,4 +550,27 @@ export function measureStride(group: AnimationGroup, footL: TransformNode, footR
   group.weight = Math.max(MIN_W, wasWeight);
   // Each foot sweeps (max-min) backwards while planted, once per loop, for each of two steps.
   return ((maxL - minL) + (maxR - minR));
+}
+
+/** Clip phase (0..1) at which `foot` is furthest forward: where it comes down. */
+export function measureContactPhase(group: AnimationGroup, foot: TransformNode, root: TransformNode): number {
+  const n = 32;
+  let best = -Infinity;
+  let at = 0;
+  const wasWeight = group.weight;
+  group.start(true, 1, group.from, group.to, false);
+  group.weight = 1;
+  const inv = root.getWorldMatrix().clone().invert();
+  for (let i = 0; i < n; i++) {
+    group.goToFrame(group.from + ((group.to - group.from) * i) / n);
+    foot.computeWorldMatrix(true);
+    const p = foot.getAbsolutePosition();
+    const z = p.x * inv.m[2] + p.y * inv.m[6] + p.z * inv.m[10] + inv.m[14];
+    if (z > best) {
+      best = z;
+      at = i / n;
+    }
+  }
+  group.weight = Math.max(MIN_W, wasWeight);
+  return at;
 }

@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T04:45:00Z',
+    title: 'Heroes walk like people',
+    lines: ["Heroes' legs are now driven by a real walking system instead of tiny looped steps, so feet no longer skate. Each foot plants on the ground and stays put while it carries your weight. It rolls from heel to toe and swings through in an arc to the next footfall, on slopes too. Hips dip and sway over the standing leg, the chest twists against the hips and the arms swing against the legs: loose when you walk, pumping with bent elbows when you run. You lean into a sprint and rock back when you stop, the first step comes at once, stopping brings your feet together, and turning on the spot shuffles your feet round. Side-steps turn the hips into the run while you keep facing ahead. Also fixed: some animations pushed the heroes' hips and shoulders out of place."],
+  },
+  {
     at: '2026-10-16T02:50:00Z',
     title: 'Anime heroes',
     lines: ["Heroes are no longer chunky little figures. Every adventurer is rebuilt with anime proportions: a slim, tall body, a smaller head with a painted face (big shining eyes, lashes, brows and a blush), hair made of real locks that fall around the face, and outfits remade to fit, from the Squire's tabard to the Arcanist's robe and hat. Every creator option carries over, there's a new Graceful build, the hair styles are now Tousled, Long Braid, Side Part, High Tail and Buzz Cut, weapons are sized for the new heroes, and the creator's face view now frames the face. All the animations, gliding and combat work as before."],
