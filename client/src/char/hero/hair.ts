@@ -7,6 +7,7 @@
 import { Vector3 } from '@babylonjs/core';
 import { blend, Geo, lerp, one, smooth, type Weights } from './geo';
 import { CHIN_Y } from './face';
+import { chainWeights, type ChainJoints, type ChainName } from './chains';
 import { SW, uvOf, type Swatch } from './palette';
 
 /** The scalp the hair sits on (an ellipsoid just outside the skull). */
@@ -38,12 +39,26 @@ interface LockOpts {
   segs?: number;
   /** Tip sharpness: 1 = straight taper, bigger = longer point. */
   sharp?: number;
+  /** The chain the lock hangs from (it swings), and how far above its first joint it starts to. */
+  dyn?: ChainName;
+  fade?: number;
 }
 
 export interface HairBuild {
   g: Geo;
   /** Regions to leave out (headgear covers them). */
   skip: Set<LockRegion>;
+  /** Chains laid out for this style, and those something hangs from. */
+  chains: ChainJoints;
+  used: Set<ChainName>;
+}
+
+/** Weights for hair on a chain (or plain hair weights when it has none). */
+function dynW(h: HairBuild, c: ChainName | undefined, p: Vector3, fade = 0.5): Weights {
+  const joints = c && h.chains[c];
+  if (!c || !joints) return hairW(p);
+  h.used.add(c);
+  return chainWeights(c, joints, p, hairW(p), fade);
 }
 
 /** One lock along the given points. */
@@ -58,7 +73,7 @@ function lock(h: HairBuild, pts: Vector3[], o: LockOpts) {
     width: (s) => (s < peak ? lerp(0.75, 1, Math.sin((s / peak) * Math.PI * 0.5)) : Math.pow(Math.max(0, 1 - (s - peak) / (1 - peak)), sharp)) * o.width,
     thick: (s) => th * (s < peak ? 1 : lerp(1, 0.35, (s - peak) / (1 - peak))),
     normal: (_s, p) => p.subtract(C).multiplyByFloats(1 / R.x, 1 / R.y, 1 / R.z).normalize(),
-    w: (_s, p) => hairW(p),
+    w: (_s, p) => dynW(h, o.dyn, p, o.fade),
     uv: () => uvOf(o.color ?? SW.hair),
     cup: (s) => -(o.cup ?? 0.006) * Math.min(1, s * 4) * (1 - s * 0.5),
     n: 2.2,
@@ -118,13 +133,16 @@ function sideLocks(h: HairBuild, endY: number, o: Partial<LockOpts> = {}, out = 
       pts.push(jaw, new Vector3(side * 0.1, lerp(jaw.y, endY, 0.5), 0.045), new Vector3(side * 0.115, endY, 0.06));
     } else pts.push(scalp(side * 74, tipTh, out + 0.02));
     const long = endY < CHIN_Y - 0.02;
-    lock(h, pts, { width: 0.034, region: long ? 'long' : 'side', peak: long ? 0.55 : 0.4, ...o });
-    lock(h, pts.slice(0, 4).map((p, i) => p.add(new Vector3(side * 0.006, -0.004 * i, -0.018 - i * 0.004))), { width: 0.032, region: 'side', peak: 0.4, color: SW.hairDark, ...o });
+    const dyn: ChainName = side > 0 ? 'hair.side.l' : 'hair.side.r';
+    h.chains[dyn] = long ? [pts[2], pts[4], pts[5], pts[6]] : pts.slice(1, 5);
+    lock(h, pts, { width: 0.034, region: long ? 'long' : 'side', peak: long ? 0.55 : 0.4, dyn, ...o });
+    lock(h, pts.slice(0, 4).map((p, i) => p.add(new Vector3(side * 0.006, -0.004 * i, -0.018 - i * 0.004))), { width: 0.032, region: 'side', peak: 0.4, color: SW.hairDark, dyn, ...o });
   }
 }
 
 /** Locks down the back of the head to `endY`, fanned from φ = 100° to 260°. */
 function backLocks(h: HairBuild, endY: number, count: number, o: Partial<LockOpts> = {}, flare = 0.12) {
+  backChain(h, endY);
   for (let i = 0; i < count; i++) {
     const t = (i + 0.5) / count;
     const phi = lerp(102, 258, t);
@@ -144,8 +162,16 @@ function backLocks(h: HairBuild, endY: number, count: number, o: Partial<LockOpt
       pts.push(scalp(pp, tipTh, flare + 0.06));
     }
     const long = len < nape.y - 0.04;
-    lock(h, pts, { width: long ? 0.046 : 0.04, region: long ? 'long' : 'back', peak: long ? 0.6 : 0.4, color: i % 3 === 1 ? SW.hairDark : SW.hair, ...o });
+    lock(h, pts, { width: long ? 0.046 : 0.04, region: long ? 'long' : 'back', peak: long ? 0.6 : 0.4, color: i % 3 === 1 ? SW.hairDark : SW.hair, dyn: 'hair.back', ...o });
   }
+}
+
+/** The chain down the back of the head: from the nape to `endY` (the longest hair hanging there). */
+function backChain(h: HairBuild, endY: number) {
+  const top = scalp(180, -12, 0.06);
+  const prev = h.chains['hair.back'];
+  const end = Math.min(endY - 0.05, prev ? prev[prev.length - 1].y : Infinity);
+  h.chains['hair.back'] = [0, 1, 2, 3, 4].map((k) => new Vector3(0, lerp(top.y, end, k / 4), lerp(top.z, -0.14, Math.min(1, k / 2))));
 }
 
 /** Spikes swept back from the crown (tousled / spiky styles). */
@@ -164,6 +190,8 @@ function crown(h: HairBuild, n: number, lift: number) {
 
 function braid(h: HairBuild, endY: number) {
   if (h.skip.has('long')) return;
+  backChain(h, endY);
+  const bw = (p: Vector3) => dynW(h, 'hair.back', p);
   const top = new Vector3(0, 1.6, -0.118);
   const n = 11;
   for (let i = 0; i < n; i++) {
@@ -174,19 +202,20 @@ function braid(h: HairBuild, endY: number) {
     const tilt = (i % 2 ? 1 : -1) * 0.45;
     const ax = new Vector3(Math.sin(tilt), Math.cos(tilt), 0);
     const side = Vector3.Cross(ax, new Vector3(0, 0, 1)).normalize();
-    h.g.blob(new Vector3((i % 2 ? 1 : -1) * r * 0.25, y, z), [side, ax, new Vector3(0, 0, 1)], [r, r * 1.5, r * 0.85], hairW, uvOf(i % 2 ? SW.hair : SW.hairDark), { lat: 6, lon: 10 });
+    h.g.blob(new Vector3((i % 2 ? 1 : -1) * r * 0.25, y, z), [side, ax, new Vector3(0, 0, 1)], [r, r * 1.5, r * 0.85], bw, uvOf(i % 2 ? SW.hair : SW.hairDark), { lat: 6, lon: 10 });
   }
   // the tie and a tuft
   const tie = new Vector3(0, endY + 0.04, -0.13);
-  h.g.blob(tie, [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)], [0.017, 0.01, 0.016], hairW, uvOf(SW.gold(7)), { lat: 6, lon: 12 });
+  h.g.blob(tie, [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)], [0.017, 0.01, 0.016], bw, uvOf(SW.gold(7)), { lat: 6, lon: 12 });
   for (const dx of [-1, 0, 1]) {
-    lock(h, [tie, tie.add(new Vector3(dx * 0.012, -0.04, -0.004)), tie.add(new Vector3(dx * 0.02, -0.085, 0.002))], { width: 0.016, region: 'long', peak: 0.2, thick: 0.009 });
+    lock(h, [tie, tie.add(new Vector3(dx * 0.012, -0.04, -0.004)), tie.add(new Vector3(dx * 0.02, -0.085, 0.002))], { width: 0.016, region: 'long', peak: 0.2, thick: 0.009, dyn: 'hair.back' });
   }
 }
 
 function tail(h: HairBuild) {
   if (h.skip.has('tail')) return;
   const tie = scalp(180, 38, 0.06);
+  h.chains['hair.tail'] = [new Vector3(0, 0.03, -0.05), new Vector3(0, -0.02, -0.12), new Vector3(0, -0.13, -0.14), new Vector3(0, -0.3, -0.11)].map((d) => tie.add(d));
   h.g.blob(tie, [new Vector3(1, 0, 0), new Vector3(0, 0.6, -0.8).normalize(), new Vector3(0, 0.8, 0.6).normalize()], [0.026, 0.014, 0.024], hairW, uvOf(SW.gold(7)), { lat: 6, lon: 12 });
   const n = 7;
   for (let i = 0; i < n; i++) {
@@ -201,7 +230,7 @@ function tail(h: HairBuild) {
         tie.add(new Vector3(sx * 2.0, -0.13, -0.135)),
         tie.add(new Vector3(sx * 1.6 + Math.sin(i * 3.3) * 0.02, -0.27 - Math.abs(Math.cos(i)) * 0.04, -0.11)),
       ],
-      { width: 0.032, region: 'tail', peak: 0.25, thick: 0.012, color: i % 3 === 2 ? SW.hairDark : SW.hair, sharp: 1.5 },
+      { width: 0.032, region: 'tail', peak: 0.25, thick: 0.012, color: i % 3 === 2 ? SW.hairDark : SW.hair, sharp: 1.5, dyn: 'hair.tail', fade: 0.6 },
     );
   }
   // hair swept up from the nape to the tie
@@ -221,8 +250,8 @@ function tail(h: HairBuild) {
  * Build a hairstyle. 0 Tousled, 1 Long Braid, 2 Side Part, 3 High Tail,
  * 4 Buzz. `skip` leaves out what a hat or hood covers.
  */
-export function buildHair(g: Geo, style: number, skip: LockRegion[] = [], soft = false) {
-  const h: HairBuild = { g, skip: new Set(skip) };
+export function buildHair(g: Geo, style: number, skip: LockRegion[] = [], soft = false): ChainJoints {
+  const h: HairBuild = { g, skip: new Set(skip), chains: {}, used: new Set() };
   switch (style) {
     case 0: {
       cap(h, hairlineOf(30, -6, -42));
@@ -251,6 +280,7 @@ export function buildHair(g: Geo, style: number, skip: LockRegion[] = [], soft =
         { phi: 50, len: 0.55, curl: -6 },
       ]);
       sideLocks(h, soft ? 1.32 : 1.42);
+      backChain(h, soft ? 1.02 : 1.1);
       backLocks(h, soft ? 1.36 : 1.5, 10, {}, 0.1);
       braid(h, soft ? 1.02 : 1.1);
       break;
@@ -289,4 +319,7 @@ export function buildHair(g: Geo, style: number, skip: LockRegion[] = [], soft =
       break;
     }
   }
+  const out: ChainJoints = {};
+  for (const c of h.used) out[c] = h.chains[c];
+  return out;
 }

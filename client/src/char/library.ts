@@ -5,6 +5,7 @@
 import { BoundingInfo, Matrix, Mesh, Vector3, VertexBuffer, type AbstractMesh, type AssetContainer, type Scene, type Skeleton, type TransformNode } from '@babylonjs/core';
 import { loadContainer } from '../core/assets';
 import { stretchRig, type HeroRest } from './hero/rig';
+import { addChainBones } from './hero/chains';
 
 /** Swatch cells (column, row) in the 8×4 KayKit colour atlas. */
 export const SKIN_CELL = [0, 0] as const;
@@ -62,6 +63,8 @@ export class RigLibrary {
     this.heroSkeleton = body.skeleton;
     this.heroSide = (body as Mesh).sideOrientation ?? 0;
     this.hero = stretchRig(this.container, body.skeleton);
+    // bones for the hair and cape to swing on (char/secondary)
+    addChainBones(body.skeleton);
     // the hero is modelled in metres at its full height
     this.heightUnits = 1.85;
   }

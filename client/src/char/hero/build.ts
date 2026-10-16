@@ -7,6 +7,7 @@ import { BUILDS, buildArm, buildHand, buildLeg, buildTorso, type Dress } from '.
 import { Geo } from './geo';
 import { buildHair } from './hair';
 import { buildHead, buildNeck } from './head';
+import type { ChainJoints } from './chains';
 import { OUTFIT_DEFS } from './outfits';
 import type { HeroRest } from './rig';
 import { heroSkin, type PaletteColors } from './palette';
@@ -20,8 +21,10 @@ export interface HeroGeometry {
   hair: Geo;
   /** Headgear (part of the body's look; outlined in ink). */
   hat: Geo;
-  /** Rigid cape (rig space; empty when the outfit has none). */
+  /** The cape (empty when the outfit has none). */
   cape: Geo;
+  /** Where the look's swinging chains (hair, cape) hang, in rig space. */
+  chains: ChainJoints;
   colors: PaletteColors;
   /** Build index (selects the feminine face and the like). */
   soft: boolean;
@@ -61,12 +64,13 @@ export function buildHero(rest: HeroRest, a: Appearance): HeroGeometry {
     buildLeg(body, side, parts);
   }
   const showHat = !!(a.headgear && def.headgear && OUTFITS[outfit]?.headgear !== 'none');
-  def.garments({ g: body, cape, rest, build, dress, hat: showHat });
+  const chains: ChainJoints = {};
+  def.garments({ g: body, cape, chains, rest, build, dress, hat: showHat });
   buildHead(head);
   buildNeck(head, soft ? 0.9 : build.limb > 1.05 ? 1.1 : 1);
-  if (showHat && def.headgear) def.headgear.build({ g: body, cape, rest, build, dress, hat: true }, hat);
-  buildHair(hair, a.hair, showHat && def.headgear ? def.headgear.covers : [], soft);
-  const geo: HeroGeometry = { body, head, hair, hat, cape, colors, soft };
+  if (showHat && def.headgear) def.headgear.build({ g: body, cape, chains, rest, build, dress, hat: true }, hat);
+  Object.assign(chains, buildHair(hair, a.hair, showHat && def.headgear ? def.headgear.covers : [], soft));
+  const geo: HeroGeometry = { body, head, hair, hat, cape, chains, colors, soft };
   cache.set(key, geo);
   return geo;
 }

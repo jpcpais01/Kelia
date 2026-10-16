@@ -42,6 +42,7 @@ import { trackContact } from '../world/contact';
 import { INK, InkScaler, inkCharacter, inkFor } from './style';
 import { spring, stepSpring } from './spring';
 import { Gait } from './gait';
+import { SecondaryMotion } from './secondary';
 
 export interface Look {
   appearance: Appearance;
@@ -90,32 +91,6 @@ export function partsFor(look: Look): { meshes: Set<string>; bow: string | null 
     else meshes.add(it.mesh);
   }
   return { meshes, bow };
-}
-
-/** The cape's vertices in the chest bone's space (it hangs rigidly from the chest and sways). */
-const capeCache = new WeakMap<Geo, Geo>();
-function capeLocal(cape: Geo, chestRest: Matrix): Geo {
-  const hit = capeCache.get(cape);
-  if (hit) return hit;
-  const inv = chestRest.clone().invert();
-  const g = new Geo();
-  g.append(cape);
-  const p = new Vector3();
-  for (let v = 0; v < g.vertexCount; v++) {
-    p.set(g.pos[v * 3], g.pos[v * 3 + 1], g.pos[v * 3 + 2]);
-    Vector3.TransformCoordinatesToRef(p, inv, p);
-    g.pos[v * 3] = p.x;
-    g.pos[v * 3 + 1] = p.y;
-    g.pos[v * 3 + 2] = p.z;
-    p.set(g.nrm[v * 3], g.nrm[v * 3 + 1], g.nrm[v * 3 + 2]);
-    Vector3.TransformNormalToRef(p, inv, p);
-    p.normalize();
-    g.nrm[v * 3] = p.x;
-    g.nrm[v * 3 + 1] = p.y;
-    g.nrm[v * 3 + 2] = p.z;
-  }
-  capeCache.set(cape, g);
-  return g;
 }
 
 /** Weapons were sized for the chibi rig's hands: scale them to the hero's. */
@@ -183,8 +158,8 @@ export class CharacterModel {
   /** The head node and its ancestors, root first (refreshed each frame for face shading). */
   private headChain: TransformNode[] = [];
   private ink: InkScaler | null = null;
-  private cape: { mesh: AbstractMesh; base: Quaternion; axis: Vector3; angle: number; vel: number } | null = null;
-  private capeT = Math.random() * 10;
+  /** Hair and cape on their simulated chains. */
+  private secondary: SecondaryMotion | null = null;
   /** Portrait lighting (character creator): a stronger rim to model the figure. */
   private showcase = false;
   private time = Math.random() * 100;
@@ -326,23 +301,14 @@ export class CharacterModel {
       this.materials.push(mat);
       this.surface = new HeroSurface(mat);
       const side = this.lib.heroSide;
-      for (const [part, g] of [['hero_body', geo.body], ['hero_hat', geo.hat], ['hero_head', geo.head], ['hero_hair', geo.hair]] as const) {
+      for (const [part, g] of [['hero_body', geo.body], ['hero_hat', geo.hat], ['hero_head', geo.head], ['hero_hair', geo.hair], ['hero_cape', geo.cape]] as const) {
         const m = heroMesh(this.scene, `${this.root.name}_${part}`, g, skeleton, side);
         if (!m) continue;
         m.parent = rootNode;
         m.material = mat;
         meshes.push(m);
       }
-      const chest = this.nodes.get('chest');
-      const chestRest = this.lib.hero.world.get('chest');
-      if (geo.cape.idx.length && chest && chestRest) {
-        const m = heroMesh(this.scene, 'cape_hero', capeLocal(geo.cape, chestRest), null, side);
-        if (m) {
-          m.parent = chest;
-          m.material = mat;
-          meshes.push(m);
-        }
-      }
+      if (skeleton) this.secondary = new SecondaryMotion(this.nodes, skeleton, this.lib.hero, geo.chains);
       const head = this.nodes.get('head');
       const headRest = this.lib.hero.world.get('head');
       if (head && headRest) {
@@ -357,7 +323,6 @@ export class CharacterModel {
       m.alwaysSelectAsActiveMesh = false;
     }
     this.meshes = meshes;
-    this.setupCape();
     if (bow) {
       const b = createBow(this.scene, bow);
       const slot = this.nodes.get('handslot.l');
@@ -527,54 +492,6 @@ export class CharacterModel {
     this.animator.gaitPhase = this.gait?.cycle ?? null;
     this.updateGlide(dt);
     this.updateBodyLayer(dt);
-    this.swayCape(dt, Math.max(0, localZ), Math.abs(localX));
-  }
-
-  /**
-   * Find the cape (a rigid mesh hung from the chest), pivot it at its top edge
-   * and work out which local axis swings its hem backwards.
-   */
-  private setupCape() {
-    this.cape = null;
-    const cape = this.meshes.find((m) => m.name.startsWith('cape_'));
-    if (!cape || cape.skeleton) return;
-    cape.computeWorldMatrix(true);
-    const bb = cape.getBoundingInfo().boundingBox;
-    const top = new Vector3((bb.minimum.x + bb.maximum.x) / 2, bb.maximum.y, (bb.minimum.z + bb.maximum.z) / 2);
-    const hem = new Vector3(top.x, bb.minimum.y, top.z);
-    cape.setPivotPoint(top);
-    if (!cape.rotationQuaternion) cape.rotationQuaternion = Quaternion.FromEulerVector(cape.rotation);
-    const inv = cape.getWorldMatrix().clone().invert();
-    const back = Vector3.TransformNormal(Vector3.TransformNormal(new Vector3(0, 0, -1), this.root.getWorldMatrix()), inv).normalize();
-    const axis = Vector3.Cross(hem.subtract(top), back);
-    if (axis.lengthSquared() < 1e-10) return;
-    axis.normalize();
-    const base = cape.rotationQuaternion.clone();
-    // check the sign: the hem must move backwards
-    const before = Vector3.TransformCoordinates(hem, cape.computeWorldMatrix(true));
-    cape.rotate(axis, 0.3, Space.LOCAL);
-    const after = Vector3.TransformCoordinates(hem, cape.computeWorldMatrix(true));
-    cape.rotationQuaternion.copyFrom(base);
-    cape.computeWorldMatrix(true);
-    const backW = Vector3.TransformNormal(new Vector3(0, 0, -1), this.root.getWorldMatrix());
-    if (Vector3.Dot(after.subtract(before), backW) < 0) axis.scaleInPlace(-1);
-    this.cape = { mesh: cape, base, axis, angle: 0, vel: 0 };
-  }
-
-  /** Cheap secondary motion: the cape lifts behind a running character and breathes at rest. */
-  private swayCape(dt: number, forward: number, sideways: number) {
-    const c = this.cape;
-    if (!c || !c.mesh.rotationQuaternion || dt <= 0) return;
-    this.capeT += dt;
-    const target = Math.min(0.75, forward * 0.085 + sideways * 0.03) + 0.035 * Math.sin(this.capeT * 1.7) + 0.02 * Math.sin(this.capeT * 2.9 + 1.3) + (forward > 0.5 ? 0.05 * Math.sin(this.capeT * 9) : 0);
-    // a damped spring, so it settles back with a little swing
-    const k = 60;
-    const damp = 9;
-    const h = Math.min(dt, 0.05);
-    c.vel += ((target - c.angle) * k - c.vel * damp) * h;
-    c.angle = Math.max(-0.05, Math.min(0.9, c.angle + c.vel * h));
-    c.mesh.rotationQuaternion.copyFrom(c.base);
-    c.mesh.rotate(c.axis, c.angle, Space.LOCAL);
   }
 
   private dt = 0.016;
@@ -698,6 +615,11 @@ export class CharacterModel {
       this.applyBodyLayer();
       this.applyLookAt();
       if (this.glideW > 0.001) this.applyGlidePose();
+    }
+    if (this.secondary) {
+      const cam = this.scene.activeCamera;
+      const near = !cam || Vector3.DistanceSquared(cam.globalPosition, this.root.position) < 45 * 45;
+      this.secondary.update(this.dt, near && this.animator.posing);
     }
     if (this.glider) {
       const cam = this.scene.activeCamera;
@@ -1003,6 +925,7 @@ export class CharacterModel {
     for (const m of this.materials) m.dispose();
     this.materials = [];
     this.entries = null;
+    this.secondary = null;
   }
 
   dispose() {

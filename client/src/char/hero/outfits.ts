@@ -7,6 +7,7 @@ import { Vector3 } from '@babylonjs/core';
 import { along, bustBulge, torsoRing, torsoWeights, type Build, type Dress } from './body';
 import { blend, Geo, lerp, one, smooth, type Ring, type Weights } from './geo';
 import { scalp, type LockRegion } from './hair';
+import { SHEETS, sheetWeights, type ChainJoints } from './chains';
 import type { HeroRest } from './rig';
 import { SW, uvOf, type Swatch } from './palette';
 import type { Headgear } from '@kelia/shared';
@@ -18,8 +19,9 @@ const Z = new Vector3(0, 0, 1);
 export interface OutfitCtx {
   /** Main body (skinned, plum ink). */
   g: Geo;
-  /** Rigid cape hung from the chest (rig space; converted by the model). */
+  /** The cape (skinned to its own chains, which it lays out in `chains`). */
   cape: Geo;
+  chains: ChainJoints;
   rest: HeroRest;
   build: Build;
   dress: Dress;
@@ -260,25 +262,40 @@ function cape(c: OutfitCtx, sw: Swatch, lining: Swatch, o: { bottom?: number; fl
   const flare = o.flare ?? 0.14;
   const rows = 12;
   const cols = 16;
+  const top = 1.47;
+  /** Half the angle the cape wraps round the body at `s` (0 top .. 1 hem), and its radii there. */
+  const span = (s: number) => lerp(1.62, 1.18, smooth(0, 0.4, s)) * (o.width ?? 1);
+  const at = (s: number, a: number, fold = 1) => {
+    const y = lerp(top, bottom, s);
+    const t = torsoRing(Math.max(0.9, Math.min(1.42, y)), c.build);
+    const rx = lerp(Math.max(t.a, 0.165) + 0.02, 0.2 + flare * 0.8, smooth(0.05, 1, s));
+    const rz = lerp(Math.max(t.b, 0.08) + 0.03, 0.16 + flare, smooth(0.0, 1, s));
+    return new Vector3(Math.sin(a) * rx * fold, y, -Math.cos(a) * rz * fold + 0.012);
+  };
   const mid: Vector3[][] = [];
   for (let i = 0; i <= rows; i++) {
     const s = i / rows;
-    const y = lerp(1.47, bottom, s);
-    const t = torsoRing(Math.max(0.9, Math.min(1.42, y)), c.build);
-    const A = lerp(1.62, 1.18, smooth(0, 0.4, s)) * (o.width ?? 1);
-    const rx = lerp(Math.max(t.a, 0.165) + 0.02, 0.2 + flare * 0.8, smooth(0.05, 1, s));
-    const rz = lerp(Math.max(t.b, 0.08) + 0.03, 0.16 + flare, smooth(0.0, 1, s));
+    const A = span(s);
     const row: Vector3[] = [];
     for (let j = 0; j <= cols; j++) {
       const a = lerp(-A, A, j / cols);
-      const fold = 1 + 0.07 * s * Math.sin(a * 7);
-      row.push(new Vector3(Math.sin(a) * rx * fold, y + (1 - Math.cos(a)) * 0.0 * s, -Math.cos(a) * rz * fold + 0.012));
+      row.push(at(s, a, 1 + 0.07 * s * Math.sin(a * 7)));
     }
     mid.push(row);
   }
+  // three chains down the back (the cape swings, trails and folds on them)
+  const sheet = SHEETS[0];
+  const reach = 0.62;
+  sheet.forEach((name, k) => {
+    c.chains[name] = [0, 1, 2, 3, 4].map((r) => at(r / 4, (k - 1) * span(r / 4) * reach));
+  });
   c.cape.sheet(mid, 0.011, {
     uv: (i, _j, outside) => uvOf(o.trim && i === rows ? o.trim : outside ? sw : lining),
-    w: () => one('chest'),
+    w: (p) => {
+      const s = Math.max(0, Math.min(1, (top - p.y) / (top - bottom)));
+      const a = Math.atan2(p.x, -(p.z - 0.012));
+      return sheetWeights(sheet, a / (span(s) * reach) + 1, s * 4, one('chest'));
+    },
     out: (p) => new Vector3(p.x, 0, p.z - 0.02),
   });
   // clasps at the collarbones
