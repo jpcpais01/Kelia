@@ -120,10 +120,25 @@ async function devView(world: World, lib: RigLibrary, params: URLSearchParams, c
       m.root.position.set(x, world.groundAt(x, oz), oz);
       m.root.rotation.y = Number(params.get('yaw') ?? 0);
       m.setShadowCaster((mm) => world.atmosphere.addShadowCaster(mm, false));
+      m.groundAt = (x, z) => world.groundAt(x, z);
       if (anim) m.animator.play(anim, { loop: true, upper: false });
       return m;
     });
-    world.onUpdate((dt) => ms.forEach((m) => m.update(dt, Vector3.Zero())));
+    // &move=1 walks them (odd ones run), wrapping round after 14 m
+    const home = ms.map((m) => m.root.position.clone());
+    const move = params.has('move');
+    world.onUpdate((dt) =>
+      ms.forEach((m, i) => {
+        const v = move ? new Vector3(0, 0, i % 2 ? -4.2 : -1.6) : Vector3.Zero();
+        if (move) {
+          m.root.position.z += v.z * dt;
+          if (Vector3.Distance(m.root.position, home[i]) > 14) m.root.position.copyFrom(home[i]);
+          m.root.position.y = world.groundAt(m.root.position.x, m.root.position.z);
+          m.root.rotation.y = Math.PI;
+        }
+        m.update(dt, v);
+      }),
+    );
     (window as unknown as { monsters: unknown }).monsters = ms;
     return;
   }

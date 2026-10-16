@@ -404,6 +404,7 @@ export class Game {
           me = new MonsterEntity(row[0], row[1]);
           const model = new MonsterModel(this.world.scene, this.monsterLib, me.def, 'm' + (row[0] - MONSTER_ID_BASE));
           model.setShadowCaster((mm) => this.world.atmosphere.addShadowCaster(mm, false));
+          model.groundAt = (x, z) => this.world.groundAt(x, z);
           me.model = model;
           this.monsters.set(row[0], me);
           if (!me.def.boss) this.hud?.plate(row[0], me.def.name, me.def.level, 'enemy');
