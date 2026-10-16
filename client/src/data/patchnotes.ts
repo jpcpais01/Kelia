@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T06:55:00Z',
+    title: 'Skeletons walk the walk',
+    lines: ["The risen skeletons now use the heroes' new walking system: their feet plant on the ground and keep pace with how fast they move instead of sliding, they step up and down slopes, they shuffle round when they turn, and their feet stay put as they lunge into a swing. Their arms keep their own menacing pose."],
+  },
+  {
     at: '2026-10-16T06:25:00Z',
     title: 'Footwork in a fight',
     lines: ["Your feet now stay planted when you swing, cast or shoot, instead of sliding across the ground. Lunging into a blow steps your lead foot forward and pulls the back foot after it, and turning to aim pivots on your feet with little steps. Your cape and hair whip round with the swing."],

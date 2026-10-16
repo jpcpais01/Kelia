@@ -18,6 +18,7 @@ import {
   Vector3,
   type AbstractMesh,
   type InstantiatedEntries,
+  type Observer,
   type Scene,
 } from '@babylonjs/core';
 import type { MonsterDef } from '@kelia/shared';
@@ -26,7 +27,8 @@ import { fxTextures } from './fxTextures';
 import { ATLAS_SURFACES, RecolorPlugin } from './recolor';
 import { InkScaler, inkCharacter } from './style';
 import { mergeSkinnedParts } from './mergeSkin';
-import { Animator, measureStride } from './animator';
+import { Animator, measureContactPhase, measureStride } from './animator';
+import { Gait } from './gait';
 import type { RigLibrary } from './library';
 import { spring, stepSpring } from './spring';
 import { CHARACTER_HEIGHT } from './model';
@@ -80,6 +82,14 @@ export class MonsterModel {
   private tilt = spring();
   private knockX = spring();
   private knockZ = spring();
+  /** Planted feet and a stride that matches the ground (see gait.ts); needs `groundAt`. */
+  private gait: Gait | null = null;
+  groundAt: ((x: number, z: number) => number) | null = null;
+  private obs: Observer<Scene> | null = null;
+  private vel = new Vector3();
+  private dt = 1 / 60;
+  private yawPrev: number | null = null;
+  private turnRate = 0;
 
   constructor(scene: Scene, lib: RigLibrary, readonly def: MonsterDef, name: string) {
     this.root = new TransformNode(name, scene);
@@ -159,6 +169,9 @@ export class MonsterModel {
 
     this.animator = new Animator(entries.animationGroups, LOCO);
     this.animator.scale = s;
+    // (measured in the rest pose, before any clip moves the bones)
+    this.gait = new Gait(this.nodes, this.root);
+    if (!this.gait.valid) this.gait = null;
     let cache = strideCache.get(lib);
     if (!cache) {
       cache = {};
@@ -170,6 +183,8 @@ export class MonsterModel {
           const g = this.animator.locoGroup(key);
           if (g) cache[key] = measureStride(g, fl, fr, r);
         }
+        const walk = this.animator.locoGroup('walk');
+        if (walk) cache.contact = measureContactPhase(walk, fl, r);
         for (const key of ['idle', 'walk', 'run'] as const) {
           const g = this.animator.locoGroup(key);
           if (g) g.goToFrame(g.from);
@@ -177,7 +192,32 @@ export class MonsterModel {
       }
       strideCache.set(lib, cache);
     }
-    for (const [k, v] of Object.entries(cache)) this.animator.setStride(k as 'walk', v);
+    for (const [k, v] of Object.entries(cache)) if (k !== 'contact') this.animator.setStride(k as 'walk', v);
+    this.animator.contactPhase = cache.contact ?? 0;
+    this.obs = scene.onAfterAnimationsObservable.add(() => this.postAnimate());
+  }
+
+  /** After the clips: feet planted on the ground, a stride that keeps pace, footwork in its swings. */
+  private postAnimate() {
+    const g = this.gait;
+    if (!g || !this.groundAt || !this.root.isEnabled()) return;
+    const an = this.animator;
+    const cam = this.root.getScene().activeCamera;
+    const near = !cam || Vector3.DistanceSquared(cam.globalPosition, this.root.position) < 45 * 45;
+    const speed = Math.hypot(this.vel.x, this.vel.z);
+    g.apply(this.dt, {
+      vel: this.vel,
+      ground: this.groundAt,
+      allow: 1 - an.fullLevel,
+      // a skeleton's arms keep their own menace
+      arms: 0,
+      crouch: 0,
+      calm: speed < 0.05 && an.actionLevel < 0.02,
+      turnRate: this.turnRate,
+      armScale: { l: 1, r: 1 },
+      detail: near,
+      lock: an.fullLevel > 0.5 && !!an.phase(),
+    });
   }
 
   /** Soft glow around the eyes (one billboard riding on the head). */
@@ -339,6 +379,15 @@ export class MonsterModel {
 
   update(dt: number, vel: Vector3) {
     const yaw = this.root.rotation.y;
+    if (dt > 0) {
+      let d = this.yawPrev === null ? 0 : yaw - this.yawPrev;
+      d = Math.atan2(Math.sin(d), Math.cos(d));
+      this.turnRate += (d / dt - this.turnRate) * (1 - Math.exp(-dt * 10));
+      this.dt = dt;
+    }
+    this.yawPrev = yaw;
+    this.vel.copyFrom(vel);
+    this.animator.gaitPhase = this.gait?.cycle ?? null;
     const c = Math.cos(yaw);
     const s = Math.sin(yaw);
     this.animator.setMotion(vel.x * c - vel.z * s, vel.x * s + vel.z * c, dt);
@@ -364,6 +413,7 @@ export class MonsterModel {
   }
 
   dispose() {
+    if (this.obs) this.root.getScene().onAfterAnimationsObservable.remove(this.obs);
     for (const p of this.particles) p.dispose(false);
     this.particles = [];
     for (const rc of this.surfaces) rc.plugin.dispose();
