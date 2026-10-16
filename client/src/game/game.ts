@@ -253,16 +253,16 @@ export class Game {
     m.update(dt, Vector3.Zero(), 0, false);
     const close = this.stageTab === 'face' || this.stageTab === 'hair';
     const base = m.root.position;
-    const focusY = close ? 1.3 : 0.95;
-    const dist = (close ? 2.0 : 4.4) * this.stageZoom;
+    const focusY = close ? 1.56 : 0.95;
+    const dist = (close ? 1.55 : 4.4) * this.stageZoom;
     // camera sits facing the village side of the dais, slightly off-axis
     const ang = ARRIVAL_YAW + 0.35;
-    const want = new Vector3(base.x + Math.sin(ang) * dist, base.y + focusY + (close ? 0.12 : 0.55), base.z + Math.cos(ang) * dist);
+    const want = new Vector3(base.x + Math.sin(ang) * dist, base.y + focusY + (close ? 0.06 : 0.55), base.z + Math.cos(ang) * dist);
     const target = new Vector3(base.x, base.y + focusY, base.z);
     // shift the subject right of centre (the panel is on the left); `right` here points to screen-left
     const right = new Vector3(Math.cos(ang), 0, -Math.sin(ang));
-    target.addInPlace(right.scale(close ? 0.35 : 0.8));
-    want.addInPlace(right.scale(close ? 0.35 : 0.8));
+    target.addInPlace(right.scale(close ? 0.26 : 0.8));
+    want.addInPlace(right.scale(close ? 0.26 : 0.8));
     const cam = this.world.camera;
     const k = this.creatorSnap ? 1 : 1 - Math.exp(-dt * 3.2);
     this.creatorSnap = false;

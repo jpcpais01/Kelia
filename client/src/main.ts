@@ -38,8 +38,8 @@ async function boot() {
   if (settings.renderScale > 0) world.setRenderScale(settings.renderScale);
   progress(0.72, 'Raising the village…');
   const [lib, monsterLib] = await Promise.all([
-    RigLibrary.load(world.scene, 'characters/adventurers.glb', ['knight', 'barbarian', 'mage', 'rogue']),
-    RigLibrary.load(world.scene, 'characters/skeletons.glb', [], false),
+    RigLibrary.load(world.scene, 'characters/adventurers.glb', ['knight', 'barbarian', 'mage', 'rogue'], { hero: true }),
+    RigLibrary.load(world.scene, 'characters/skeletons.glb'),
     world.loadAssets(),
   ]);
   // sound starts on the player's first click or key press

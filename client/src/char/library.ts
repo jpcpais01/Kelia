@@ -4,6 +4,7 @@
 // clips are measured for stride length (so feet never slide).
 import { BoundingInfo, Matrix, Mesh, Vector3, VertexBuffer, type AbstractMesh, type AssetContainer, type Scene, type Skeleton, type TransformNode } from '@babylonjs/core';
 import { loadContainer } from '../core/assets';
+import { stretchRig, type HeroRest } from './hero/rig';
 
 /** Swatch cells (column, row) in the 8×4 KayKit colour atlas. */
 export const SKIN_CELL = [0, 0] as const;
@@ -26,19 +27,43 @@ export class RigLibrary {
   heightUnits = 2.4;
   swatches: Record<string, SwatchRefs> = {};
   clips: Record<string, ClipInfo> = {};
+  /** Anime hero rig (adventurers only): the stretched rest pose the hero is built in. */
+  hero: HeroRest | null = null;
+  /** The skeleton hero meshes skin to (one per character, cloned from this). */
+  heroSkeleton: Skeleton | null = null;
+  /** Winding of the rig's glTF meshes (hero meshes are built the same way). */
+  heroSide = 0;
   /** Original bounds of parts whose vertices moved to the shared skeleton's bind space. */
   private bindBounds = new Map<string, [Vector3, Vector3]>();
 
   private constructor(readonly container: AssetContainer, readonly scene: Scene) {}
 
-  static async load(scene: Scene, file: string, atlasNames: string[] = [], splitHeads = true): Promise<RigLibrary> {
+  static async load(scene: Scene, file: string, atlasNames: string[] = [], opts: { splitHeads?: boolean; hero?: boolean } = {}): Promise<RigLibrary> {
     const c = await loadContainer(scene, file);
     const lib = new RigLibrary(c, scene);
-    if (splitHeads) lib.splitHeads();
+    if (opts.splitHeads) lib.splitHeads();
     lib.unifySkins();
     await Promise.all(atlasNames.map((n) => lib.measureAtlas(n)));
-    lib.measure();
+    if (opts.hero) lib.makeHero();
+    else lib.measure();
     return lib;
+  }
+
+  /**
+   * Stretch the rig into the anime hero's proportions (in metres). The
+   * KayKit body parts are left unused; heroes are built in code (char/hero).
+   */
+  private makeHero() {
+    const body = this.container.meshes.find((m) => m.name.startsWith('body_') && m.skeleton);
+    if (!body?.skeleton) {
+      this.measure();
+      return;
+    }
+    this.heroSkeleton = body.skeleton;
+    this.heroSide = (body as Mesh).sideOrientation ?? 0;
+    this.hero = stretchRig(this.container, body.skeleton);
+    // the hero is modelled in metres at its full height
+    this.heightUnits = 1.85;
   }
 
   /** Split every head_* mesh into <name>__face and <name>__hair by atlas cell. */

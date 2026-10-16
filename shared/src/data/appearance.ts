@@ -14,6 +14,7 @@ export const BODY_TYPES: (Option & { width: number; height: number; head: number
   { id: 'lean', name: 'Lean', width: 0.9, height: 1.03, head: 0.86 },
   { id: 'average', name: 'Average', width: 1.0, height: 1.0, head: 0.88 },
   { id: 'broad', name: 'Broad', width: 1.14, height: 0.98, head: 0.9 },
+  { id: 'graceful', name: 'Graceful', width: 0.9, height: 0.955, head: 0.86 },
 ];
 
 export const SKIN_TONES: ColorOption[] = [
@@ -37,11 +38,11 @@ export const FACES: Option[] = [
 ];
 
 export const HAIR_STYLES: Option[] = [
-  { id: 'knight', name: 'Short Crop' },
-  { id: 'rogue', name: 'Long Braid' },
-  { id: 'mage', name: 'Neat Part' },
-  { id: 'barbarian', name: 'Bearded' },
-  { id: 'none', name: 'Shaved' },
+  { id: 'tousled', name: 'Tousled' },
+  { id: 'braid', name: 'Long Braid' },
+  { id: 'sidepart', name: 'Side Part' },
+  { id: 'tail', name: 'High Tail' },
+  { id: 'buzz', name: 'Buzz Cut' },
 ];
 
 export const HAIR_COLORS: ColorOption[] = [
