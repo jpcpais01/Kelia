@@ -49,6 +49,11 @@ export interface GaitInput {
   armScale: { l: number; r: number };
   /** Full detail (arms, foot pitch); off far from the camera. */
   detail: boolean;
+  /**
+   * Mid attack or cast: the feet stay planted while the body lunges and
+   * turns, then step to catch up.
+   */
+  lock?: boolean;
 }
 
 interface Leg {
@@ -121,6 +126,13 @@ export class Gait {
   private lean = spring();
   private hipY = 0;
   private idleDrop = 0;
+  /** Footwork: each foot's offset from the clip's (world, planar), its step (0..1, -1 = planted) and where that started. */
+  private plantO = [new Vector3(), new Vector3()];
+  private stepT = [-1, -1];
+  private stepFrom = [new Vector3(), new Vector3()];
+  private stepLift = [0, 0];
+  private prevRoot: Vector3 | null = null;
+  private prevYaw = 0;
   private armW = 0;
   /** Per-frame trace for tests (set to [] to record). */
   debug: unknown[] | null = null;
@@ -298,12 +310,21 @@ export class Gait {
     const idleAnkles = clipAnkles.map((p, i) => p.add(new Vector3(0, offsets[i], 0)));
     const W = this.active ? this.w : 0;
 
+    const lift = this.footwork(dt, !!o.lock && W <= 0.002, clipAnkles, yaw, ls);
     if (W <= 0.002) {
       this.moveHips(Hc, new Vector3(Hc.x, Hc.y + this.idleDrop, Hc.z));
       for (let i = 0; i < 2; i++) {
         const l = this.legs[i];
-        if (Math.abs(offsets[i] - this.idleDrop) < 0.01) continue;
-        this.solveLeg(l, idleAnkles[i], null, 0);
+        const po = this.plantO[i];
+        const moved = po.lengthSquared() > 1e-6 || lift[i] > 1e-4;
+        if (!moved && Math.abs(offsets[i] - this.idleDrop) < 0.01) continue;
+        const t = idleAnkles[i];
+        if (moved) {
+          const c = clipAnkles[i];
+          t.set(c.x + po.x, 0, c.z + po.z);
+          t.y = c.y + Math.max(-0.45, Math.min(0.45, o.ground(t.x, t.z) - rootY)) + lift[i];
+        }
+        this.solveLeg(l, t, null, 0);
       }
       this.armW = 0;
       this.hipY = Hc.y + this.idleDrop;
@@ -511,6 +532,73 @@ export class Gait {
     this.phase = (duty - 0.002 - lead * 0.5 + 1) % 1;
     for (let i = 0; i < 2; i++) this.legs[i].prevP = (this.phase + i * 0.5) % 1;
     this.hipY = this.hips.absolutePosition.y;
+  }
+
+  /**
+   * Attack footwork. While `on`, each foot keeps its place in the world as
+   * the body lunges or turns under it (its offset from the clip's foot grows);
+   * once a foot is pulled too far it steps to catch up, the leading one
+   * first, so a lunge reads as a step into the blow and a turn as a pivot.
+   * Off, any offset left steps home. Returns each foot's lift.
+   */
+  private footwork(dt: number, on: boolean, clip: Vector3[], yaw: number, ls: number) {
+    const r = this.root.position;
+    const prev = this.prevRoot;
+    const lifts = [0, 0];
+    if (on && prev) {
+      const c0 = Math.cos(yaw - this.prevYaw);
+      const s0 = Math.sin(yaw - this.prevYaw);
+      for (let i = 0; i < 2; i++) {
+        if (this.stepT[i] >= 0) continue;
+        // where this foot would be had the body not moved (or turned) since last frame
+        const dx = clip[i].x - r.x;
+        const dz = clip[i].z - r.z;
+        const bx = prev.x + dx * c0 - dz * s0;
+        const bz = prev.z + dx * s0 + dz * c0;
+        this.plantO[i].x -= clip[i].x - bx;
+        this.plantO[i].z -= clip[i].z - bz;
+      }
+    }
+    const step = (i: number) => {
+      this.stepT[i] = 0;
+      this.stepFrom[i].copyFrom(this.plantO[i]);
+      this.stepLift[i] = Math.min(0.09, 0.03 + this.plantO[i].length() * 0.25) * ls;
+    };
+    if (this.stepT[0] < 0 && this.stepT[1] < 0) {
+      // the foot pulled furthest steps, favouring the one leading the way the body went
+      let pick = -1;
+      let best = 0;
+      for (let i = 0; i < 2; i++) {
+        const d = this.plantO[i].length();
+        if (d < (on ? 0.1 * ls : 0.02)) continue;
+        const lead = d > 1e-6 ? -((clip[i].x - r.x) * this.plantO[i].x + (clip[i].z - r.z) * this.plantO[i].z) / d : 0;
+        const score = d + 0.6 * lead;
+        if (pick < 0 || score > best) {
+          pick = i;
+          best = score;
+        }
+      }
+      if (pick >= 0) step(pick);
+    }
+    for (let i = 0; i < 2; i++) {
+      if (this.stepT[i] < 0) {
+        // nothing to step off: let small offsets go
+        if (!on) this.plantO[i].scaleInPlace(Math.exp(-dt * 20));
+        continue;
+      }
+      this.stepT[i] = Math.min(1, this.stepT[i] + dt / 0.15);
+      const u = this.stepT[i];
+      const e = u * u * (3 - 2 * u);
+      this.plantO[i].copyFrom(this.stepFrom[i]).scaleInPlace(1 - e);
+      lifts[i] = Math.sin(Math.PI * u) * this.stepLift[i];
+      if (u >= 1) {
+        this.stepT[i] = -1;
+        this.plantO[i].setAll(0);
+      }
+    }
+    this.prevRoot = r.clone();
+    this.prevYaw = yaw;
+    return lifts;
   }
 
   /** Move the hips bone so its world position becomes `to` (from `from`). */
