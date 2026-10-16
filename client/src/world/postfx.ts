@@ -151,7 +151,8 @@ float lumaOf(vec3 c) {
   return l / (1.0 + l);
 }
 
-vec3 sceneAt(vec2 uv) { return texture2D(sceneSampler, uv).rgb; }
+// explicit LOD: FXAA samples inside a branch, and WGSL rejects implicit-derivative sampling there (black screen on WebGPU)
+vec3 sceneAt(vec2 uv) { return textureLod(sceneSampler, uv, 0.0).rgb; }
 
 void main(void) {
   vec3 col = sceneAt(vUV);

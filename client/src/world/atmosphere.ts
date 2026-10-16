@@ -183,7 +183,7 @@ export class Atmosphere {
 
     // --- stylized lighting state
     const keyI = s.sunIntensity * (sunUp ? 0.3 : 0.42) * (0.35 + 0.65 * twilight);
-    toon.sunDir.set(-this.lightDir.x, -this.lightDir.y, -this.lightDir.z, this.shadows ? (sunUp ? 0.92 : 0.6) * (0.4 + 0.6 * twilight) : 0);
+    toon.sunDir.set(-this.lightDir.x, -this.lightDir.y, -this.lightDir.z, this.shadows ? (sunUp ? 0.97 : 0.62) * (0.4 + 0.6 * twilight) : 0);
     toon.sun.set(s.sun.r * keyI, s.sun.g * keyI, s.sun.b * keyI, 0);
     const amb = s.ambient;
     // sky light: a bright, slightly blue fill so shadowed sides keep their colour
@@ -194,13 +194,23 @@ export class Atmosphere {
       0.55 + 0.45 * (1 - s.night),
     );
     toon.ground.set(s.fog.r * amb * 0.42 + s.sun.r * keyI * 0.05, s.fog.g * amb * 0.42 + s.sun.g * keyI * 0.05, s.fog.b * amb * 0.42 + s.sun.b * keyI * 0.04, 0);
-    // shadow tint: cool lavender by day, deep blue at night
-    toon.shade.set(0.78 - 0.1 * s.night, 0.8 - 0.06 * s.night, 0.98, 0.06);
-    toon.fog.set(s.fog.r, s.fog.g, s.fog.b, s.fogDensity * 0.82 * this.fogScale);
-    toon.fog2.set(0.011, 4, sunUp ? 0.9 : 0.35, 0.97);
+    // shadow tint: shade is lit by the blue sky alone, so it sits deep and
+    // cool (a clear step down from the sunlit side), deep blue at night
+    toon.shade.set(0.62 - 0.06 * s.night, 0.69 - 0.04 * s.night, 0.93, 0.06);
+    // Aerial perspective: a thin, blue haze. Distance turns things blue long
+    // before it washes them out, so far mountains keep their sunlit and shaded
+    // faces. By day the haze leans toward the sky's own blue; at sunrise and
+    // sunset it keeps the warm fog colour.
+    const day = Math.min(1, Math.max(0, (1.1 - s.glow) / 0.6)) * (1 - s.night);
+    const blue = 0.32 * day;
+    const skyR = s.horizon.r * 0.6 + s.zenith.r * 0.4;
+    const skyG = s.horizon.g * 0.6 + s.zenith.g * 0.4;
+    const skyB = s.horizon.b * 0.6 + s.zenith.b * 0.4;
+    toon.fog.set(s.fog.r + (skyR - s.fog.r) * blue, s.fog.g + (skyG - s.fog.g) * blue, s.fog.b + (skyB - s.fog.b) * blue, s.fogDensity * 0.52 * this.fogScale);
+    toon.fog2.set(0.011, 4, sunUp ? 0.9 : 0.35, 0.94);
     toon.fogSun.set(Math.min(1.6, s.fog.r * 0.45 + s.sun.r * 0.75), Math.min(1.6, s.fog.g * 0.45 + s.sun.g * 0.68), Math.min(1.6, s.fog.b * 0.45 + s.sun.b * 0.5), 0);
     const glowDir = sunUp ? this.sunDir : this.moonDir;
-    toon.fogDir.set(glowDir.x, glowDir.y, glowDir.z, 0);
+    toon.fogDir.set(glowDir.x, glowDir.y, glowDir.z, day);
 
     if (this.shadows) {
       this.placeShadowCamera();

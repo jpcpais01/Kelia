@@ -38,6 +38,7 @@ import { HeroSurface } from './hero/surface';
 import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
 import { setToon } from '../world/toon';
+import { trackContact } from '../world/contact';
 import { INK, InkScaler, inkCharacter, inkFor } from './style';
 import { spring, stepSpring } from './spring';
 
@@ -234,6 +235,7 @@ export class CharacterModel {
   constructor(private scene: Scene, private lib: RigLibrary, look: Look, name = 'character') {
     this.root = new TransformNode(name, scene);
     perf.tag(this.root, 'characters');
+    trackContact(this.root, 0.42, CHARACTER_HEIGHT);
     this.body = new TransformNode(name + '_body', scene);
     this.body.parent = this.root;
     this.setLook(look);
