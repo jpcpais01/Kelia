@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T08:20:00Z',
+    title: 'Outfits with real detail',
+    lines: ["Outfits get a detail pass. The Northman's mantle is now layered fur, with dark under-fur, shaggy tufts over the shoulders and a fur collar, and fur boots get shaggy cuffs. Skirts, robes and capes have deeper folds that catch the light, with shadow in the hollows. Metal plates and pauldrons shine toward the top. Belts have proper buckles and leather pouches with flaps. The Wanderer's scarf is wrapped twice and knotted, with its ends hanging over the chest, and their tunic has a buttoned placket."],
+  },
+  {
     at: '2026-10-16T07:55:00Z',
     title: 'Faces that react',
     lines: ["Heroes' faces now come alive. They blink every few seconds (sometimes twice), narrow their eyes, knit their brows and shout as they swing, and squeeze their eyes shut and grit their teeth when they take a hit. Jaws and cheeks are softer and rounder, so faces read less pointy. Other players' faces react the same way when you're close enough to see them."],

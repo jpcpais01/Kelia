@@ -9,7 +9,7 @@ import { blend, clamp01, Geo, lerp, one, smooth, type Ring, type Weights } from 
 import { scalp, type LockRegion } from './hair';
 import { SHEETS, sheetWeights, type ChainJoints } from './chains';
 import type { HeroRest } from './rig';
-import { SW, uvOf, type Swatch } from './palette';
+import { SW, uvAlong, uvOf, type Swatch } from './palette';
 import type { Headgear } from '@kelia/shared';
 
 const X = new Vector3(1, 0, 0);
@@ -73,7 +73,7 @@ function torsoLayer(c: OutfitCtx, y0: number, y1: number, add: number, sw: Swatc
       const y = lerp(y0, y1, i / rows);
       const t = torsoRing(y, c.build);
       const k = add * (1 - 0.35 * smooth(1.43, 1.5, y));
-      rings.push({ c: new Vector3(0, y, 0), x: X, z: Z, a: t.a + k, f: t.f + k, b: t.b + k, n: t.n, r: bustBulge(t.bust), w: torsoWeights, uv: uvOf(sw) });
+      rings.push({ c: new Vector3(0, y, 0), x: X, z: Z, a: t.a + k, f: t.f + k, b: t.b + k, n: t.n, r: bustBulge(t.bust), w: torsoWeights, uv: uvAlong(sw, lerp(0.3, 0.78, i / rows)) });
     }
     c.g.loft(rings, { segs: 36, capStart: 0.001, capEnd: 0.001, t0: -Math.PI / 2 });
   } else {
@@ -178,14 +178,19 @@ function skirt(
       for (let j = 0; j < mid[i].length; j++) {
         const p = mid[i][j];
         const ang = Math.atan2(p.z, p.x);
-        const k = 1 + 0.06 * s * Math.sin(ang * 9);
+        const k = 1 + 0.085 * s * Math.sin(ang * 9);
         p.x *= k;
         p.z *= k;
       }
     }
     c.g.sheet(mid, o.thick ?? 0.009, {
       wrap,
-      uv: (i, _j, outside) => uvOf(o.trim && i >= rows - 1 ? o.trim : !outside && o.inner ? o.inner : sw),
+      // folds: the ridges catch the light, the hollows between them and the waist under the belt fall dark
+      uv: (i, _j, outside, p) => {
+        const s = i / rows;
+        const t = 0.5 + 0.45 * Math.sin(Math.atan2(p.z, p.x) * 9) * smooth(0, 0.5, s) - 0.16 * (1 - smooth(0, 0.3, s));
+        return uvAlong(o.trim && i >= rows - 1 ? o.trim : !outside && o.inner ? o.inner : sw, outside ? t : t - 0.2);
+      },
       w: ringW,
       out: (p) => new Vector3(p.x, 0, p.z),
     });
@@ -238,7 +243,7 @@ function pauldron(c: OutfitCtx, sw: Swatch, trim: Swatch | null, layers = 2, siz
         mid.push(row);
       }
       c.g.sheet(mid, 0.01, {
-        uv: (i) => uvOf(trim && i >= rows - 1 ? trim : sw),
+        uv: (i) => uvAlong(trim && i >= rows - 1 ? trim : sw, 0.85 - 0.6 * (i / rows)),
         w: (p) => blend(one('chest'), one(`upperarm.${s}`), clampW(0.55 + 0.6 * (side * p.x - j.x * side) / 0.08)),
         out: (p) => p.subtract(cen),
       });
@@ -265,12 +270,154 @@ function mantle(c: OutfitCtx, sw: Swatch, o: { tufts?: number; size?: number; dr
       f: Math.max(t.f, 0.09) * k + 0.018,
       b: Math.max(t.b, 0.09) * k + 0.022,
       n: 2,
-      r: tufts ? (a) => 1 + (i === 0 ? 0.09 : 0.04) * Math.pow(Math.abs(Math.sin(a * tufts * 0.5)), 0.5) : undefined,
+      r: tufts ? (a) => 1 + (i === 0 ? 0.05 : 0.02) * Math.pow(Math.abs(Math.sin(a * tufts * 0.5)), 0.5) : undefined,
       w: (p) => blend(one('chest'), one(p.x > 0 ? 'upperarm.l' : 'upperarm.r'), 0.25 * smooth(0.12, 0.2, Math.abs(p.x))),
       uv: uvOf(i === 0 && o.dark ? o.dark : sw),
     });
   });
   c.g.loft(rings, { segs: 40, capStart: 0.004, capEnd: 0.002, t0: -Math.PI / 2 });
+  if (tufts) {
+    // fur: rows of tufts spilling over the edge and lying on top
+    const ring = (y: number, k: number, lift: number) => (a: number) => {
+      const t = torsoRing(Math.min(y, 1.44), c.build);
+      const cs = Math.cos(a);
+      const sn = Math.sin(a);
+      const ax = Math.max(t.a, 0.16) * k * size + 0.018;
+      const az = (sn > 0 ? Math.max(t.f, 0.09) : Math.max(t.b, 0.09)) * k * size + 0.02;
+      const p = new Vector3(cs * ax, y, sn * az - 0.005);
+      const out = new Vector3(cs / ax, lift, sn / az).normalize();
+      return { p, out, w: blend(one('chest'), one(p.x > 0 ? 'upperarm.l' : 'upperarm.r'), 0.25 * smooth(0.12, 0.2, Math.abs(p.x))) };
+    };
+    const y0 = 1.375 - (o.drop ?? 0);
+    // a dark under-layer, then light fur spilling over the edge, then the shoulders and the collar
+    if (o.dark) furTufts(c.g, tufts + 10, ring(y0 - 0.005, 1.05, -0.1), { len: 0.085, wid: 0.036, droop: 0.9, light: o.dark, seed: 4 });
+    furTufts(c.g, tufts + 14, ring(y0 + 0.01, 1.1, 0), { len: 0.07, wid: 0.034, droop: 0.82, seed: 1 });
+    furTufts(c.g, tufts + 8, ring(1.43, 1.07, 0.6), { len: 0.065, wid: 0.034, droop: 0.58, seed: 2 });
+    furTufts(c.g, tufts, ring(1.49, 0.86, 1.6), { len: 0.05, wid: 0.03, droop: 0.3, seed: 3 });
+  }
+}
+
+/** A repeatable 0..1 hash. */
+const hash = (i: number) => {
+  const j = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+  return j - Math.floor(j);
+};
+
+/**
+ * Fur: a ring of short pointed tufts round `at(a)` (a point, its outward
+ * direction and weights at angle a), each leaning out and down, shaded
+ * from dark roots to light tips.
+ */
+function furTufts(
+  g: Geo,
+  n: number,
+  at: (a: number) => { p: Vector3; out: Vector3; w: Weights },
+  o: { len: number; wid: number; droop?: number; light?: Swatch; dark?: Swatch; seed?: number; arc?: [number, number] },
+) {
+  const droop = o.droop ?? 0.6;
+  const [a0, a1] = o.arc ?? [0, Math.PI * 2];
+  const full = a1 - a0 >= Math.PI * 2 - 1e-6;
+  for (let i = 0; i < n; i++) {
+    const r = hash(i + (o.seed ?? 0) * 31);
+    const a = a0 + ((i + (full ? 0.35 * (r - 0.5) : 0.5)) / n) * (a1 - a0);
+    const { p, out, w } = at(a);
+    const len = o.len * (0.75 + 0.5 * r);
+    const down = new Vector3(0, -1, 0);
+    const dir = out.scale(1 - droop).add(down.scale(droop)).normalize();
+    const side = Vector3.Cross(out, down).normalize().scale((hash(i * 7 + 3) - 0.5) * 0.8 * len);
+    const pts = [p.subtract(dir.scale(0.006)), p.add(dir.scale(len * 0.45)).add(out.scale(len * 0.12)), p.add(dir.scale(len)).add(down.scale(len * 0.2 * droop)).add(side)];
+    const col = o.dark && i % 3 === 1 ? o.dark : (o.light ?? SW.fur);
+    g.ribbon(pts, {
+      samples: 4,
+      segs: 6,
+      width: (s) => o.wid * (0.8 + 0.4 * r) * Math.pow(1 - s, 1.1) * lerp(0.75, 1, Math.min(1, s * 5)),
+      thick: (s) => o.wid * 0.35 * (1 - 0.7 * s),
+      normal: () => out,
+      w: () => w,
+      uv: (s) => uvAlong(col, 0.15 + 0.85 * s),
+      cup: () => -o.wid * 0.12,
+    });
+  }
+}
+
+/** A cuff of fur round a limb at distance `d` along its chain (boot tops). */
+function furCuff(c: OutfitCtx, names: string[], d: number, r: number, w: Weights, o: { light?: Swatch; dark?: Swatch; seed?: number } = {}) {
+  const pts = names.map((n) => c.rest.pos(n));
+  const { p, t } = along(pts, d);
+  const z = Z.subtract(t.scale(Vector3.Dot(Z, t))).normalize();
+  const x = Vector3.Cross(t, z).normalize();
+  // a soft roll of fur under the tufts
+  c.g.loft(
+    [0, 0.5, 1].map((k) => ({ c: p.add(t.scale((k - 0.5) * 0.04)), x, z, a: r * (1 + 0.12 * Math.sin(k * Math.PI)), f: r * (1 + 0.12 * Math.sin(k * Math.PI)), b: r * (1 + 0.12 * Math.sin(k * Math.PI)), n: 2, w, uv: uvAlong(o.light ?? SW.fur, 0.5) })),
+    { segs: 18, capStart: 0.003, capEnd: 0.003 },
+  );
+  furTufts(c.g, 14, (a) => {
+    const out = x.scale(Math.cos(a)).add(z.scale(Math.sin(a)));
+    return { p: p.add(out.scale(r * 1.05)).add(t.scale(-0.012)), out, w };
+  }, { len: 0.045, wid: 0.03, droop: 0.75, light: o.light, dark: o.dark, seed: o.seed });
+}
+
+/** A belt buckle on the front of the waist at `y` (over a band `add` thick): a metal frame and its pin. */
+function buckle(c: OutfitCtx, y: number, add: number, sw: Swatch, strap: Swatch, size = 1) {
+  const z = torsoRing(y, c.build).f + add + 0.008;
+  const w = 0.022 * size;
+  const h = 0.019 * size;
+  const t = 0.0045 * size;
+  const at = (x: number, yy: number) => new Vector3(x, y + yy, z);
+  const bar = (p: Vector3, r: [number, number, number], col: Swatch) => c.g.blob(p, [X, Y, Z], r, one('hips'), uvOf(col), { lat: 4, lon: 8, n: 5 });
+  bar(at(0, h), [w + t, t, t], sw);
+  bar(at(0, -h), [w + t, t, t], sw);
+  bar(at(-w, 0), [t, h, t], sw);
+  bar(at(w, 0), [t, h, t], sw);
+  // the strap shows through the frame, the pin across it
+  bar(at(0, 0).add(new Vector3(0, 0, -t * 0.6)), [w - t, h - t, t * 0.5], strap);
+  bar(at(-w * 0.15, 0).add(new Vector3(0, 0, t * 0.4)), [w * 0.62, t * 0.55, t * 0.55], sw);
+}
+
+/** A leather pouch on the belt at `y`, `angDeg` round the waist (0 = left side, 90 = front). */
+function pouch(c: OutfitCtx, y: number, angDeg: number, body: Swatch, flap: Swatch, size = 1) {
+  const a = (angDeg * Math.PI) / 180;
+  const t = torsoRing(y, c.build);
+  const out = new Vector3(Math.cos(a) / t.a, 0, Math.sin(a) / t.f).normalize();
+  const along = Vector3.Cross(Y, out).normalize();
+  const k = size;
+  const base = new Vector3(Math.cos(a) * t.a, y, Math.sin(a) * t.f).add(out.scale(0.028 * k));
+  const w = one('hips');
+  c.g.blob(base.add(new Vector3(0, -0.03 * k, 0)), [along, Y, out], [0.032 * k, 0.036 * k, 0.019 * k], w, uvAlong(body, 0.45), { lat: 6, lon: 10, n: 4 });
+  // the flap over the top, a little proud of the body, with a stud
+  c.g.blob(base.add(new Vector3(0, -0.006 * k, 0.0)).add(out.scale(0.006 * k)), [along, Y, out], [0.035 * k, 0.017 * k, 0.017 * k], w, uvAlong(flap, 0.6), { lat: 6, lon: 10, n: 4 });
+  c.g.blob(base.add(new Vector3(0, -0.018 * k, 0)).add(out.scale(0.022 * k)), [along, Y, out], [0.005, 0.005, 0.003], w, uvOf(SW.gold(0)), { lat: 4, lon: 8 });
+}
+
+/** Where the front of the torso is at height y (over the bust), plus `add`. */
+function frontZ(c: OutfitCtx, y: number, add = 0) {
+  const t = torsoRing(y, c.build);
+  const bu = bustBulge(t.bust);
+  return (t.f + add) * (bu ? bu(Math.PI / 2) : 1);
+}
+
+/** A placket down the front of a tunic from y0 to y1 with buttons. */
+function placket(c: OutfitCtx, y0: number, y1: number, sw: Swatch, button: Swatch, buttons = 3) {
+  const pts = [0, 0.25, 0.5, 0.75, 1].map((k) => {
+    const y = lerp(y0, y1, k);
+    return new Vector3(0, y, frontZ(c, y, 0.003));
+  });
+  c.g.ribbon(pts, { samples: 4, segs: 8, width: () => 0.014, thick: () => 0.004, normal: () => Z, w: (_s, p) => torsoWeights(p), uv: () => uvAlong(sw, 0.4), tipPoint: false, n: 4 });
+  for (let i = 0; i < buttons; i++) {
+    const y = lerp(y0, y1, (i + 0.5) / buttons);
+    c.g.blob(new Vector3(0, y, frontZ(c, y, 0.008)), [X, Y, Z], [0.007, 0.007, 0.0035], torsoWeights(new Vector3(0, y, 0)), uvOf(button), { lat: 4, lon: 8 });
+  }
+}
+
+/** Fur cuffs over the tops of fur boots. */
+function bootCuffs(c: OutfitCtx) {
+  for (const side of [-1, 1] as const) {
+    const s = side > 0 ? 'l' : 'r';
+    const names = legNames(s);
+    const pts = names.map((n) => c.rest.pos(n));
+    const total = Vector3.Distance(pts[0], pts[1]) + Vector3.Distance(pts[1], pts[2]);
+    furCuff(c, names, total - c.dress.boot + 0.008, 0.05 * lerp(1, c.build.limb, 0.7), one(`lowerleg.${s}`), { dark: SW.furDark, seed: side > 0 ? 5 : 6 });
+  }
 }
 
 /** The cape: hangs from the shoulders behind the body, flaring to the calves. */
@@ -296,7 +443,7 @@ function cape(c: OutfitCtx, sw: Swatch, lining: Swatch, o: { bottom?: number; fl
     const row: Vector3[] = [];
     for (let j = 0; j <= cols; j++) {
       const a = lerp(-A, A, j / cols);
-      row.push(at(s, a, 1 + 0.07 * s * Math.sin(a * 7)));
+      row.push(at(s, a, 1 + 0.085 * s * Math.sin(a * 7)));
     }
     mid.push(row);
   }
@@ -307,7 +454,12 @@ function cape(c: OutfitCtx, sw: Swatch, lining: Swatch, o: { bottom?: number; fl
     c.chains[name] = [0, 1, 2, 3, 4].map((r) => at(r / 4, (k - 1) * span(r / 4) * reach));
   });
   c.cape.sheet(mid, 0.011, {
-    uv: (i, _j, outside) => uvOf(o.trim && i === rows ? o.trim : outside ? sw : lining),
+    uv: (i, j, outside) => {
+      const s = i / rows;
+      const a = lerp(-span(s), span(s), j / cols);
+      const t = 0.5 + 0.42 * Math.sin(a * 7) * smooth(0, 0.5, s) - 0.12 * (1 - smooth(0, 0.25, s));
+      return uvAlong(o.trim && i === rows ? o.trim : outside ? sw : lining, outside ? t : t - 0.18);
+    },
     w: (p) => {
       const s = Math.max(0, Math.min(1, (top - p.y) / (top - bottom)));
       const a = Math.atan2(p.x, -(p.z - 0.012));
@@ -321,24 +473,46 @@ function cape(c: OutfitCtx, sw: Swatch, lining: Swatch, o: { bottom?: number; fl
   }
 }
 
-/** A scarf wrapped round the neck with a tail over the shoulder. */
+/** A scarf wrapped twice round the neck, knotted at the front, its ends hanging over the chest and down the back. */
 function scarf(c: OutfitCtx, sw: Swatch) {
   const rings: Ring[] = [];
-  for (const [y, r] of [[1.45, 0.085], [1.485, 0.078], [1.52, 0.066], [1.545, 0.06]] as const) {
-    rings.push({ c: new Vector3(0, y, 0.0), x: X, z: Z, a: r, f: r * 1.02, b: r, n: 2.2, r: (t) => 1 + 0.04 * Math.sin(t * 5), w: blend(one('chest'), one('head'), smooth(1.5, 1.6, y) * 0.5), uv: uvOf(sw) });
-  }
-  c.g.loft(rings, { segs: 28, capStart: 0.002, capEnd: 0.002 });
-  // the tail: down the back over the left shoulder blade
-  c.g.ribbon([new Vector3(0.05, 1.5, -0.07), new Vector3(0.08, 1.42, -0.11), new Vector3(0.1, 1.3, -0.12), new Vector3(0.11, 1.16, -0.11)], {
-    samples: 6,
-    segs: 8,
-    width: (s) => lerp(0.035, 0.03, s),
-    thick: () => 0.007,
-    normal: (_s, p) => new Vector3(0, 0, -1).add(new Vector3(p.x * 2, 0, 0)),
-    w: () => one('chest'),
-    uv: () => uvOf(sw),
-    tipPoint: false,
+  const keys = [[1.43, 0.09], [1.455, 0.1], [1.49, 0.094], [1.52, 0.082], [1.548, 0.07]] as const;
+  keys.forEach(([y, r], i) => {
+    rings.push({
+      c: new Vector3(0, y, -0.004),
+      x: X,
+      z: Z,
+      a: r,
+      f: r * 1.04,
+      b: r,
+      n: 2.2,
+      // two wraps: a soft crease between them, wavy folds round the neck
+      r: (t) => 1 + 0.05 * Math.sin(t * 6 + i) - (i === 2 ? 0.035 : 0),
+      w: blend(one('chest'), one('head'), smooth(1.5, 1.6, y) * 0.5),
+      uv: uvAlong(sw, i === 2 ? 0.25 : 0.6 - 0.1 * (i % 2)),
+    });
   });
+  c.g.loft(rings, { segs: 32, capStart: 0.003, capEnd: 0.003 });
+  // the knot, left of the throat
+  const knot = new Vector3(0.035, 1.455, 0.088);
+  c.g.blob(knot, [X, Y, Z], [0.03, 0.026, 0.022], one('chest'), uvAlong(sw, 0.55), { lat: 7, lon: 12 });
+  // two ends over the chest, one longer, and the long tail down the back
+  const end = (pts: Vector3[], wid: number, out: Vector3) =>
+    c.g.ribbon(pts, {
+      samples: 6,
+      segs: 8,
+      width: (s) => lerp(wid * 0.7, wid, Math.min(1, s * 3)) * (1 + 0.12 * Math.sin(s * 9)),
+      thick: () => 0.009,
+      normal: (s) => out.add(new Vector3(0.25 * Math.sin(s * 4), 0, 0)),
+      w: () => one('chest'),
+      uv: (s) => uvAlong(sw, 0.65 - 0.35 * s),
+      cup: (s) => 0.012 * Math.min(1, s * 2),
+      n: 2.6,
+      tipPoint: false,
+    });
+  end([knot.add(new Vector3(0.0, -0.01, 0.01)), new Vector3(0.05, 1.38, 0.115), new Vector3(0.06, 1.3, 0.13), new Vector3(0.065, 1.2, 0.13)], 0.04, Z);
+  end([knot.add(new Vector3(0.012, -0.012, 0.014)), new Vector3(0.09, 1.39, 0.11), new Vector3(0.105, 1.33, 0.125), new Vector3(0.112, 1.27, 0.125)], 0.036, Z);
+  end([new Vector3(0.05, 1.5, -0.08), new Vector3(0.08, 1.42, -0.12), new Vector3(0.1, 1.3, -0.13), new Vector3(0.11, 1.12, -0.12)], 0.045, Z.scale(-1));
 }
 
 // ------------------------------------------------------------------ headgear
@@ -501,7 +675,8 @@ export const OUTFIT_DEFS: OutfitDef[] = [
     garments: (c) => {
       torsoLayer(c, 1.05, 1.47, 0.016, steel, { trim: gold });
       torsoBand(c, 0.985, 1.025, 0.02, SW.leather(0));
-      c.g.blob(new Vector3(0, 1.005, torsoRing(1.005, c.build).f + 0.026), [X, Y, Z], [0.022, 0.018, 0.008], one('hips'), uvOf(gold), { lat: 6, lon: 10, n: 3 });
+      buckle(c, 1.005, 0.02, gold, SW.leather(0));
+      pouch(c, 0.995, 35, SW.leather(0), SW.leather(0), 0.85);
       skirt(c, 1.0, 0.7, 0.045, SW.cloth(2), { panels: [[-62, 62], [70, 150], [158, 202], [210, 290]], trim: gold, inner: SW.cloth(3) });
       pauldron(c, steel, gold, 2);
       cape(c, SW.cloth(2), SW.cloth(3), { trim: gold });
@@ -530,7 +705,9 @@ export const OUTFIT_DEFS: OutfitDef[] = [
       torsoLayer(c, 1.03, 1.42, 0.012, SW.leather(0), { open: 0.32, inner: SW.leather(1) });
       skirt(c, 1.0, 0.76, 0.03, SW.cloth(0), { panels: [[-70, 70], [110, 250]], inner: SW.cloth(2) });
       torsoBand(c, 0.99, 1.02, 0.024, SW.leather(1));
-      c.g.blob(new Vector3(0.13, 0.96, 0.05), [X, Y, Z], [0.03, 0.035, 0.022], one('hips'), uvOf(SW.leather(0)), { lat: 6, lon: 10, n: 3 });
+      buckle(c, 1.005, 0.024, gold, SW.leather(1), 0.9);
+      pouch(c, 1.0, 30, SW.leather(0), SW.leather(1));
+      pouch(c, 1.0, 152, SW.leather(0), SW.leather(1), 0.8);
       for (const side of [-1, 1] as const) {
         const s = side > 0 ? 'l' : 'r';
         limbBand(c, legNames(s), 0.535, 0.575, 0.06, 0.063, SW.leather(1), () => one(`lowerleg.${s}`));
@@ -582,7 +759,9 @@ export const OUTFIT_DEFS: OutfitDef[] = [
     garments: (c) => {
       mantle(c, SW.fur, { tufts: 22, size: 1.05, dark: SW.furDark });
       torsoBand(c, 0.97, 1.03, 0.026, SW.leather(1));
-      c.g.blob(new Vector3(0, 1.0, torsoRing(1.0, c.build).f + 0.03), [X, Y, Z], [0.03, 0.026, 0.01], one('hips'), uvOf(steel), { lat: 6, lon: 10, n: 3 });
+      buckle(c, 1.0, 0.026, steel, SW.leather(1), 1.2);
+      pouch(c, 0.99, 140, SW.leather(0), SW.leather(1));
+      bootCuffs(c);
       skirt(c, 0.99, 0.72, 0.06, SW.cloth(2), { panels: [[-35, 35], [145, 215]], inner: SW.leather(1) });
       for (const side of [-1, 1] as const) {
         const s = side > 0 ? 'l' : 'r';
@@ -601,12 +780,17 @@ export const OUTFIT_DEFS: OutfitDef[] = [
       [SW.cloth(3), '#cbb894'],
       [SW.leather(0), '#7a5236'],
       [SW.leather(1), '#463024'],
+      [steel, '#b9c0c9'],
+      [gold, '#c99a4a'],
     ],
     dress: { top: SW.cloth(0), bottom: SW.cloth(1), waistY: 1.0, sleeve: 'elbow', sleeveColor: SW.cloth(0), glove: 'fingerless', gloveColor: SW.cloth(3), gloveLen: 0.9, trousers: SW.cloth(1), boot: 0.28, bootColor: SW.fur, bootSole: SW.leather(1) },
     garments: (c) => {
       skirt(c, 1.0, 0.74, 0.035, SW.cloth(0), { panels: [[-80, 80], [100, 260]], inner: SW.cloth(3) });
       torsoBand(c, 0.985, 1.02, 0.024, SW.leather(0));
-      c.g.blob(new Vector3(-0.12, 0.95, 0.07), [X, Y, Z], [0.028, 0.032, 0.02], one('hips'), uvOf(SW.leather(1)), { lat: 6, lon: 10, n: 3 });
+      buckle(c, 1.0, 0.024, steel, SW.leather(0), 0.85);
+      placket(c, 1.4, 1.05, SW.cloth(3), SW.leather(1));
+      pouch(c, 0.995, 145, SW.leather(1), SW.leather(0));
+      bootCuffs(c);
       scarf(c, SW.cloth(2));
     },
   },

@@ -122,9 +122,20 @@ export class HeroAtlas {
     ramp(SW.hairLight, 1.25, 18);
     put(SW.ink, '#1d1520');
     put(SW.white, '#f4f0ea');
-    put(SW.fur, '#d9cdb8');
-    put(SW.furDark, '#6b5240');
-    for (const [s, col] of c.outfit) put(s, col);
+    // outfit swatches shade from folds and shadow (left) to sunlit (right) round
+    // the plain colour in the middle, so garments can paint their own folds
+    const shadeRamp = (s: Swatch, col: string, lo = 0.68, hi = 1.12, add = 6) => {
+      const x = s[1] * CELL;
+      const g = ctx.createLinearGradient(x + CELL * 0.14, 0, x + CELL * 0.86, 0);
+      g.addColorStop(0, shade(col, lo));
+      g.addColorStop(0.5, col);
+      g.addColorStop(1, shade(col, hi, add));
+      ctx.fillStyle = g;
+      ctx.fillRect(x, s[0] * CELL, CELL, CELL);
+    };
+    shadeRamp(SW.fur, '#d9cdb8', 0.62, 1.1, 10);
+    shadeRamp(SW.furDark, '#6b5240', 0.6, 1.2, 14);
+    for (const [s, col] of c.outfit) shadeRamp(s, col);
   }
 
   update() {
