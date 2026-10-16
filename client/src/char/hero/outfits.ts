@@ -5,7 +5,7 @@
 // mesh kit and coloured from the outfit's own swatches.
 import { Vector3 } from '@babylonjs/core';
 import { along, bustBulge, torsoRing, torsoWeights, type Build, type Dress } from './body';
-import { blend, Geo, lerp, one, smooth, type Ring, type Weights } from './geo';
+import { blend, clamp01, Geo, lerp, one, smooth, type Ring, type Weights } from './geo';
 import { scalp, type LockRegion } from './hair';
 import { SHEETS, sheetWeights, type ChainJoints } from './chains';
 import type { HeroRest } from './rig';
@@ -121,6 +121,32 @@ function skirt(
 ) {
   const rows = o.rows ?? 10;
   const panels = o.panels ?? [[0, 360]];
+  // the skirt hangs on a ring of chains from the hips (left, front, right, back) and swings on them
+  const ring = SHEETS[1].chains;
+  const at = (s: number, angDeg: number) => {
+    const y = lerp(top, bottom, s);
+    const t = torsoRing(Math.max(0.86, y), c.build);
+    const ang = (angDeg * Math.PI) / 180;
+    const cs = Math.cos(ang);
+    const sn = Math.sin(ang);
+    const out = 0.014 + flare * s * s * 0.6 + flare * s * 0.4;
+    const ax = t.a + out + smooth(0.9, 0.6, y) * 0.03 * Math.abs(cs);
+    const az = (sn > 0 ? t.f : t.b) + out;
+    return new Vector3(Math.sign(cs) * Math.pow(Math.abs(cs), 0.9) * ax, y, Math.sign(sn) * Math.pow(Math.abs(sn), 0.9) * az);
+  };
+  if (!c.chains[ring[0]]) ring.forEach((name, k) => (c.chains[name] = [0, 1, 2, 3].map((r) => at(r / 3, k * 90))));
+  const ringW = (p: Vector3): Weights => {
+    const s = clamp01((top - p.y) / Math.max(0.05, top - bottom));
+    const col = (Math.atan2(p.z, p.x) * 180) / Math.PI / 90;
+    const hang = sheetWeights(ring, col, s * 3, torsoWeights(new Vector3(p.x, Math.max(p.y, 0.95), p.z)), 0.35, true);
+    // the hem still follows the legs a little, so a striding leg never pokes out of a long robe
+    const side = smooth(-0.07, 0.07, p.x);
+    const legs: Weights = [
+      ['upperleg.l', side],
+      ['upperleg.r', 1 - side],
+    ];
+    return blend(hang, legs, 0.4 * smooth(top - 0.02, bottom, p.y));
+  };
   for (const [a0, a1] of panels) {
     const wrap = a1 - a0 >= 360;
     const cols = Math.max(4, Math.round(((a1 - a0) / 360) * 40));
@@ -157,19 +183,10 @@ function skirt(
         p.z *= k;
       }
     }
-    const legW = (p: Vector3): Weights => {
-      const s = smooth(top - 0.02, bottom, p.y);
-      const side = smooth(-0.07, 0.07, p.x);
-      const legs: Weights = [
-        ['upperleg.l', side],
-        ['upperleg.r', 1 - side],
-      ];
-      return blend(torsoWeights(new Vector3(p.x, Math.max(p.y, 0.95), p.z)), legs, 0.62 * s);
-    };
     c.g.sheet(mid, o.thick ?? 0.009, {
       wrap,
       uv: (i, _j, outside) => uvOf(o.trim && i >= rows - 1 ? o.trim : !outside && o.inner ? o.inner : sw),
-      w: legW,
+      w: ringW,
       out: (p) => new Vector3(p.x, 0, p.z),
     });
   }
@@ -284,7 +301,7 @@ function cape(c: OutfitCtx, sw: Swatch, lining: Swatch, o: { bottom?: number; fl
     mid.push(row);
   }
   // three chains down the back (the cape swings, trails and folds on them)
-  const sheet = SHEETS[0];
+  const sheet = SHEETS[0].chains;
   const reach = 0.62;
   sheet.forEach((name, k) => {
     c.chains[name] = [0, 1, 2, 3, 4].map((r) => at(r / 4, (k - 1) * span(r / 4) * reach));

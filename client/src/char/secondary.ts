@@ -23,8 +23,9 @@ interface Feel {
   colliders: string[];
 }
 
-const FEEL: Record<'hair' | 'cloth', Feel> = {
+const FEEL: Record<'hair' | 'cloth' | 'skirt', Feel> = {
   hair: { freq: 2.6, zeta: 0.32, drag: 0.7, hang: 0.8, reach: 0.55, colliders: ['head', 'torso', 'shoulders'] },
+  skirt: { freq: 1.8, zeta: 0.3, drag: 1.0, hang: 1, reach: 0.6, colliders: ['thigh.l', 'thigh.r', 'shin.l', 'shin.r'] },
   cloth: { freq: 1.25, zeta: 0.26, drag: 1.9, hang: 1, reach: 0.85, colliders: ['torso', 'shoulders', 'thigh.l', 'thigh.r', 'shin.l', 'shin.r', 'arm.l', 'arm.r'] },
 };
 
@@ -169,9 +170,9 @@ export class SecondaryMotion {
         len: pts.slice(1).map(() => 0),
       });
     }
-    for (const names of SHEETS) {
-      const s = names.map((n) => this.chains.find((c) => c.name === n)).filter((c): c is Chain => !!c);
-      if (s.length > 1) this.sheets.push(s);
+    for (const sh of SHEETS) {
+      const s = sh.chains.map((n) => this.chains.find((c) => c.name === n)).filter((c): c is Chain => !!c);
+      if (s.length > 1) this.sheets.push(sh.wrap && s.length === sh.chains.length ? [...s, s[0]] : s);
     }
     // world matrices are read off these nodes: refresh them (and their ancestors) parents first
     const seen = new Set<TransformNode>();
@@ -268,7 +269,7 @@ export class SecondaryMotion {
         let ax = k * (tA.x - x.x) - damp * (v.x - gvx) - drag * v.x + sagX;
         let ay = k * (tA.y - x.y) - damp * (v.y - gvy) - drag * v.y + sagY;
         let az = k * (tA.z - x.z) - damp * (v.z - gvz) - drag * v.z + sagZ;
-        if (c.feel === FEEL.cloth) {
+        if (c.feel !== FEEL.hair) {
           // flutter: the hem ripples in the breeze and when running
           const u = i / (n - 1);
           const wx = (wind?.x ?? 0) - v.x;
