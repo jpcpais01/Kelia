@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T02:20:00Z',
+    title: 'Finer grass and real wildflowers',
+    lines: ['Meadows are woven from far finer grass: close to you every patch is a thick carpet of slim blades, five or so to a clump, that grow out of the colour of the soil, thin out and shorten softly where the meadow meets sand or a path, and stay delicate all the way to the horizon. The wildflowers are rebuilt too: smaller, rounder daisies with a raised heart, buttercups and poppies that open as real cups, bellflowers that hang in little clusters with a shadowed inside, and lupins packed with folded florets. Petals now catch the sun and glow when it shines through them, and flowers grow in drifts that are densest at their hearts and fade out at the edges, with their colours carrying on through the grass into the distance.'],
+  },
+  {
     at: '2026-10-16T02:15:00Z',
     title: 'Beaches, trails and mountains with real detail',
     lines: ["The ground is no longer a flat colour. Sand along Mirror Lake and the Silverrun turns dark and wet at the water's edge, with a pale dried line and a broken line of washed-up weed above it, and the dry beach carries wind ripples, grains and the odd pebble. Trails are trodden pale down the middle with two worn ruts, gravel and stones kicked to the sides, scree gathers below the cliffs and fallen leaves litter the forest floor. The mountains now split into clear sunlit and shaded masses, with ridges catching the light and gullies falling into shade, so the peaks keep their shape through the haze even at noon."],
