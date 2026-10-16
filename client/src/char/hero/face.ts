@@ -62,6 +62,27 @@ const mixc = (a: [number, number, number], b: [number, number, number], t: numbe
   a[2] + (b[2] - a[2]) * t,
 ];
 
+/** A momentary expression painted over the face style. */
+export interface FaceExpr {
+  /** Upper lids coming down (0 open .. 1 shut). */
+  lid: number;
+  /** Eyes squeezed shut in pain (drawn as > <). */
+  squeeze?: boolean;
+  /** Brows: positive knits them down in anger, negative raises the inner ends in pain. */
+  brow?: number;
+  /** Mouth: at rest, open in a shout, or gritted teeth. */
+  mouth?: 'rest' | 'shout' | 'grit';
+}
+
+export const EXPRESSIONS = {
+  rest: { lid: 0 },
+  half: { lid: 0.55 },
+  blink: { lid: 1 },
+  fierce: { lid: 0.22, brow: 1, mouth: 'shout' },
+  hurt: { lid: 1, squeeze: true, brow: -1, mouth: 'grit' },
+} satisfies Record<string, FaceExpr>;
+export type ExpressionName = keyof typeof EXPRESSIONS;
+
 export interface FacePaint {
   style: number;
   skin: string;
@@ -72,7 +93,7 @@ export interface FacePaint {
 }
 
 /** Paint the face region of the atlas. */
-export function paintFace(atlas: HeroAtlas, f: FacePaint) {
+export function paintFace(atlas: HeroAtlas, f: FacePaint, ex: FaceExpr = EXPRESSIONS.rest) {
   const ctx = atlas.ctx;
   const st = { ...(FACE_STYLES[f.style] ?? FACE_STYLES[0]) };
   if (f.soft) {
@@ -83,6 +104,15 @@ export function paintFace(atlas: HeroAtlas, f: FacePaint) {
     st.mouth = [st.mouth[0] * 0.85, Math.max(st.mouth[1], 0.12), st.mouth[2] * 0.5];
     st.scar = false;
   }
+  const lid = Math.max(0, Math.min(1, ex.lid));
+  const shut = lid > 0.95;
+  const browK = ex.brow ?? 0;
+  st.brow = [
+    st.brow[0] - 0.18 * Math.max(0, browK) + 0.12 * Math.max(0, -browK),
+    st.brow[1] + 0.32 * browK,
+    st.brow[2] * (1 - 0.6 * Math.abs(browK)),
+    st.brow[3] * (1 + 0.2 * Math.max(0, browK)),
+  ];
   const skin = hexRgb(f.skin);
   const hair = hexRgb(f.hair);
   const iris = hexRgb(f.eye);
@@ -123,97 +153,122 @@ export function paintFace(atlas: HeroAtlas, f: FacePaint) {
     const h = EYE.h * S * k;
     // eye-local → canvas: x outward from the nose, y up
     const P = (x: number, y: number): [number, number] => [cx + side * x * w, cy - y * h];
+    // the closed lid: a line sagging a little below the middle of the eye
+    const closedY = (x: number) => -st.low * 0.42 - 0.2 * (1 - x * x) + st.lift * 0.35 * (x + 1);
+    const U = (x: number, y: number): [number, number] => P(x, y + (closedY(x) - y) * lid);
     const [li, lp, lo] = st.lid;
     const inner = P(-1, li * 0.2 - 0.15);
     const outer = P(1, lo - 0.25 + st.lift * 0.3);
     // upper lid: inner corner, up over the peak, down to the outer corner
     const upper = new Path2D();
     upper.moveTo(...inner);
-    upper.bezierCurveTo(...P(-0.75, li + 0.55), ...P(0.15, lp + 0.25), ...P(0.55, lp * 0.92));
-    upper.quadraticCurveTo(...P(0.92, lo * 0.85), ...outer);
+    upper.bezierCurveTo(...U(-0.75, li + 0.55), ...U(0.15, lp + 0.25), ...U(0.55, lp * 0.92));
+    upper.quadraticCurveTo(...U(0.92, lo * 0.85), ...outer);
     const shape = new Path2D(upper);
     // lower lid back to the inner corner
     shape.bezierCurveTo(...P(0.85, -st.low * 0.75 + st.lift), ...P(-0.3, -st.low * 1.05), ...inner);
     shape.closePath();
-    mask.push(shape);
+    if (!shut) mask.push(shape);
 
-    // the eye white with the lid's soft shadow at the top
-    ctx.save();
-    ctx.clip(shape);
-    const wg = ctx.createLinearGradient(0, cy - h * 1.2, 0, cy + h);
-    wg.addColorStop(0, '#c9c3d6');
-    wg.addColorStop(0.45, '#f6f2f4');
-    wg.addColorStop(1, '#ffffff');
-    ctx.fillStyle = wg;
-    ctx.fillRect(cx - w * 1.3, cy - h * 2, w * 2.6, h * 4);
-    // iris: tall, nudged toward the nose, its top tucked under the lid
-    const ir = w * st.iris;
-    const irY = h * 1.12;
-    const icx = cx - side * w * 0.06;
-    const icy = cy + h * 0.06;
-    const ig = ctx.createLinearGradient(0, icy - irY, 0, icy + irY);
-    ig.addColorStop(0, rgb(iris, 0.22));
-    ig.addColorStop(0.38, rgb(iris, 0.62));
-    ig.addColorStop(0.72, rgb(iris, 1.12, 10));
-    ig.addColorStop(1, rgb(mixc(iris, [255, 255, 255], 0.45), 1.05));
-    ctx.fillStyle = ig;
-    ctx.beginPath();
-    ctx.ellipse(icx, icy, ir, irY, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // a lighter ring in the lower iris and a dark rim
-    ctx.strokeStyle = rgb(mixc(iris, [255, 255, 255], 0.25), 1.15);
-    ctx.globalAlpha = 0.45;
-    ctx.lineWidth = w * 0.06;
-    ctx.beginPath();
-    ctx.ellipse(icx, icy + irY * 0.08, ir * 0.72, irY * 0.72, 0, 0.15 * Math.PI, 0.85 * Math.PI);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    ctx.strokeStyle = rgb(iris, 0.18);
-    ctx.lineWidth = w * 0.07;
-    ctx.beginPath();
-    ctx.ellipse(icx, icy, ir, irY, 0, 0, Math.PI * 2);
-    ctx.stroke();
-    // pupil
-    ctx.fillStyle = rgb(iris, 0.1);
-    ctx.beginPath();
-    ctx.ellipse(icx, icy - irY * 0.08, ir * 0.36, irY * 0.48, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // the lid's shadow across the top
-    const sg = ctx.createLinearGradient(0, cy - h * 1.3, 0, cy - h * 0.1);
-    sg.addColorStop(0, 'rgba(20,10,30,0.75)');
-    sg.addColorStop(1, 'rgba(20,10,30,0)');
-    ctx.fillStyle = sg;
-    ctx.fillRect(cx - w * 1.3, cy - h * 2, w * 2.6, h * 1.95);
-    // catch-lights: a big one up toward the outer side, a small one low
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.ellipse(icx + side * ir * 0.32, icy - irY * 0.38, ir * 0.3, irY * 0.24, side * -0.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 0.85;
-    ctx.beginPath();
-    ctx.ellipse(icx - side * ir * 0.3, icy + irY * 0.45, ir * 0.12, irY * 0.09, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.restore();
+    if (ex.squeeze) {
+      // squeezed shut: a thick > < pointing at the nose
+      ctx.strokeStyle = line;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = h * 0.26 * st.lash;
+      ctx.beginPath();
+      ctx.moveTo(...P(0.95, 0.75));
+      ctx.lineTo(...P(-0.75, 0.05));
+      ctx.lineTo(...P(0.95, -0.55));
+      ctx.stroke();
+    } else if (!shut) {
+      // the eye white with the lid's soft shadow at the top
+      ctx.save();
+      ctx.clip(shape);
+      const wg = ctx.createLinearGradient(0, cy - h * 1.2, 0, cy + h);
+      wg.addColorStop(0, '#c9c3d6');
+      wg.addColorStop(0.45, '#f6f2f4');
+      wg.addColorStop(1, '#ffffff');
+      ctx.fillStyle = wg;
+      ctx.fillRect(cx - w * 1.3, cy - h * 2, w * 2.6, h * 4);
+      // iris: tall, nudged toward the nose, its top tucked under the lid
+      const ir = w * st.iris;
+      const irY = h * 1.12;
+      const icx = cx - side * w * 0.06;
+      const icy = cy + h * 0.06;
+      const ig = ctx.createLinearGradient(0, icy - irY, 0, icy + irY);
+      ig.addColorStop(0, rgb(iris, 0.22));
+      ig.addColorStop(0.38, rgb(iris, 0.62));
+      ig.addColorStop(0.72, rgb(iris, 1.12, 10));
+      ig.addColorStop(1, rgb(mixc(iris, [255, 255, 255], 0.45), 1.05));
+      ctx.fillStyle = ig;
+      ctx.beginPath();
+      ctx.ellipse(icx, icy, ir, irY, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // a lighter ring in the lower iris and a dark rim
+      ctx.strokeStyle = rgb(mixc(iris, [255, 255, 255], 0.25), 1.15);
+      ctx.globalAlpha = 0.45;
+      ctx.lineWidth = w * 0.06;
+      ctx.beginPath();
+      ctx.ellipse(icx, icy + irY * 0.08, ir * 0.72, irY * 0.72, 0, 0.15 * Math.PI, 0.85 * Math.PI);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = rgb(iris, 0.18);
+      ctx.lineWidth = w * 0.07;
+      ctx.beginPath();
+      ctx.ellipse(icx, icy, ir, irY, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      // pupil
+      ctx.fillStyle = rgb(iris, 0.1);
+      ctx.beginPath();
+      ctx.ellipse(icx, icy - irY * 0.08, ir * 0.36, irY * 0.48, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // the lid's shadow across the top (it comes down with the lid)
+      const drop = lid * h * 0.9;
+      const sg = ctx.createLinearGradient(0, cy - h * 1.3 + drop, 0, cy - h * 0.1 + drop);
+      sg.addColorStop(0, 'rgba(20,10,30,0.75)');
+      sg.addColorStop(1, 'rgba(20,10,30,0)');
+      ctx.fillStyle = sg;
+      ctx.fillRect(cx - w * 1.3, cy - h * 2, w * 2.6, h * 1.95 + drop);
+      // catch-lights: a big one up toward the outer side, a small one low
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.ellipse(icx + side * ir * 0.32, icy - irY * 0.38, ir * 0.3, irY * 0.24, side * -0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.ellipse(icx - side * ir * 0.3, icy + irY * 0.45, ir * 0.12, irY * 0.09, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.restore();
+    }
 
-    // upper lash line: thick, tapering in, a flick past the outer corner
-    ctx.fillStyle = line;
-    const t = h * 0.2 * st.lash;
-    const lash = new Path2D();
-    lash.moveTo(...P(-1.02, li * 0.2 - 0.12));
-    lash.bezierCurveTo(...P(-0.75, li + 0.55), ...P(0.15, lp + 0.25), ...P(0.55, lp * 0.92));
-    lash.quadraticCurveTo(...P(0.92, lo * 0.85), ...outer);
-    lash.lineTo(...P(1.12 + st.flick * 0.5, lo - 0.05 + st.flick * 0.55 + st.lift * 0.3));
-    lash.quadraticCurveTo(...P(1.0, lo + 0.1 + t / h), ...P(0.6, lp * 0.92 + t / h * 1.1));
-    lash.bezierCurveTo(...P(0.15, lp + 0.25 + (t / h) * 1.2), ...P(-0.75, li + 0.55 + (t / h) * 0.5), ...P(-1.02, li * 0.2 - 0.05));
-    lash.closePath();
-    ctx.fill(lash);
+    if (!ex.squeeze) {
+      // upper lash line: thick, tapering in, a flick past the outer corner (it rides the lid down)
+      ctx.fillStyle = line;
+      const t = h * 0.2 * st.lash * (1 + 0.15 * lid);
+      const fl = 1 - 0.5 * lid;
+      const lash = new Path2D();
+      lash.moveTo(...P(-1.02, li * 0.2 - 0.12));
+      lash.bezierCurveTo(...U(-0.75, li + 0.55), ...U(0.15, lp + 0.25), ...U(0.55, lp * 0.92));
+      lash.quadraticCurveTo(...U(0.92, lo * 0.85), ...outer);
+      lash.lineTo(...P(1.12 + st.flick * 0.5 * fl, lo - 0.05 + st.flick * 0.55 * fl + st.lift * 0.3 - lid * 0.35));
+      lash.quadraticCurveTo(...U(1.0, lo + 0.1 + t / h), ...U(0.6, lp * 0.92 + (t / h) * 1.1));
+      lash.bezierCurveTo(...U(0.15, lp + 0.25 + (t / h) * 1.2), ...U(-0.75, li + 0.55 + (t / h) * 0.5), ...P(-1.02, li * 0.2 - 0.05));
+      lash.closePath();
+      ctx.fill(lash);
+    }
     // a few lashes off the outer end
     ctx.strokeStyle = line;
     ctx.lineCap = 'round';
     ctx.lineWidth = w * 0.06;
-    for (const [a, b] of [[0.72, 0.3], [0.9, 0.45]] as const) {
-      const base = P(a, lo * 0.9 + 0.1 + (1 - a) * lp * 0.6);
+    for (const [a, b] of ex.squeeze
+      ? []
+      : ([
+          [0.72, 0.3],
+          [0.9, 0.45],
+        ] as const)) {
+      const base = U(a, lo * 0.9 + 0.1 + (1 - a) * lp * 0.6);
       ctx.beginPath();
       ctx.moveTo(...base);
       ctx.lineTo(base[0] + side * w * b * 0.6, base[1] - h * b * 0.6);
@@ -221,13 +276,13 @@ export function paintFace(atlas: HeroAtlas, f: FacePaint) {
     }
     // lower lash: a thin stroke under the outer half
     ctx.lineWidth = w * 0.055;
-    ctx.globalAlpha = 0.75;
+    ctx.globalAlpha = ex.squeeze ? 0 : 0.75 * (1 - 0.6 * lid);
     ctx.beginPath();
     ctx.moveTo(...P(0.05, -st.low * 1.0));
     ctx.quadraticCurveTo(...P(0.75, -st.low * 0.8 + st.lift), ...P(0.98, -0.1 + st.lift * 0.6));
     ctx.stroke();
     // the lid crease above
-    ctx.globalAlpha = 0.35;
+    ctx.globalAlpha = ex.squeeze ? 0.5 : 0.35;
     ctx.lineWidth = w * 0.045;
     ctx.beginPath();
     ctx.moveTo(...P(-0.5, li + 0.95));
@@ -267,20 +322,59 @@ export function paintFace(atlas: HeroAtlas, f: FacePaint) {
   const my = py(CHIN_Y + 0.038);
   const mx = px(0);
   const half = S * 0.0115 * mw * 2;
-  ctx.strokeStyle = rgb(mixc(skin, [90, 30, 40], 0.65), 0.9);
-  ctx.lineWidth = S * 0.0017;
-  ctx.beginPath();
-  ctx.moveTo(mx - half, my - curve * S * 0.004);
-  ctx.quadraticCurveTo(mx, my + curve * S * 0.007, mx + half, my - (curve + asym) * S * 0.004);
-  ctx.stroke();
-  // lower lip hint
-  ctx.globalAlpha = 0.25;
-  ctx.lineWidth = S * 0.0012;
-  ctx.beginPath();
-  ctx.moveTo(mx - half * 0.35, my + S * 0.0045);
-  ctx.quadraticCurveTo(mx, my + S * 0.0058, mx + half * 0.35, my + S * 0.0045);
-  ctx.stroke();
-  ctx.globalAlpha = 1;
+  const lipLine = rgb(mixc(skin, [90, 30, 40], 0.65), 0.9);
+  if (ex.mouth === 'shout' || ex.mouth === 'grit') {
+    // open: a dark mouth with the top teeth showing (and a tongue when shouting)
+    const shout = ex.mouth === 'shout';
+    const hw = half * (shout ? 1.15 : 1.3);
+    const top = my - S * (shout ? 0.0035 : 0.002);
+    const depth = S * (shout ? 0.015 : 0.005);
+    const m = new Path2D();
+    m.moveTo(mx - hw, top + S * 0.001);
+    m.quadraticCurveTo(mx, top - S * 0.0012, mx + hw, top + S * 0.001);
+    if (shout) m.bezierCurveTo(mx + hw * 0.9, top + depth * 0.9, mx - hw * 0.9 + hw * 0.4, top + depth * 1.15, mx - hw, top + S * 0.001);
+    else m.quadraticCurveTo(mx, top + depth * 1.6, mx - hw, top + S * 0.001);
+    m.closePath();
+    ctx.fillStyle = rgb([70, 22, 34]);
+    ctx.fill(m);
+    ctx.save();
+    ctx.clip(m);
+    ctx.fillStyle = '#f7f3ee';
+    ctx.fillRect(mx - hw, top - S * 0.002, hw * 2, (shout ? 0.0024 : 0.0032) * S + S * 0.002);
+    if (!shout) {
+      ctx.fillRect(mx - hw, top + depth * 0.85, hw * 2, S * 0.01);
+      ctx.strokeStyle = rgb([150, 120, 120]);
+      ctx.lineWidth = S * 0.0006;
+      ctx.beginPath();
+      ctx.moveTo(mx - hw, top + depth * 0.62);
+      ctx.lineTo(mx + hw, top + depth * 0.62);
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = rgb([196, 84, 92]);
+      ctx.beginPath();
+      ctx.ellipse(mx, top + depth * 1.05, hw * 0.6, depth * 0.38, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.strokeStyle = lipLine;
+    ctx.lineWidth = S * 0.0013;
+    ctx.stroke(m);
+  } else {
+    ctx.strokeStyle = lipLine;
+    ctx.lineWidth = S * 0.0017;
+    ctx.beginPath();
+    ctx.moveTo(mx - half, my - curve * S * 0.004);
+    ctx.quadraticCurveTo(mx, my + curve * S * 0.007, mx + half, my - (curve + asym) * S * 0.004);
+    ctx.stroke();
+    // lower lip hint
+    ctx.globalAlpha = 0.25;
+    ctx.lineWidth = S * 0.0012;
+    ctx.beginPath();
+    ctx.moveTo(mx - half * 0.35, my + S * 0.0045);
+    ctx.quadraticCurveTo(mx, my + S * 0.0058, mx + half * 0.35, my + S * 0.0045);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
 
   if (st.scar) {
     ctx.strokeStyle = rgb(skin, 0.72, -8);
