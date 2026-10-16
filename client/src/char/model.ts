@@ -32,6 +32,7 @@ import { Glider, type GliderFit } from './glider';
 import { BUILDS } from './hero/body';
 import { buildHero } from './hero/build';
 import { paintFace } from './hero/face';
+import { FaceAnimator } from './faceAnim';
 import { Geo } from './hero/geo';
 import { HeroAtlas, type PaletteColors } from './hero/palette';
 import { HeroSurface } from './hero/surface';
@@ -149,6 +150,8 @@ export class CharacterModel {
   private recolors: RecolorPlugin[] = [];
   /** The hero's texture and surface plugin. */
   private atlas: HeroAtlas | null = null;
+  /** Blinks and fight faces (heroes only). */
+  private face: FaceAnimator | null = null;
   private surface: HeroSurface | null = null;
   /** Recolour plugins of glowing weapons (animated). */
   private glowRecolors: RecolorPlugin[] = [];
@@ -293,6 +296,7 @@ export class CharacterModel {
       const geo = buildHero(this.lib.hero, a);
       const atlas = new HeroAtlas(this.scene, this.root.name + '_atlas');
       this.atlas = atlas;
+      this.face = new FaceAnimator(atlas);
       this.paintAtlas(a, geo.colors);
       const mat = new PBRMaterial(this.root.name + '_hero', this.scene);
       mat.albedoTexture = atlas.texture;
@@ -372,13 +376,15 @@ export class CharacterModel {
     const atlas = this.atlas;
     if (!atlas) return;
     atlas.paintSwatches(colors);
-    paintFace(atlas, {
+    const face = {
       style: a.face,
       skin: colors.skin,
       hair: colors.hair,
       eye: EYE_COLORS[a.eyes]?.color ?? EYE_COLORS[0].color,
       soft: (BUILDS[a.body] ?? BUILDS[1]).bust > 0,
-    });
+    };
+    paintFace(atlas, face);
+    this.face?.painted(face);
     atlas.update();
   }
 
@@ -522,6 +528,7 @@ export class CharacterModel {
       // hit on the right side turns us left, and the other way round
       side = from.x * Math.cos(ry) - from.z * Math.sin(ry);
     }
+    this.face?.hurt(a);
     this.impulse(-(5 + 6 * a), Math.sign(side || 1) * (2.5 + 3.5 * a), 0.8 + 1.2 * a);
   }
 
@@ -620,6 +627,12 @@ export class CharacterModel {
       const cam = this.scene.activeCamera;
       const near = !cam || Vector3.DistanceSquared(cam.globalPosition, this.root.position) < 45 * 45;
       this.secondary.update(this.dt, near && this.animator.posing);
+    }
+    if (this.face) {
+      const cam = this.scene.activeCamera;
+      const near = !cam || Vector3.DistanceSquared(cam.globalPosition, this.root.position) < 16 * 16;
+      const ph = this.animator.phase();
+      this.face.update(this.dt, this.scene.getFrameId(), near, !!ph && ph.weight > 0.3 && ph.t < ph.settleAt + 0.1);
     }
     if (this.glider) {
       const cam = this.scene.activeCamera;
@@ -917,6 +930,7 @@ export class CharacterModel {
     this.surface = null;
     this.atlas?.dispose();
     this.atlas = null;
+    this.face = null;
     for (const m of this.extra) m.dispose(false, true);
     this.extra = [];
     if (this.entries) {

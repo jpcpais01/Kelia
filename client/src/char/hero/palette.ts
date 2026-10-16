@@ -78,7 +78,12 @@ export class HeroAtlas {
   readonly canvas: HTMLCanvasElement | OffscreenCanvas;
 
   constructor(scene: Scene, name: string) {
-    this.texture = new DynamicTexture(name, { width: ATLAS_W, height: ATLAS_H }, scene, true);
+    // the face is read back and swapped for expressions: keep the canvas on the CPU
+    const canvas = document.createElement('canvas');
+    canvas.width = ATLAS_W;
+    canvas.height = ATLAS_H;
+    canvas.getContext('2d', { willReadFrequently: true });
+    this.texture = new DynamicTexture(name, canvas, scene, true);
     this.texture.hasAlpha = false;
     this.texture.wrapU = this.texture.wrapV = 0; // clamp
     this.canvas = this.texture.getContext().canvas as HTMLCanvasElement;

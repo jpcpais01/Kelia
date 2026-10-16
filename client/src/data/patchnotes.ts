@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T07:55:00Z',
+    title: 'Faces that react',
+    lines: ["Heroes' faces now come alive. They blink every few seconds (sometimes twice), narrow their eyes, knit their brows and shout as they swing, and squeeze their eyes shut and grit their teeth when they take a hit. Jaws and cheeks are softer and rounder, so faces read less pointy. Other players' faces react the same way when you're close enough to see them."],
+  },
+  {
     at: '2026-10-16T07:40:00Z',
     title: 'Fuller hair, swinging skirts',
     lines: ["Hair is fuller and layered: locks stand out from the head toward their tips, darker locks tucked between them give the hair depth, and every lock shades from deep roots to sunlit tips. Tousled hair has more spikes. Skirts, tunics and robes now hang from the hips and swing with your walk, sway as your hips turn, flare when you stop, and get pushed aside by your legs instead of moving stiffly with them."],
