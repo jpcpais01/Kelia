@@ -10,7 +10,7 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
-    at: '2026-10-16T02:25:00Z',
+    at: '2026-10-16T02:20:00Z',
     title: 'Deeper light and shade',
     lines: ["Shade now looks like shade: the side turned away from the sun sits a clear, cool step darker, lit only by the blue sky, and faces that barely catch the sun fall off gently instead of all glowing the same. Heroes and monsters finally stand on the ground: a soft contact shadow pools under their feet, darkens the grass around them and falls on anyone standing close. Walls, fences, crates, rocks and tree trunks get a fine dark crease where they meet the earth. The distant haze is thinner and bluer, so far mountains turn blue with distance instead of washing out to grey, and keep their sunlit and shaded sides; sunsets keep their warm glow."],
   },
