@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-16T06:25:00Z',
+    title: 'Footwork in a fight',
+    lines: ["Your feet now stay planted when you swing, cast or shoot, instead of sliding across the ground. Lunging into a blow steps your lead foot forward and pulls the back foot after it, and turning to aim pivots on your feet with little steps. Your cape and hair whip round with the swing."],
+  },
+  {
     at: '2026-10-16T05:50:00Z',
     title: 'Capes and hair that move',
     lines: ["Capes and long hair now move with real physics instead of hanging stiff. A cape streams out behind you when you run, billows round when you turn, ripples in the wind and settles back when you stop, and it hangs down when you bend forward. Braids, long hair and ponytails swing and bounce with every step, and the locks framing the face sway when you turn your head. Both keep clear of your body: a cape rides over your legs and arms instead of passing through them, and long hair stays outside your shoulders. Other players' heroes move the same way."],

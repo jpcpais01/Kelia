@@ -696,6 +696,7 @@ export class CharacterModel {
       turnRate: this.turnRate,
       armScale: { l: bow ? 0.55 : this.look.offhand ? 0.8 : 1, r: hasWeapon && !bow ? 0.75 : 1 },
       detail: near,
+      lock: !air && !this.glideOn && an.fullLevel > 0.5 && !!an.phase(),
     });
   }
 
