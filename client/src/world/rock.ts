@@ -8,6 +8,12 @@
 // grass caps on sky-facing ledges. Snow settles on flat tops and trickles
 // down the gullies.
 //
+// Faces turned from the sun are painted cooler and darker and sunlit ones a
+// touch warmer (kRockSun, applied by the caller so snow gets it too), the
+// way a painter splits a mountain into light and shadow masses: the split
+// survives the haze, so distant ranges still read as forms instead of a
+// flat grey cut-out.
+//
 // Everything is anti-aliased with screen-space derivatives (no branches, so
 // WGSL's uniformity rules are happy) and the crevices fade once they would
 // shrink below a pixel.
@@ -77,7 +83,8 @@ fn kVoro(p: vec2f) -> vec4f {
  * `kD`, `kD2`, `kD3` (detail noise samples at fine/mid/coarse scale) and the
  * `detailTex` sampler. Outputs: `kRockCol` (albedo), `kRockN` (chiselled
  * normal), `kRockH` (0..1 "height" for height-blending), `kSnow` (0..1 snow
- * cover for any layer).
+ * cover for any layer), `kRockSun` (colour multiplier for the light/shadow
+ * split, for the rock and snow layers). Reads the toon plugin's `toonSunDir`.
  */
 export const ROCK_GLSL = /* glsl */ `
   // big chiselled planes: each cell of a warped cellular pattern is one flat,
@@ -106,7 +113,7 @@ export const ROCK_GLSL = /* glsl */ `
   float kAlt = clamp(kP.y / 160.0 + (kD3.a - 0.5) * 0.6, 0.0, 1.0);
   vec3 kRockCol = mix(rockWarm, rockCool, kAlt);
   kRockCol = mix(kRockCol, rockWarm * vec3(1.18, 0.96, 0.7), smoothstep(0.5, 0.8, kD3.b + kRnd.y * 0.3 - 0.1) * 0.55);
-  kRockCol *= (0.82 + 0.3 * kRnd.x) * mix(0.93, 1.06, kLayer * kSteep) * (0.93 + 0.12 * kD.r);
+  kRockCol *= (0.82 + 0.3 * kRnd.x) * mix(0.93, 1.06, kLayer * kSteep) * (0.93 + 0.12 * kD.r) * (0.84 + 0.28 * smoothstep(0.3, 0.7, kD3.r));
   kRockCol *= 1.0 - 0.3 * kGully + 0.1 * kRidge;
   kRockCol *= mix(1.0, 0.8, kCrevSoft * kSteep) * mix(1.0, 0.5, kCrev * kSteep * smoothstep(0.35, 0.65, kD2.b + kRnd.y * 0.35));
   // grass caps on ledges and gentle tops: crisp edge, a shadowed lip beneath
@@ -121,6 +128,18 @@ export const ROCK_GLSL = /* glsl */ `
   float kSnowL = rockP.y + (kD3.a - 0.5) * 36.0 + (kD2.r - 0.5) * 10.0;
   float kSnow = smoothstep(kSnowL, kSnowL + 2.0, kP.y) * smoothstep(0.4, 0.47, kNr.y + (kD.g - 0.5) * 0.15 + (kRnd.y - 0.5) * 0.14);
   kSnow = max(kSnow, smoothstep(kSnowL - 28.0, kSnowL - 4.0, kP.y) * smoothstep(0.6, 0.72, kStreak) * smoothstep(0.1, 0.4, kNr.y + 0.3));
+  // light and shadow masses: cool, deep shade sides, warm sunlit faces
+  // (steep faces split by which way they face the sun's azimuth, so the
+  // masses still read with the sun high overhead)
+  vec2 kLh = toonSunDir.xz / max(length(toonSunDir.xz), 1e-3);
+  float kSunF = mix(dot(kRockN, toonSunDir.xyz), dot(kRockN.xz / max(length(kRockN.xz), 1e-3), kLh) * 0.6, kSteep * 0.5);
+  vec3 kRockSun = mix(vec3(0.64, 0.7, 0.9), vec3(1.08, 1.03, 0.94), smoothstep(-0.3, 0.35, kSunF));
+  // screen-space curvature: ridges and buttresses catch the light, creases
+  // and gullies fall into shade, so the big forms read at any distance
+  vec3 kDpx = dFdx(kP);
+  vec3 kDpy = dFdy(kP);
+  float kCurv = dot(dFdx(kNr), kDpx) / max(dot(kDpx, kDpx), 1e-6) + dot(dFdy(kNr), kDpy) / max(dot(kDpy, kDpy), 1e-6);
+  kRockSun *= 1.0 + 0.32 * clamp(kCurv * rockP.x * 0.3, -1.0, 1.0);
 `;
 
 export const ROCK_WGSL = /* wgsl */ `
@@ -144,7 +163,7 @@ export const ROCK_WGSL = /* wgsl */ `
   let kAlt = clamp(kP.y / 160.0 + (kD3.a - 0.5) * 0.6, 0.0, 1.0);
   var kRockCol = mix(uniforms.rockWarm, uniforms.rockCool, kAlt);
   kRockCol = mix(kRockCol, uniforms.rockWarm * vec3f(1.18, 0.96, 0.7), smoothstep(0.5, 0.8, kD3.b + kRnd.y * 0.3 - 0.1) * 0.55);
-  kRockCol *= (0.82 + 0.3 * kRnd.x) * mix(0.93, 1.06, kLayer * kSteep) * (0.93 + 0.12 * kD.r);
+  kRockCol *= (0.82 + 0.3 * kRnd.x) * mix(0.93, 1.06, kLayer * kSteep) * (0.93 + 0.12 * kD.r) * (0.84 + 0.28 * smoothstep(0.3, 0.7, kD3.r));
   kRockCol *= 1.0 - 0.3 * kGully + 0.1 * kRidge;
   kRockCol *= mix(1.0, 0.8, kCrevSoft * kSteep) * mix(1.0, 0.5, kCrev * kSteep * smoothstep(0.35, 0.65, kD2.b + kRnd.y * 0.35));
   let kTop = kNr.y + (kD.r - 0.5) * 0.12 + (kD2.g - 0.5) * 0.2;
@@ -157,4 +176,11 @@ export const ROCK_WGSL = /* wgsl */ `
   let kSnowL = uniforms.rockP.y + (kD3.a - 0.5) * 36.0 + (kD2.r - 0.5) * 10.0;
   var kSnow = smoothstep(kSnowL, kSnowL + 2.0, kP.y) * smoothstep(0.4, 0.47, kNr.y + (kD.g - 0.5) * 0.15 + (kRnd.y - 0.5) * 0.14);
   kSnow = max(kSnow, smoothstep(kSnowL - 28.0, kSnowL - 4.0, kP.y) * smoothstep(0.6, 0.72, kStreak) * smoothstep(0.1, 0.4, kNr.y + 0.3));
+  let kLh = uniforms.toonSunDir.xz / max(length(uniforms.toonSunDir.xz), 1e-3);
+  let kSunF = mix(dot(kRockN, uniforms.toonSunDir.xyz), dot(kRockN.xz / max(length(kRockN.xz), 1e-3), kLh) * 0.6, kSteep * 0.5);
+  var kRockSun = mix(vec3f(0.64, 0.7, 0.9), vec3f(1.08, 1.03, 0.94), smoothstep(-0.3, 0.35, kSunF));
+  let kDpx = dpdx(kP);
+  let kDpy = dpdy(kP);
+  let kCurv = dot(dpdx(kNr), kDpx) / max(dot(kDpx, kDpx), 1e-6) + dot(dpdy(kNr), kDpy) / max(dot(kDpy, kDpy), 1e-6);
+  kRockSun = kRockSun * (1.0 + 0.32 * clamp(kCurv * uniforms.rockP.x * 0.3, -1.0, 1.0));
 `;
