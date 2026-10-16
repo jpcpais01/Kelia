@@ -6,6 +6,8 @@
 // and a glider: the body hangs from its handles (arms reaching up by IK,
 // legs trailing), swinging under it as it banks.
 import {
+  BoundingInfo,
+  Geometry,
   Matrix,
   Mesh,
   Node,
@@ -14,30 +16,25 @@ import {
   Space,
   TransformNode,
   Vector3,
+  VertexData,
   type AbstractMesh,
   type InstantiatedEntries,
   type Material,
   type Observer,
   type Scene,
+  type Skeleton,
 } from '@babylonjs/core';
-import {
-  BODY_TYPES,
-  CLASSES,
-  EYE_COLORS,
-  FACES,
-  HAIR_COLORS,
-  HAIR_STYLES,
-  ITEMS,
-  OUTFITS,
-  SKIN_TONES,
-  type Appearance,
-  type ClassId,
-} from '@kelia/shared';
+import { BODY_TYPES, CLASSES, EYE_COLORS, HAIR_COLORS, ITEMS, SKIN_TONES, type Appearance, type ClassId } from '@kelia/shared';
 import { perf } from '../core/perf';
 import { Animator, measureStride } from './animator';
 import { createBow } from './bow';
 import { Glider, type GliderFit } from './glider';
-import { mergeSkinnedParts } from './mergeSkin';
+import { BUILDS } from './hero/body';
+import { buildHero } from './hero/build';
+import { paintFace } from './hero/face';
+import { Geo } from './hero/geo';
+import { HeroAtlas, type PaletteColors } from './hero/palette';
+import { HeroSurface } from './hero/surface';
 import type { RigLibrary } from './library';
 import { addRecolor, type RecolorPlugin } from './recolor';
 import { setToon } from '../world/toon';
@@ -81,24 +78,9 @@ const CADENCE = {
 
 const strideCache = new WeakMap<RigLibrary, Record<string, number>>();
 
-/** Which part meshes to show for a look. */
-export function partsFor(look: Look): { meshes: Set<string>; bow: string | null; headgear: string | null } {
-  const a = look.appearance;
-  const o = OUTFITS[a.outfit] ?? OUTFITS[0];
-  const meshes = new Set<string>([`body_${o.body}`, `armL_${o.arms}`, `armR_${o.arms}`, `legL_${o.legs}`, `legR_${o.legs}`]);
-  if (o.cape) meshes.add(`cape_${o.cape}`);
-  const hg = a.headgear ? o.headgear : 'none';
-  if (hg === 'hood') {
-    meshes.add('head_hooded__face');
-    meshes.add('head_hooded__hair');
-  } else {
-    meshes.add(`head_${FACES[a.face]?.id ?? 'knight'}__face`);
-    const hair = HAIR_STYLES[a.hair]?.id ?? 'none';
-    if (hair !== 'none' && hg !== 'helmet') meshes.add(`head_${hair}__hair`);
-    if (hg === 'helmet') meshes.add('hat_knight');
-    if (hg === 'bearhat') meshes.add('hat_barbarian');
-    if (hg === 'wizard') meshes.add('hat_mage');
-  }
+/** The KayKit meshes a look still uses (weapons and shields), and the code-built bow. */
+export function partsFor(look: Look): { meshes: Set<string>; bow: string | null } {
+  const meshes = new Set<string>();
   let bow: string | null = null;
   for (const id of [look.weapon, look.offhand]) {
     const it = id ? ITEMS[id] : null;
@@ -106,7 +88,79 @@ export function partsFor(look: Look): { meshes: Set<string>; bow: string | null;
     if (it.mesh.startsWith('bow:')) bow = it.mesh.slice(4);
     else meshes.add(it.mesh);
   }
-  return { meshes, bow, headgear: hg };
+  return { meshes, bow };
+}
+
+/** The cape's vertices in the chest bone's space (it hangs rigidly from the chest and sways). */
+const capeCache = new WeakMap<Geo, Geo>();
+function capeLocal(cape: Geo, chestRest: Matrix): Geo {
+  const hit = capeCache.get(cape);
+  if (hit) return hit;
+  const inv = chestRest.clone().invert();
+  const g = new Geo();
+  g.append(cape);
+  const p = new Vector3();
+  for (let v = 0; v < g.vertexCount; v++) {
+    p.set(g.pos[v * 3], g.pos[v * 3 + 1], g.pos[v * 3 + 2]);
+    Vector3.TransformCoordinatesToRef(p, inv, p);
+    g.pos[v * 3] = p.x;
+    g.pos[v * 3 + 1] = p.y;
+    g.pos[v * 3 + 2] = p.z;
+    p.set(g.nrm[v * 3], g.nrm[v * 3 + 1], g.nrm[v * 3 + 2]);
+    Vector3.TransformNormalToRef(p, inv, p);
+    p.normalize();
+    g.nrm[v * 3] = p.x;
+    g.nrm[v * 3 + 1] = p.y;
+    g.nrm[v * 3 + 2] = p.z;
+  }
+  capeCache.set(cape, g);
+  return g;
+}
+
+/** Weapons were sized for the chibi rig's hands: scale them to the hero's. */
+const WEAPON_SCALE = 0.74;
+
+/** Geometry uploaded once per built shape, shared by every character wearing it. */
+const geometryCache = new WeakMap<Geo, Geometry>();
+
+function heroMesh(scene: Scene, name: string, geo: Geo, skeleton: Skeleton | null, side: number): Mesh | null {
+  if (!geo.idx.length) return null;
+  let geometry = geometryCache.get(geo);
+  if (!geometry || geometry.isDisposed()) {
+    const vd = new VertexData();
+    vd.positions = geo.pos;
+    vd.normals = geo.nrm;
+    vd.uvs = geo.uv;
+    vd.indices = geo.idx;
+    if (skeleton) {
+      const mi = new Float32Array(geo.wts.length * 4);
+      const mw = new Float32Array(geo.wts.length * 4);
+      const index = new Map(skeleton.bones.map((b) => [b.name, b.getIndex()]));
+      geo.wts.forEach((w, v) => {
+        const top = w.filter(([n]) => index.has(n)).sort((x, y) => y[1] - x[1]).slice(0, 4);
+        const sum = top.reduce((t, [, x]) => t + x, 0) || 1;
+        top.forEach(([n, x], k) => {
+          mi[v * 4 + k] = index.get(n)!;
+          mw[v * 4 + k] = x / sum;
+        });
+      });
+      vd.matricesIndices = mi;
+      vd.matricesWeights = mw;
+    }
+    geometry = new Geometry(name + '_geo', scene, vd, false);
+    geometryCache.set(geo, geometry);
+  }
+  const m = new Mesh(name, scene);
+  geometry.applyToMesh(m);
+  m.sideOrientation = side;
+  if (skeleton) {
+    m.skeleton = skeleton;
+    m.numBoneInfluencers = 4;
+    // bind-pose bounds plus room for raised arms and kicks
+    const bi = m.getBoundingInfo();
+    m.setBoundingInfo(new BoundingInfo(bi.minimum.add(new Vector3(-0.3, -0.2, -0.5)), bi.maximum.add(new Vector3(0.3, 0.6, 0.5))));
+  }
+  return m;
 }
 
 export class CharacterModel {
@@ -117,15 +171,14 @@ export class CharacterModel {
   private entries: InstantiatedEntries | null = null;
   private nodes = new Map<string, TransformNode>();
   private recolors: RecolorPlugin[] = [];
-  /** Recolour plugins of the materials that carry the face. */
-  private faceRecolors: RecolorPlugin[] = [];
+  /** The hero's texture and surface plugin. */
+  private atlas: HeroAtlas | null = null;
+  private surface: HeroSurface | null = null;
   /** Recolour plugins of glowing weapons (animated). */
   private glowRecolors: RecolorPlugin[] = [];
   /** Head centre (head node space), radius (head node units) and face axes, for face shading. */
   private headLocal = new Vector3();
   private headRadius = 0;
-  private faceFwd = new Vector3(0, 0, 1);
-  private faceUp = new Vector3(0, 1, 0);
   /** The head node and its ancestors, root first (refreshed each frame for face shading). */
   private headChain: TransformNode[] = [];
   private ink: InkScaler | null = null;
@@ -182,7 +235,7 @@ export class CharacterModel {
   constructor(private scene: Scene, private lib: RigLibrary, look: Look, name = 'character') {
     this.root = new TransformNode(name, scene);
     perf.tag(this.root, 'characters');
-    trackContact(this.root, 0.42, CHARACTER_HEIGHT);
+    trackContact(this.root, 0.3, CHARACTER_HEIGHT);
     this.body = new TransformNode(name + '_body', scene);
     this.body.parent = this.root;
     this.setLook(look);
@@ -211,66 +264,101 @@ export class CharacterModel {
     for (const n of rootNode.getDescendants(false)) {
       if (n instanceof TransformNode) this.nodes.set(n.name, n);
     }
-    // Drop skeletons no visible mesh uses.
-    const used = new Set(rootNode.getChildMeshes(false).map((m) => m.skeleton).filter(Boolean));
-    for (const s of entries.skeletons) if (!used.has(s)) s.dispose();
+    // the hero's skeleton (cloned for this character); drop the rest
+    const heroIdx = this.lib.heroSkeleton ? this.lib.container.skeletons.indexOf(this.lib.heroSkeleton) : -1;
+    const skeleton = heroIdx >= 0 ? entries.skeletons[heroIdx] : null;
+    for (const s of entries.skeletons) if (s !== skeleton) s.dispose();
+    // (instantiation only relinks bones of skeletons whose meshes came along)
+    if (skeleton) for (const b of skeleton.bones) b.linkTransformNode(this.nodes.get(b.name) ?? null);
 
-    // Materials: recolour skin/hair/eyes; weapon glow.
     const a = look.appearance;
-    let meshes = rootNode.getChildMeshes(false);
-    this.lib.restoreBounds(meshes);
-    this.meshes = meshes;
-    // Weapon glow needs its own material (cloned before any plugin is attached).
+    // KayKit weapons and shields: scaled to the hero's hands, gear may glow
+    const weapons = rootNode.getChildMeshes(false);
+    for (const m of weapons) {
+      const k = m.name.startsWith('sh_') ? WEAPON_SCALE * 0.72 : m.name.startsWith('oh_') ? WEAPON_SCALE * 0.85 : WEAPON_SCALE;
+      m.scaling.scaleInPlace(k);
+      m.position.scaleInPlace(k);
+    }
     const glowOf = new Map<Material, string>();
     for (const id of [look.weapon, look.offhand]) {
       const it = id ? ITEMS[id] : null;
       if (!it?.glow || !it.mesh || it.mesh.startsWith('bow:')) continue;
-      const wm = meshes.find((m) => m.name === it.mesh);
+      const wm = weapons.find((m) => m.name === it.mesh);
       if (wm && wm.material) {
         const gm = (wm.material as PBRMaterial).clone(wm.material.name + '_glow') as PBRMaterial;
         wm.material = gm;
         glowOf.set(gm, it.glow);
       }
     }
-    const faceMesh = meshes.find((m) => m.name.endsWith('__face'));
-    const faceId = faceMesh ? faceMesh.name.slice(5, -6) : null;
     const seen = new Set<Material>();
-    this.faceRecolors = [];
     this.glowRecolors = [];
-    for (const m of meshes) {
-      m.isPickable = false;
-      m.receiveShadows = true;
-      m.alwaysSelectAsActiveMesh = false;
+    for (const m of weapons) {
       const mat = m.material;
       if (!mat || seen.has(mat)) continue;
       seen.add(mat);
       this.materials.push(mat);
-      if (mat instanceof PBRMaterial) {
-        mat.metallic = 0;
-        mat.roughness = 0.62;
-        const baseName = mat.name.replace(/^Clone of /, '').replace(/\.\d+$/, '').replace(/_glow$/, '');
-        const refs = this.lib.swatches[baseName] ?? this.lib.swatches[Object.keys(this.lib.swatches)[0]];
-        if (refs) {
-          const rc = addRecolor(mat, refs);
-          rc.set(SKIN_TONES[a.skin].color, HAIR_COLORS[a.hairColor].color, EYE_COLORS[a.eyes].color);
-          this.recolors.push(rc);
-          if (faceMesh && faceMesh.material === mat) {
-            rc.setFace(faceId);
-            this.faceRecolors.push(rc);
-          }
-          const glow = glowOf.get(mat);
-          if (glow) {
-            rc.setGlow(glow, 1);
-            this.glowRecolors.push(rc);
-          }
-        }
+      if (!(mat instanceof PBRMaterial)) continue;
+      mat.metallic = 0;
+      mat.roughness = 0.62;
+      const baseName = mat.name.replace(/^Clone of /, '').replace(/\.\d+$/, '').replace(/_glow$/, '');
+      const refs = this.lib.swatches[baseName] ?? this.lib.swatches[Object.keys(this.lib.swatches)[0]];
+      if (!refs) continue;
+      const rc = addRecolor(mat, refs);
+      rc.set(SKIN_TONES[a.skin].color, HAIR_COLORS[a.hairColor].color, EYE_COLORS[a.eyes].color);
+      this.recolors.push(rc);
+      const glow = glowOf.get(mat);
+      if (glow) {
+        rc.setGlow(glow, 1);
+        this.glowRecolors.push(rc);
       }
     }
-    this.measureHead(faceMesh ?? null);
-    this.setupCape();
-    // body, arms, legs and hats draw as one skinned mesh; face and hair keep their own ink
-    meshes = mergeSkinnedParts(meshes, (m) => !m.name.endsWith('__face') && !m.name.endsWith('__hair'));
+
+    // the hero, built in code (char/hero) for this appearance
+    const meshes: AbstractMesh[] = [...weapons];
+    if (this.lib.hero) {
+      const geo = buildHero(this.lib.hero, a);
+      const atlas = new HeroAtlas(this.scene, this.root.name + '_atlas');
+      this.atlas = atlas;
+      this.paintAtlas(a, geo.colors);
+      const mat = new PBRMaterial(this.root.name + '_hero', this.scene);
+      mat.albedoTexture = atlas.texture;
+      mat.metallic = 0;
+      mat.roughness = 0.62;
+      this.materials.push(mat);
+      this.surface = new HeroSurface(mat);
+      const side = this.lib.heroSide;
+      for (const [part, g] of [['hero_body', geo.body], ['hero_hat', geo.hat], ['hero_head', geo.head], ['hero_hair', geo.hair]] as const) {
+        const m = heroMesh(this.scene, `${this.root.name}_${part}`, g, skeleton, side);
+        if (!m) continue;
+        m.parent = rootNode;
+        m.material = mat;
+        meshes.push(m);
+      }
+      const chest = this.nodes.get('chest');
+      const chestRest = this.lib.hero.world.get('chest');
+      if (geo.cape.idx.length && chest && chestRest) {
+        const m = heroMesh(this.scene, 'cape_hero', capeLocal(geo.cape, chestRest), null, side);
+        if (m) {
+          m.parent = chest;
+          m.material = mat;
+          meshes.push(m);
+        }
+      }
+      const head = this.nodes.get('head');
+      const headRest = this.lib.hero.world.get('head');
+      if (head && headRest) {
+        // the head (with hair) as a sphere in head-bone space, for the glider's fit
+        Vector3.TransformCoordinatesToRef(new Vector3(0, 1.695, -0.01), headRest.clone().invert(), this.headLocal);
+        this.headRadius = 0.13;
+      }
+    }
+    for (const m of meshes) {
+      m.isPickable = false;
+      m.receiveShadows = true;
+      m.alwaysSelectAsActiveMesh = false;
+    }
     this.meshes = meshes;
+    this.setupCape();
     if (bow) {
       const b = createBow(this.scene, bow);
       const slot = this.nodes.get('handslot.l');
@@ -284,18 +372,15 @@ export class CharacterModel {
       }
       b.isPickable = false;
       this.extra.push(b);
-      this.meshes = [...meshes, b];
+      this.meshes = [...this.meshes, b];
     }
 
-    // Body proportions.
+    // Body proportions: builds differ in shape (built in) and height.
     const bt = BODY_TYPES[a.body] ?? BODY_TYPES[1];
     const s = this.unitScale;
-    this.body.scaling.set(s * bt.width, s * bt.height, s * bt.width);
+    this.body.scaling.setAll(s * bt.height);
     const head = this.nodes.get('head');
-    if (head) {
-      head.scaling.set(bt.head / bt.width, bt.head / bt.height, bt.head / bt.width);
-      this.headRest = (head.rotationQuaternion ?? Quaternion.FromEulerVector(head.rotation)).clone();
-    }
+    if (head) this.headRest = (head.rotationQuaternion ?? Quaternion.FromEulerVector(head.rotation)).clone();
 
     const rq = (n: string) => {
       const t = this.nodes.get(n);
@@ -318,6 +403,21 @@ export class CharacterModel {
     this.setVisible(this.visible);
   }
 
+  /** Paint the character's texture: swatches and the face. */
+  private paintAtlas(a: Appearance, colors: PaletteColors) {
+    const atlas = this.atlas;
+    if (!atlas) return;
+    atlas.paintSwatches(colors);
+    paintFace(atlas, {
+      style: a.face,
+      skin: colors.skin,
+      hair: colors.hair,
+      eye: EYE_COLORS[a.eyes]?.color ?? EYE_COLORS[0].color,
+      soft: (BUILDS[a.body] ?? BUILDS[1]).bust > 0,
+    });
+    atlas.update();
+  }
+
   /** Outline colours per part: hair and face lines take their own dark tone. */
   private inkColors(a: Appearance) {
     const hair = inkFor(HAIR_COLORS[a.hairColor].color);
@@ -325,51 +425,9 @@ export class CharacterModel {
     // keep face lines warm and soft, never darker than the default ink
     skin.r = Math.max(skin.r, 0.06);
     for (const m of this.meshes) {
-      const c = m.name.endsWith('__hair') ? hair : m.name.endsWith('__face') && !m.name.startsWith('head_hooded') ? skin : INK;
+      const c = m.name.endsWith('hero_hair') ? hair : m.name.endsWith('hero_head') ? skin : INK;
       m.outlineColor.copyFrom(c);
     }
-  }
-
-  /**
-   * Find the head's centre and size from the face mesh in its rest pose, in
-   * head-node space, plus which way the face looks (for face shading, blush
-   * and the hair gradient).
-   */
-  private measureHead(face: AbstractMesh | null) {
-    const head = this.nodes.get('head');
-    this.headRadius = 0;
-    if (!head || !face) return;
-    const chain: TransformNode[] = [];
-    for (let n: Node | null = head; n; n = n.parent) if (n instanceof TransformNode) chain.unshift(n);
-    for (const n of chain) n.computeWorldMatrix(true);
-    face.computeWorldMatrix(true);
-    const bb = face.getBoundingInfo().boundingBox;
-    const inv = head.getWorldMatrix().clone().invert();
-    Vector3.TransformCoordinatesToRef(bb.centerWorld, inv, this.headLocal);
-    const ext = bb.extendSizeWorld;
-    const headScale = Vector3.TransformNormal(Vector3.Right(), head.getWorldMatrix()).length();
-    // a sphere a bit smaller than the box: KayKit heads are rounded cubes
-    this.headRadius = ((ext.x + ext.y + ext.z) / 3) * 0.95 / Math.max(headScale, 1e-6);
-    const rootW = this.root.getWorldMatrix();
-    const fwd = Vector3.TransformNormal(new Vector3(0, 0, 1), rootW);
-    const up = Vector3.TransformNormal(new Vector3(0, 1, 0), rootW);
-    Vector3.TransformNormalToRef(fwd, inv, this.faceFwd);
-    Vector3.TransformNormalToRef(up, inv, this.faceUp);
-    this.faceFwd.normalize();
-    this.faceUp.normalize();
-  }
-
-  /** Move the face-shading sphere with the head (after animation and IK). */
-  private updateFace() {
-    if (!this.recolors.length || this.headRadius <= 0) return;
-    const chain = this.headChain;
-    if (!chain.length) return;
-    for (let i = 0; i < chain.length; i++) chain[i].computeWorldMatrix(true);
-    const w = chain[chain.length - 1].getWorldMatrix();
-    const m = w.m;
-    const scale = Math.hypot(m[0], m[1], m[2]);
-    // every material: skin near the head, hair and face may each sit in a different atlas
-    for (const rc of this.recolors) rc.setHead(w, this.headLocal, this.headRadius * scale, this.faceFwd, this.faceUp);
   }
 
   /** Model units → metres. */
@@ -414,8 +472,9 @@ export class CharacterModel {
   /** Recolour without rebuilding (live preview in the creator). */
   setColors(a: Appearance) {
     for (const rc of this.recolors) rc.set(SKIN_TONES[a.skin].color, HAIR_COLORS[a.hairColor].color, EYE_COLORS[a.eyes].color);
-    this.inkColors(a);
     this.look = { ...this.look, appearance: { ...this.look.appearance, skin: a.skin, hairColor: a.hairColor, eyes: a.eyes } };
+    if (this.lib.hero) this.paintAtlas(this.look.appearance, buildHero(this.lib.hero, this.look.appearance).colors);
+    this.inkColors(this.look.appearance);
   }
 
   setShadowCaster(add: (m: AbstractMesh) => void) {
@@ -622,12 +681,12 @@ export class CharacterModel {
     // with no clip writing the skeleton the bones still hold last frame's
     // layered pose: layering again would bend the torso a bit more every frame
     if (this.animator.posing) {
+      this.applyArmDrop();
       this.applyBodyLayer();
       this.applyLookAt();
       if (this.glideW > 0.001) this.applyGlidePose();
       if (this.ikEnabled && this.groundAt && this.glideW < 0.5) this.applyFootIK();
     }
-    this.updateFace();
     if (this.glider) {
       const cam = this.scene.activeCamera;
       const emit = Math.max(0, Math.min(1, (this.airspeed - 4.5) / 4)) * Math.max(0, Math.min(1, this.glider.open));
@@ -635,8 +694,52 @@ export class CharacterModel {
     }
     this.time += this.dt;
     for (const rc of this.glowRecolors) rc.setTime(this.time);
+    this.surface?.setTime(this.time);
     const cam = this.scene.activeCamera;
     if (cam && this.ink) this.ink.update(this.root.position, cam.globalPosition);
+  }
+
+  /**
+   * The clips were made for a stout chibi whose arms hang wide of a round
+   * body; on the slim hero that reads as a scarecrow. Swing each upper arm
+   * in toward the body (most at rest and on the move, less mid-attack).
+   */
+  private applyArmDrop() {
+    const ry = this.root.rotation.y;
+    const fwd = new Vector3(Math.sin(ry), 0, Math.cos(ry));
+    const right = new Vector3(Math.cos(ry), 0, -Math.sin(ry));
+    const k = 1 - 0.55 * this.animator.actionLevel;
+    const keep = 0.42;
+    for (const side of ['l', 'r'] as const) {
+      const upper = this.nodes.get(`upperarm.${side}`);
+      const lower = this.nodes.get(`lowerarm.${side}`);
+      if (!upper || !lower) continue;
+      const chain: TransformNode[] = [];
+      for (let n: Node | null = lower; n; n = n.parent) if (n instanceof TransformNode) chain.unshift(n);
+      for (const c of chain) c.computeWorldMatrix(true);
+      const a = upper.getAbsolutePosition();
+      const d = lower.getAbsolutePosition().subtract(a);
+      const len = d.length();
+      if (len < 1e-5) continue;
+      d.scaleInPlace(1 / len);
+      // which way is "out" for this shoulder
+      const chest = this.nodes.get('chest');
+      const out = chest ? a.subtract(chest.getAbsolutePosition()) : right.clone();
+      const o = Vector3.Dot(out, right) >= 0 ? right : right.scale(-1);
+      // abduction: the arm's angle out from hanging straight down, in the body's side plane
+      const ab = Math.atan2(Vector3.Dot(d, o), -d.y);
+      if (ab < 0.12 || ab > 2.2) continue;
+      const target = 0.1 + (ab - 0.1) * keep;
+      const delta = (ab - target) * k * smooth01((ab - 0.12) / 0.3);
+      upper.rotate(fwd, delta, Space.WORLD);
+      upper.computeWorldMatrix(true);
+      lower.computeWorldMatrix(true);
+      const d2 = lower.getAbsolutePosition().subtract(upper.getAbsolutePosition()).normalize();
+      if (Vector3.Dot(d2, o) > Vector3.Dot(d, o)) {
+        upper.rotate(fwd, -2 * delta, Space.WORLD);
+        upper.computeWorldMatrix(true);
+      }
+    }
   }
 
   private applyLookAt() {
@@ -938,6 +1041,10 @@ export class CharacterModel {
     this.animator?.dispose();
     for (const rc of this.recolors) rc.plugin.dispose();
     this.recolors = [];
+    this.surface?.plugin.dispose();
+    this.surface = null;
+    this.atlas?.dispose();
+    this.atlas = null;
     for (const m of this.extra) m.dispose(false, true);
     this.extra = [];
     if (this.entries) {
@@ -955,6 +1062,10 @@ export class CharacterModel {
     this.disposeGlider();
     this.root.dispose();
   }
+}
+
+function smooth01(x: number) {
+  return smoothstep(x);
 }
 
 function smoothstep(x: number) {

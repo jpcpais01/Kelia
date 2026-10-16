@@ -112,6 +112,8 @@ export class Animator {
   private strides = new Map<LocoKey, number>();
   private action: Action | null = null;
   private fading: Action[] = [];
+  /** How much any action (full-body or upper) shapes the pose right now, 0..1. */
+  actionLevel = 0;
   /** Smoothed planar speed (m/s) and local direction (x right, z forward). */
   private speed = 0;
   private dirX = 0;
@@ -401,6 +403,9 @@ export class Animator {
     // share off the top, so action + locomotion always add up to a full pose
     // (below 1 in total, Babylon blends toward the rig's T-pose).
     const rest = 1 - actionFull;
+    let level = this.action ? this.action.weight : 0;
+    for (const f of this.fading) level = Math.max(level, f.weight);
+    this.actionLevel = Math.max(0, Math.min(1, level));
     for (const [k, g] of this.loco) {
       const cur = this.locoW.get(k) ?? 0;
       const nw = cur + ((w[k] ?? 0) - cur) * (1 - Math.exp(-dt * 9));
