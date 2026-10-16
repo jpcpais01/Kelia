@@ -3,6 +3,8 @@ import { Heightmap } from '@kelia/shared';
 export interface TerrainData {
   heightmap: Heightmap;
   splat: Uint8Array; // RGBA per heightmap sample
+  /** RGBA per heightmap sample: distance to the waterline, trail distance and direction (see the worker). */
+  ground: Uint8Array;
 }
 
 let cached: Promise<TerrainData> | null = null;
@@ -17,7 +19,7 @@ export function loadTerrainData(onProgress?: (p: number) => void): Promise<Terra
       if (m.type === 'progress') onProgress?.(m.value);
       else if (m.type === 'done') {
         worker.terminate();
-        resolve({ heightmap: new Heightmap(m.step, m.heights), splat: m.splat });
+        resolve({ heightmap: new Heightmap(m.step, m.heights), splat: m.splat, ground: m.ground });
       }
     };
     worker.onerror = (err) => reject(err);

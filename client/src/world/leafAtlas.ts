@@ -7,11 +7,20 @@
 //   │ broad leaves │ round leaves │  oak bark    │  pine bark   │   row 0
 //   ├──────────────┼──────────────┼──────────────┼──────────────┤
 //   │ pine needles │ solid (flat) │  birch bark  │ cherry bark  │   row 1
+//   ├──────────────┼──────────────┼──────────────┼──────────────┤
+//   │ broad, bold  │ round, bold  │ needles,bold │   (spare)    │   row 2
 //   └──────────────┴──────────────┴──────────────┴──────────────┘
 //
 // Leaves are greyscale (vertex colour tints them); the bark cells are painted
 // in colour, as multipliers over each species' bark tone. Everything on the
-// right half of the atlas is bark, which the foliage shader relies on.
+// right half of rows 0–1 is bark, which the foliage shader relies on.
+//
+// Row 2 holds the same clumps painted boldly, the way a painter simplifies a
+// tree across the valley: a full, solid body of foliage with a few big,
+// softly shaded leaves breaking its rim. Once a leaf card is small on screen
+// the foliage vertex shader switches it to its bold twin (FAR_CELL_SHIFT), so
+// a crown reads as soft, full masses with leafy edges instead of a speckle
+// of sub-pixel leaves and holes.
 // Transparent texels keep the colour of the nearest leaf, so mipmaps never
 // bleed dark fringes into the alpha-tested edges.
 import { RawTexture, Texture, type Scene } from '@babylonjs/core';
@@ -21,6 +30,9 @@ export const ATLAS_CELLS = {
   round: [1, 0],
   needle: [0, 1],
   solid: [1, 1],
+  broadBold: [0, 2],
+  roundBold: [1, 2],
+  needleBold: [2, 2],
   barkOak: [2, 0],
   barkPine: [3, 0],
   barkBirch: [2, 1],
@@ -28,9 +40,25 @@ export const ATLAS_CELLS = {
 } as const;
 
 const COLS = 4;
-const ROWS = 2;
+const ROWS = 3;
 
 export type AtlasCell = keyof typeof ATLAS_CELLS;
+
+/**
+ * Where each fine leaf cell's bold twin sits, as a UV shift (the foliage
+ * vertex shader applies it to small cards): broad and round move down two
+ * rows, the needles two rows down and over by half the atlas.
+ */
+export const FAR_CELL_SHIFT = {
+  /** Cards whose v is below this are broad/round leaves (row 0). */
+  row0: 1 / ROWS,
+  /** Below this (and left of `needleU`) are the pine needles (row 1). */
+  row1: 2 / ROWS,
+  needleU: 1 / COLS,
+  /** Shift for row 0 cells (in v) and for the needles (u, v). */
+  dv0: 2 / ROWS,
+  needle: [2 / COLS, 1 / ROWS] as [number, number],
+};
 
 /** UV rectangle of a cell, inset a little so bilinear taps never cross into a neighbour. */
 export function cellUV(cell: AtlasCell, u: number, v: number): [number, number] {
@@ -67,7 +95,7 @@ interface Canvas {
  * `wid` wide. Shading: lighter toward the tip and on the lit (upper) side, a
  * darker midrib and a thin dark rim that gives the inked anime edge.
  */
-function leaf(c: Canvas, ox: number, oy: number, x: number, y: number, a: number, len: number, wid: number, tone: number, cellSize: number) {
+function leaf(c: Canvas, ox: number, oy: number, x: number, y: number, a: number, len: number, wid: number, tone: number, cellSize: number, ink = 0.8, rib = 0.9) {
   const ca = Math.cos(a);
   const sa = Math.sin(a);
   const r = len + 2;
@@ -90,8 +118,8 @@ function leaf(c: Canvas, ox: number, oy: number, x: number, y: number, a: number
       const cov = Math.min(1, (1 - edge) * half * wid * 0.9 + 0.2);
       let l = tone * (0.86 + 0.2 * s);
       l *= 1 - 0.12 * Math.max(0, t); // the half facing away from the light
-      if (Math.abs(t) < 0.08 && s > 0.08 && s < 0.85) l *= 0.9; // midrib
-      if (edge > 0.8) l *= 0.8; // inked rim
+      if (Math.abs(t) < 0.08 && s > 0.08 && s < 0.85) l *= rib; // midrib
+      if (edge > 0.8) l *= ink; // inked rim
       const i = (oy + py) * c.size + ox + px;
       // later leaves sit on top
       c.lum[i] = c.lum[i] * (1 - cov) + l * cov;
@@ -150,6 +178,139 @@ function needles(c: Canvas, cx: number, cy: number, cellSize: number, seed: numb
       }
     }
   }
+}
+
+// ------------------------------------------------------------------ bold (far) cells
+
+const smooth01 = (x: number) => {
+  const t = Math.min(1, Math.max(0, x));
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * A clump painted for distance: a solid body of a few overlapping, softly
+ * shaded lobes (each lit from the top-left and casting a soft shade onto the
+ * lobe below it), with big leaves breaking the rim so the silhouette stays
+ * leafy. No holes inside, no fine dark lines: it averages into a clean,
+ * full mass when it is small on screen.
+ */
+function boldClump(c: Canvas, cx: number, cy: number, cellSize: number, o: { seed: number; radius: number; lobes: number; rim: number; inner: number; len: [number, number]; wid: number }) {
+  const r = rng(o.seed);
+  const ox = cx * cellSize;
+  const oy = cy * cellSize;
+  const mid = cellSize / 2;
+  const R = cellSize * o.radius;
+  // light from the top-left, in texel space (y grows downward)
+  const lx = -0.42;
+  const ly = -0.9;
+  const lobes: { x: number; y: number; r: number }[] = [];
+  for (let i = 0; i < o.lobes; i++) {
+    const a = (i / o.lobes) * Math.PI * 2 + r() * 0.8;
+    const d = (i === 0 ? 0 : 0.3 + r() * 0.25) * R;
+    lobes.push({ x: mid + Math.cos(a) * d, y: mid + Math.sin(a) * d * 0.85, r: R * (i === 0 ? 0.62 : 0.4 + r() * 0.14) });
+  }
+  // bottom lobes first, so the upper ones overlap them like stacked foliage
+  lobes.sort((p, q) => q.y - p.y);
+  const x0 = Math.max(0, Math.floor(mid - R * 1.3));
+  const x1 = Math.min(cellSize - 1, Math.ceil(mid + R * 1.3));
+  for (const lb of lobes) {
+    for (let py = x0; py <= x1; py++) {
+      for (let px = x0; px <= x1; px++) {
+        const dx = px + 0.5 - lb.x;
+        const dy = py + 0.5 - lb.y;
+        const d = Math.hypot(dx, dy);
+        const i = (oy + py) * c.size + ox + px;
+        // the lobe's soft shade on what is below and beside it
+        if (d > lb.r - 1 && d < lb.r * 1.22 && dy > -lb.r * 0.2 && c.alpha[i] > 0) {
+          const k = (1 - smooth01((d - lb.r) / (lb.r * 0.22))) * smooth01((dy + lb.r * 0.2) / (lb.r * 0.6));
+          c.lum[i] *= 1 - 0.08 * k;
+        }
+        const cov = Math.min(1, Math.max(0, lb.r - d + 0.5));
+        if (cov <= 0) continue;
+        // only a hint of roundness: cards spin, so the crown's own lighting
+        // (vertex normals) must do the shading, not paint baked into the cell
+        const nx = dx / lb.r;
+        const ny = dy / lb.r;
+        const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+        const ndl = nx * lx + ny * ly + nz * 0.35;
+        const l = 0.93 + 0.06 * Math.max(-1, Math.min(1, ndl));
+        c.lum[i] = c.lum[i] * (1 - cov) + l * cov;
+        c.alpha[i] = Math.max(c.alpha[i], cov);
+      }
+    }
+  }
+  const edgeAt = (ang: number) => {
+    let d = R * 0.3;
+    while (d < R * 1.4) {
+      const px = Math.round(mid + Math.cos(ang) * d);
+      const py = Math.round(mid + Math.sin(ang) * d * 0.9);
+      if (px < 0 || py < 0 || px >= cellSize || py >= cellSize || c.alpha[(oy + py) * c.size + ox + px] < 0.5) break;
+      d += 1;
+    }
+    return d;
+  };
+  // a few big, low-contrast leaves on the body, then the leafy rim on top
+  const leaves: { x: number; y: number; a: number; len: number; tone: number; d: number }[] = [];
+  for (let i = 0; i < o.inner + o.rim; i++) {
+    const rim = i >= o.inner;
+    const ang = r() * Math.PI * 2;
+    // rim leaves sit on the body's actual edge, wherever the lobes put it
+    const d = (rim ? edgeAt(ang) * (0.86 + r() * 0.12) : Math.sqrt(r()) * 0.7 * R);
+    const x = mid + Math.cos(ang) * d;
+    const y = mid + Math.sin(ang) * d * 0.9;
+    const len = (o.len[0] + r() * (o.len[1] - o.len[0])) * cellSize;
+    const a = ang + (r() - 0.5) * (rim ? 0.9 : 1.6);
+    const tone = (rim ? 0.92 : 0.88) + r() * 0.1;
+    leaves.push({ x, y, a, len, tone, d: rim ? 1 + d : d });
+  }
+  leaves.sort((p, q) => p.d - q.d);
+  for (const l of leaves) leaf(c, ox, oy, l.x - l.len * Math.cos(l.a) * 0.3, l.y - l.len * Math.sin(l.a) * 0.3, l.a, l.len, l.len * o.wid, l.tone, cellSize, 0.93, 0.97);
+}
+
+/** Pine sprays painted for distance: solid, tapering fronds fringed by a few thick needles. */
+function boldNeedles(c: Canvas, cx: number, cy: number, cellSize: number, seed: number) {
+  const r = rng(seed);
+  const ox = cx * cellSize;
+  const oy = cy * cellSize;
+  for (let b = 0; b < 7; b++) {
+    const ang = -Math.PI / 2 + (b / 6 - 0.5) * 2.4 + (r() - 0.5) * 0.15;
+    const tl = cellSize * (0.32 + r() * 0.1);
+    const sx = cellSize * 0.5;
+    const sy = cellSize * 0.56;
+    // the frond's solid body: a leaf shape along the twig
+    leaf(c, ox, oy, sx, sy, ang, tl, tl * 0.42, 0.72 + 0.12 * Math.sin(ang + 2.2), cellSize, 0.96, 1);
+    const n = 9;
+    for (let k = 1; k < n; k++) {
+      const s = k / n;
+      const px = sx + Math.cos(ang) * tl * s;
+      const py = sy + Math.sin(ang) * tl * s;
+      for (const side of [-1, 1]) {
+        const na = ang + side * (0.6 + r() * 0.2);
+        const nl = cellSize * (0.07 + 0.06 * Math.sin(Math.PI * s)) * (0.85 + r() * 0.3);
+        const tone = 0.7 + 0.32 * s + (r() - 0.5) * 0.06;
+        leaf(c, ox, oy, px, py, na, nl, nl * 0.3, tone, cellSize, 0.95, 1);
+      }
+    }
+  }
+}
+
+/** Scale a leaf cell's shading so its coverage-weighted mean matches another's (the bold twin must not pop brighter or darker). */
+function matchTone(c: Canvas, cellSize: number, from: readonly [number, number], to: readonly [number, number]) {
+  const mean = ([cx, cy]: readonly [number, number]) => {
+    let s = 0;
+    let w = 0;
+    for (let y = 0; y < cellSize; y++) {
+      for (let x = 0; x < cellSize; x++) {
+        const i = (cy * cellSize + y) * c.size + cx * cellSize + x;
+        s += c.lum[i] * c.alpha[i];
+        w += c.alpha[i];
+      }
+    }
+    return w > 0 ? s / w : 1;
+  };
+  const k = mean(from) / mean(to);
+  const [cx, cy] = to;
+  for (let y = 0; y < cellSize; y++) for (let x = 0; x < cellSize; x++) c.lum[(cy * cellSize + y) * c.size + cx * cellSize + x] *= k;
 }
 
 // ------------------------------------------------------------------ bark
@@ -364,33 +525,40 @@ function cherryBark(): Painter {
   };
 }
 
-/** Spread leaf colour into transparent texels (a few passes of a 3×3 max-alpha fill). */
+/** Spread leaf colour into transparent texels (a few passes of a 4-neighbour fill). */
 function dilate(c: Canvas, passes: number) {
   const n = c.size;
   const total = c.size * c.height;
   const filled = new Uint8Array(total);
-  for (let i = 0; i < total; i++) filled[i] = c.alpha[i] > 0.02 ? 1 : 0;
-  for (let p = 0; p < passes; p++) {
-    const next = filled.slice();
-    for (let y = 1; y < c.height - 1; y++) {
-      for (let x = 1; x < n - 1; x++) {
-        const i = y * n + x;
-        if (filled[i]) continue;
-        let sum = 0;
-        let k = 0;
-        for (const o of [-1, 1, -n, n]) {
-          if (filled[i + o]) {
-            sum += c.lum[i + o];
-            k++;
-          }
-        }
-        if (k) {
-          c.lum[i] = sum / k;
-          next[i] = 1;
-        }
-      }
+  // only the still-empty texels are visited, so the (opaque) bark cells cost nothing
+  let todo: number[] = [];
+  for (let i = 0; i < total; i++) {
+    if (c.alpha[i] > 0.02) filled[i] = 1;
+    else {
+      const x = i % n;
+      const y = (i / n) | 0;
+      if (x > 0 && x < n - 1 && y > 0 && y < c.height - 1) todo.push(i);
     }
-    filled.set(next);
+  }
+  const lum = c.lum;
+  const add: number[] = [];
+  for (let p = 0; p < passes && todo.length; p++) {
+    const rest: number[] = [];
+    add.length = 0;
+    for (const i of todo) {
+      let sum = 0;
+      let k = 0;
+      if (filled[i - 1]) (sum += lum[i - 1]), k++;
+      if (filled[i + 1]) (sum += lum[i + 1]), k++;
+      if (filled[i - n]) (sum += lum[i - n]), k++;
+      if (filled[i + n]) (sum += lum[i + n]), k++;
+      if (k) {
+        lum[i] = sum / k;
+        add.push(i);
+      } else rest.push(i);
+    }
+    for (const i of add) filled[i] = 1;
+    todo = rest;
   }
   for (let i = 0; i < total; i++) if (!filled[i]) c.lum[i] = 0.7;
 }
@@ -499,25 +667,37 @@ function packMip(lum: Float32Array, tint: Float32Array, alpha: Float32Array, cou
 
 let cached: Texture | null = null;
 
-/** The shared foliage atlas (built once). */
-export function getLeafAtlas(scene: Scene): Texture {
-  if (cached && cached.getScene() === scene) return cached;
-  const cell = 512;
+/** Paint the whole atlas on the CPU (exported for the atlas preview tool). */
+export function paintAtlas(cell = 512) {
   const width = cell * COLS;
   const height = cell * ROWS;
   const c: Canvas = { size: width, height, lum: new Float32Array(width * height), tint: new Float32Array(width * height * 3).fill(1), alpha: new Float32Array(width * height) };
-  clump(c, 0, 0, cell, { count: 300, len: [0.05, 0.085], wid: 0.5, seed: 11, radius: 0.38 });
-  clump(c, 1, 0, cell, { count: 420, len: [0.035, 0.06], wid: 0.75, seed: 23, radius: 0.4 });
+  clump(c, 0, 0, cell, { count: 360, len: [0.05, 0.085], wid: 0.5, seed: 11, radius: 0.38 });
+  clump(c, 1, 0, cell, { count: 500, len: [0.035, 0.06], wid: 0.75, seed: 23, radius: 0.4 });
   needles(c, 0, 1, cell, 37);
+  boldClump(c, 0, 2, cell, { seed: 41, radius: 0.33, lobes: 6, rim: 70, inner: 18, len: [0.085, 0.13], wid: 0.5 });
+  boldClump(c, 1, 2, cell, { seed: 53, radius: 0.34, lobes: 7, rim: 95, inner: 24, len: [0.06, 0.095], wid: 0.72 });
+  boldNeedles(c, 2, 2, cell, 61);
+  matchTone(c, cell, ATLAS_CELLS.broad, ATLAS_CELLS.broadBold);
+  matchTone(c, cell, ATLAS_CELLS.round, ATLAS_CELLS.roundBold);
+  matchTone(c, cell, ATLAS_CELLS.needle, ATLAS_CELLS.needleBold);
   // opaque canopy cores, cones and boulders sample this flat cell
   paintCell(c, 1, 1, cell, () => [0.86, 1, 1, 1]);
+  paintCell(c, 3, 2, cell, () => [0.86, 1, 1, 1]);
   paintCell(c, 2, 0, cell, oakBark());
   paintCell(c, 3, 0, cell, pineBark());
   paintCell(c, 2, 1, cell, birchBark());
   paintCell(c, 3, 1, cell, cherryBark());
   dilate(c, 24);
+  return { width, height, canvas: c, rgba: () => packMip(c.lum, c.tint, c.alpha, width * height) };
+}
+
+/** The shared foliage atlas (built once). */
+export function getLeafAtlas(scene: Scene): Texture {
+  if (cached && cached.getScene() === scene) return cached;
+  const { width, height, canvas: c, rgba } = paintAtlas();
   // stored in sRGB space: the albedo sampler converts to linear
-  const tex = RawTexture.CreateRGBATexture(packMip(c.lum, c.tint, c.alpha, width * height), width, height, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
+  const tex = RawTexture.CreateRGBATexture(rgba(), width, height, scene, true, false, Texture.TRILINEAR_SAMPLINGMODE);
   tex.name = 'leafAtlas';
   tex.wrapU = tex.wrapV = Texture.CLAMP_ADDRESSMODE;
   tex.hasAlpha = true;
