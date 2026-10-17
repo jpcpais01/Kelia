@@ -10,6 +10,11 @@ export interface PatchNote {
 
 export const PATCH_NOTES: PatchNote[] = [
   {
+    at: '2026-10-17T20:30:00Z',
+    title: 'Staff casting that reads',
+    lines: ["Fixed the Arcanist's attacks with a staff or wand. Bolts and Fireball no longer cast from the empty hand with the staff pointing backward: you raise the staff before you, then thrust its head at your target, and the spell flies from the staff's head. Frost Nova no longer swings the staff flat at your waist: you lift it overhead and slam its head into the ground, then bring it back upright. Standing still, the staff now rests upright at your side instead of jutting forward like a spear."],
+  },
+  {
     at: '2026-10-16T08:40:00Z',
     title: 'Smoother walking and swings',
     lines: ["Fixed heroes looking glitchy when walking and fighting. Standing still, your hero no longer stands twisted to one side: they face forward, upright, with both feet planted side by side. Walking, the sword is carried pointing ahead and down instead of sticking out behind you, and a staff is held upright. Swings no longer fold the body in half or flip it sideways at the end of a slash. When an attack turns you to face your aim, your feet turn with you instead of twisting your legs round each other. A lunge now takes a step or two instead of a flurry of tiny ones."],
