@@ -62,6 +62,8 @@ export interface ActionPhase {
   style: 'strike' | 'release' | 'cast';
   /** Frozen on contact. */
   stopped: boolean;
+  /** The clip playing. */
+  clip: string;
 }
 
 interface Action {
@@ -82,7 +84,7 @@ interface Action {
   /** First frame of a timed action, until the clip has been sampled once. */
   startFrame: number | null;
   cancelAfter?: number;
-  phase?: Omit<ActionPhase, 't' | 'weight' | 'stopped' | 'duration'>;
+  phase?: Omit<ActionPhase, 't' | 'weight' | 'stopped' | 'duration' | 'clip'>;
 }
 
 export interface PlayOptions {
@@ -98,7 +100,7 @@ export interface PlayOptions {
   /** Follow this timeline instead of a fixed speed (ignores `speed`). */
   beats?: Beat[];
   /** Key moments of the timeline, exposed through `phase()`. */
-  phase?: Omit<ActionPhase, 't' | 'weight' | 'stopped' | 'duration'>;
+  phase?: Omit<ActionPhase, 't' | 'weight' | 'stopped' | 'duration' | 'clip'>;
   /** After this many seconds, moving cuts the action short (its recovery). */
   cancelAfter?: number;
 }
@@ -247,11 +249,11 @@ export class Animator {
   /** The current timed action's progress, for procedural layers. */
   phase(): ActionPhase | null {
     const a = this.action ?? null;
-    if (a?.phase) return { ...a.phase, t: a.t, duration: a.duration, weight: a.weight, stopped: a.stop > 0 };
+    if (a?.phase) return { ...a.phase, t: a.t, duration: a.duration, weight: a.weight, stopped: a.stop > 0, clip: stripName(a.group.name) };
     // keep reporting a fading action so its overlay eases out with it
     for (let i = this.fading.length - 1; i >= 0; i--) {
       const f = this.fading[i];
-      if (f.phase) return { ...f.phase, t: f.t, duration: f.duration, weight: Math.max(0, f.weight), stopped: false };
+      if (f.phase) return { ...f.phase, t: f.t, duration: f.duration, weight: Math.max(0, f.weight), stopped: false, clip: stripName(f.group.name) };
     }
     return null;
   }

@@ -29,6 +29,13 @@ export interface FxCaster {
   root: TransformNode;
   meshes: AbstractMesh[];
   node(name: string): TransformNode | undefined;
+  /** Where a staff or wand's head is, when the caster holds one. */
+  weaponTip?(): Vector3 | null;
+}
+
+/** Spells leave from the staff or wand head, else from the given hand point. */
+function castPos(model: FxCaster, fallback: Vector3) {
+  return model.weaponTip?.() ?? fallback;
 }
 
 function handPos(model: FxCaster, slot: 'handslot.r' | 'handslot.l', fallbackY = 1.3) {
@@ -158,9 +165,9 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
       const tint = big ? '#c9b6ff' : col.main;
       fx.magicCircle(at(), col.main, { radius: big ? 1.5 : 1.1, dur: skill.impactAt + 0.45, spin: 2, intensity: 2.2, inner: big });
       fx.weaponTrail(hand, col.main, 0, skill.impactAt + 0.05, { life: 0.16, intensity: 0.8 });
-      fx.after(0.02, () => fx.gather(handPos(model, 'handslot.r', 1.5).add(new Vector3(0, 0.3, 0)), tint, Math.max(0.12, skill.impactAt - 0.04), big ? 16 : 9, 0.7));
+      fx.after(0.02, () => fx.gather(castPos(model, handPos(model, 'handslot.r', 1.5).add(new Vector3(0, 0.3, 0))), tint, Math.max(0.12, skill.impactAt - 0.04), big ? 16 : 9, 0.7));
       fx.after(skill.impactAt, () => {
-        const from = handPos(model, 'handslot.r', 1.5).add(new Vector3(0, 0.3, 0));
+        const from = castPos(model, handPos(model, 'handslot.r', 1.5).add(new Vector3(0, 0.3, 0)));
         const target = new Vector3(tx, w.groundAt(tx, tz) + 1.1, tz);
         const dir = Vector3.Distance(target, from) > 2 ? target.subtract(from).normalize() : fwd;
         fx.flash(from, C(tint, 3), big ? 1.6 : 1.0, 0.15);
@@ -174,12 +181,12 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
       fx.magicCircle(at(), '#ff8a2a', { radius: 1.7, dur: skill.impactAt + 0.3, spin: 2.2, intensity: 2.4 });
       const release = releaseAt(skill);
       fx.weaponTrail(hand, '#ff9a3a', 0, release, { life: 0.2 });
-      fx.after(0.05, () => fx.gather(handPos(model, 'handslot.r', 1.6).add(new Vector3(0, 0.5, 0)), '#ffb04a', release - 0.1, 14, 1.0));
+      fx.after(0.05, () => fx.gather(castPos(model, handPos(model, 'handslot.r', 1.6).add(new Vector3(0, 0.5, 0))), '#ffb04a', release - 0.1, 14, 1.0));
       // where it will land
       const ty = w.groundAt(tx, tz);
       fx.decal(tx, ty, tz, { r0: radius * 0.4, r: radius, dur: skill.impactAt + 0.1, cell: D.arcane, color: C('#ff7a2a', 1.6), spin: 2, fadeIn: 0.4, fadeOut: 0.85, hot: 0.5 });
       fx.after(release, () => {
-        const from = handPos(model, 'handslot.r', 1.6).add(new Vector3(0, 0.5, 0));
+        const from = castPos(model, handPos(model, 'handslot.r', 1.6).add(new Vector3(0, 0.5, 0)));
         const target = new Vector3(tx, ty + 0.2, tz);
         const dist = Vector3.Distance(from, target);
         const travel = Math.max(0.12, skill.impactAt - release);
@@ -195,7 +202,7 @@ export function playSkillFx(fx: Effects, w: FxWorld, model: FxCaster, cls: Class
     case 'frost': {
       const r = skill.shape.kind === 'aoe-self' ? skill.shape.radius : 6;
       fx.magicCircle(at(), '#8fe8ff', { radius: 1.6, dur: impact + 0.35, spin: 2.5, intensity: 2.4, cell: D.frost, drift: S.snow });
-      fx.after(0.03, () => fx.gather(handPos(model, 'handslot.r', 1.5), '#bff4ff', Math.max(0.1, impact - 0.05), 12, 1.0));
+      fx.after(0.03, () => fx.gather(castPos(model, handPos(model, 'handslot.r', 1.5)), '#bff4ff', Math.max(0.1, impact - 0.05), 12, 1.0));
       // the staff comes down and the ice erupts where it strikes
       strikeTrail('#8fe8ff', 0.05, 0.1, { intensity: 1.1, life: 0.2 });
       fx.after(tl ? Math.max(0, tl.contactAt - 0.015) : impact, () => {

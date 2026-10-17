@@ -795,13 +795,7 @@ export class Gait {
       const trail = F.scale(-0.75).add(UP.scale(-0.4)).add(out.scale(0.55)).normalize();
       D = Vector3.Lerp(carry, trail, smooth(0.2, 0.8, run)).normalize();
     }
-    // point the tip (the slot's +Y)
-    const m = slot.getWorldMatrix();
-    const Y = Vector3.TransformNormal(Vector3.Up(), m).normalize();
-    const axis = Vector3.Cross(Y, D);
-    const s = axis.length();
-    if (s > 1e-5) rotateWorld(a.wrist, axis.scaleInPlace(1 / s), Math.atan2(s, Vector3.Dot(Y, D)) * w * AIM_SIGN);
-    refreshChain(slot);
+    pointSlot(a.wrist, slot, D, w);
     // edge down, flat to the side: the guard (the slot's X) upright, whichever way is nearer
     const X = Vector3.TransformNormal(Vector3.Right(), slot.getWorldMatrix());
     const Xp = X.subtract(D.scale(Vector3.Dot(X, D)));
@@ -893,6 +887,16 @@ function footYaw(l: Leg, yaw: number) {
   const d = l.toes.absolutePosition.subtract(l.foot.absolutePosition);
   if (d.x * d.x + d.z * d.z < 1e-6) return yaw;
   return Math.atan2(d.x, d.z);
+}
+
+/** Turn `wrist` so the weapon slot's +Y (a weapon's tip) points along `D`, by `w` (0..1). */
+export function pointSlot(wrist: TransformNode, slot: TransformNode, D: Vector3, w: number) {
+  refreshChain(slot);
+  const Y = Vector3.TransformNormal(Vector3.Up(), slot.getWorldMatrix()).normalize();
+  const axis = Vector3.Cross(Y, D);
+  const s = axis.length();
+  if (s > 1e-5) rotateWorld(wrist, axis.scaleInPlace(1 / s), Math.atan2(s, Vector3.Dot(Y, D)) * w * AIM_SIGN);
+  refreshChain(slot);
 }
 
 /** Recompute a node's world matrix and its ancestors', top down. */

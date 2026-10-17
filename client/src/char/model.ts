@@ -42,7 +42,7 @@ import { setToon } from '../world/toon';
 import { trackContact } from '../world/contact';
 import { INK, InkScaler, inkCharacter, inkFor } from './style';
 import { spring, stepSpring } from './spring';
-import { AIM_SIGN, Gait, refreshChain, rotateWorld } from './gait';
+import { AIM_SIGN, Gait, pointSlot, refreshChain, rotateWorld } from './gait';
 import { SecondaryMotion } from './secondary';
 
 export interface Look {
@@ -474,6 +474,33 @@ export class CharacterModel {
     return this.nodes.get(name);
   }
 
+  /** A staff or wand in the right hand (spells leave from its head), else null. */
+  private get caster(): 'staff' | 'wand' | null {
+    const mesh = this.look.weapon ? ITEMS[this.look.weapon]?.mesh : null;
+    return mesh === 'w_staff' ? 'staff' : mesh === 'w_wand' ? 'wand' : null;
+  }
+
+  private tipLen = new Map<AbstractMesh, number>();
+
+  /** Where a spell leaves a staff or wand: near the head of it (null without one). */
+  weaponTip(): Vector3 | null {
+    const slot = this.nodes.get('handslot.r');
+    if (!slot || !this.caster) return null;
+    const m = slot.getChildMeshes(false).find((x) => x.isEnabled() && x.getTotalVertices() > 0);
+    if (!m) return null;
+    slot.computeWorldMatrix(true);
+    let len = this.tipLen.get(m);
+    if (len === undefined) {
+      // the weapon's reach along the slot's +Y, in slot space
+      m.computeWorldMatrix(true);
+      const inv = slot.getWorldMatrix().clone().invert();
+      len = 0;
+      for (const v of m.getBoundingInfo().boundingBox.vectorsWorld) len = Math.max(len, Vector3.TransformCoordinates(v, inv).y);
+      this.tipLen.set(m, len);
+    }
+    return Vector3.TransformCoordinates(new Vector3(0, len * 0.85, 0), slot.getWorldMatrix());
+  }
+
   /**
    * Per-frame update. `vel` is world-space planar velocity (m/s), `turnRate`
    * the yaw rate (rad/s) used for leaning into turns.
@@ -640,6 +667,7 @@ export class CharacterModel {
       this.applyArmDrop();
       if (this.ikEnabled && this.groundAt && this.glideW < 0.5) this.applyGait();
       this.applyBodyLayer();
+      this.applyCastPose();
       this.applyLookAt();
       if (this.glideW > 0.001) this.applyGlidePose();
     }
@@ -707,6 +735,98 @@ export class CharacterModel {
         upper.computeWorldMatrix(true);
       }
     }
+  }
+
+  /**
+   * Staff and wand casting. The stock spell clips cast from the off hand and
+   * swing the staff back out of the way (and the frost slam is a two-handed
+   * axe chop, so a one-handed staff just hung across the hips), which left
+   * the spell leaving a hand pointing the wrong way. Instead the casting arm
+   * gathers the staff upright in front, then thrusts it at the aim as the
+   * spell leaves its head; a slam raises it overhead and drives the head down
+   * into the ground. The clip keeps the rest of the body.
+   */
+  private applyCastPose() {
+    const kind = this.caster;
+    if (!kind) return;
+    const ph = this.animator.phase();
+    const move = !ph ? null : ph.clip === 'Spellcast_Shoot' || ph.clip === 'Spellcast_Long' ? 'thrust' : ph.clip === '2H_Melee_Attack_Chop' ? 'slam' : null;
+    const acting = ph ? Math.min(1, ph.weight) : 0;
+    // standing, the staff rests upright at the side (the clip points it ahead like a lance)
+    const idle = kind === 'staff' && !this.animator.airborne && !this.glideOn ? (this.animator.locoGroup('idle')?.weight ?? 0) * (1 - acting) : 0;
+    if (!move && idle < 0.01) return;
+    const upper = this.nodes.get('upperarm.r');
+    const lower = this.nodes.get('lowerarm.r');
+    const wrist = this.nodes.get('wrist.r');
+    const slot = this.nodes.get('handslot.r');
+    if (!upper || !lower || !wrist || !slot) return;
+    const ss = (x: number) => {
+      const c = Math.max(0, Math.min(1, x));
+      return c * c * (3 - 2 * c);
+    };
+    const ry = this.root.rotation.y;
+    const F = new Vector3(Math.sin(ry), 0, Math.cos(ry));
+    const R = new Vector3(Math.cos(ry), 0, -Math.sin(ry));
+    const U = Vector3.Up();
+    refreshChain(slot);
+    const S = upper.getAbsolutePosition().clone();
+    const out = Vector3.Dot(S.subtract(this.root.position), R) >= 0 ? R : R.scale(-1);
+    const la = Vector3.Distance(S, lower.getAbsolutePosition());
+    const lb = Vector3.Distance(lower.getAbsolutePosition(), wrist.getAbsolutePosition());
+    const reach = (la + lb) * 0.97;
+    const at = (f: number, u: number, o: number) => S.add(F.scale(f * reach)).add(U.scale(u * reach)).add(out.scale(o * reach));
+    const restW = at(0.2, -0.64, 0.4);
+    const restD = U.scale(0.97).add(F.scale(0.14)).add(out.scale(0.05)).normalize();
+    const restPole = out.scale(0.8).add(F.scale(-0.4));
+    let W: Vector3;
+    let D: Vector3;
+    let pole: Vector3;
+    let w: number;
+    if (!move || !ph) {
+      W = restW;
+      D = restD;
+      pole = restPole;
+      w = idle;
+    } else {
+      const t = ph.t;
+      // in over the wind-up; over the recovery a staff comes home to rest, a wand hands back to the clip
+      const back = ss((t - ph.settleAt) / Math.max(0.1, ph.duration - ph.settleAt));
+      w = acting * ss(t / Math.max(0.05, ph.strikeAt * 0.8)) * (kind === 'staff' ? 1 : 1 - back);
+      if (w < 0.01) return;
+      // gather → strike over the snap
+      const go = ss((t - ph.strikeAt) / Math.max(0.03, ph.contactAt - ph.strikeAt));
+      if (move === 'thrust') {
+        // staff upright before the chest, then out at the aim, head first
+        W = Vector3.Lerp(at(0.42, -0.42, -0.08), at(0.93, 0.12, 0.08), go);
+        D = Vector3.Lerp(U.scale(0.95).add(F.scale(0.3)), F.add(U.scale(kind === 'staff' ? 0.45 : 0.25)), go).normalize();
+        pole = U.scale(-0.6).add(out.scale(0.8));
+      } else {
+        // raised overhead, then the head driven down into the ground before the feet
+        W = Vector3.Lerp(at(0.2, 0.75, 0.15), at(0.72, -0.45, 0.02), go);
+        D = Vector3.Lerp(U.scale(0.85).add(F.scale(-0.35)), F.scale(0.55).add(U.scale(-0.85)), go).normalize();
+        pole = out.scale(0.9).add(U.scale(go > 0.5 ? -0.5 : 0.2));
+      }
+      if (kind === 'staff' && back > 0) {
+        W = Vector3.Lerp(W, restW, back);
+        D = Vector3.Lerp(D, restD, back).normalize();
+        pole = Vector3.Lerp(pole, restPole, back);
+      }
+      // a staff that blends out of a cast goes on to rest (the walking grip takes over once moving)
+      if (kind === 'staff') w = Math.min(1, w + idle);
+    }
+    // two-bone IK, blended with the clip's arm
+    const toW = W.subtract(S);
+    const dist = Math.max(0.05, Math.min(la + lb - 0.002, toW.length()));
+    const d = toW.normalize();
+    let pl = pole.subtract(d.scale(Vector3.Dot(pole, d)));
+    if (pl.lengthSquared() < 1e-6) pl = out.clone();
+    pl.normalize();
+    const cosA = Math.max(-1, Math.min(1, (la * la + dist * dist - lb * lb) / (2 * la * dist)));
+    const elbow = S.add(d.scale(la * cosA)).add(pl.scale(la * Math.sqrt(1 - cosA * cosA)));
+    aimBone(upper, lower, Vector3.Lerp(lower.getAbsolutePosition().clone(), elbow, w));
+    refreshChain(wrist);
+    aimBone(lower, wrist, Vector3.Lerp(wrist.getAbsolutePosition().clone(), S.add(d.scale(dist)), w));
+    pointSlot(wrist, slot, D, w);
   }
 
   /** Planted feet, hips, chest and arms while moving (see gait.ts); feet on the ground standing. */
